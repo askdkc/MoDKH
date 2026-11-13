@@ -1,0 +1,39 @@
+{
+  "name": "dkh",
+  "version": "0.1.0",
+  "description": "単独で動く最小コーディングハーネス",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.16.0"
+  },
+  "bin": {
+    "dkh": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json",
+    "test": "node --test --test-reporter=tap \"test/*.test.ts\""
+  },
+  "keywords": [
+    "cli",
+    "coding-agent"
+  ],
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.97",
+    "@ai-sdk/deepseek": "^3.0.80",
+    "@ai-sdk/google": "^4.0.112",
+    "@ai-sdk/openai": "^4.0.109",
+    "@ai-sdk/openai-compatible": "^3.0.85",
+    "ai": "^7.0.163"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.3"
+  }
+}

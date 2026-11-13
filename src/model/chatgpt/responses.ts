@@ -1,0 +1,174 @@
+import type { AgentMessage, Model, ModelEvent, ModelRequest } from '../../agent/types.ts';
+
+export const DEFAULT_RESPONSES_BASE_URL = 'https://api.openai.com/v1';
+
+export interface ResponsesModelOptions {
+  accessToken: string;
+  model: string;
+  baseUrl?: string;
+  fetchImpl?: typeof fetch;
+}
+
+interface ResponsesInputItem {
+  type?: string;
+  role?: string;
+  content?: unknown;
+  call_id?: string;
+  name?: string;
+  arguments?: string;
+  output?: string;
+}
+
+/** 会話履歴(CLI 保持)を Responses API の input へ変換する。 */
+export function toResponsesInput(messages: AgentMessage[]): ResponsesInputItem[] {
+  const out: ResponsesInputItem[] = [];
+  for (const m of messages) {
+    if (m.role === 'user') {
+      out.push({ role: 'user', content: [{ type: 'input_text', text: m.content }] });
+    } else if (m.role === 'assistant') {
+      if (m.content.length > 0) {
+        out.push({ role: 'assistant', content: [{ type: 'output_text', text: m.content }] });
+      }
+      for (const c of m.toolCalls ?? []) {
+        out.push({
+          type: 'function_call',
+          call_id: c.id,
+          name: c.name,
+          arguments: JSON.stringify(c.args ?? {}),
+        });
+      }
+    } else {
+      for (const r of m.results) {
+        out.push({
+          type: 'function_call_output',
+          call_id: r.callId,
+          output: JSON.stringify({ status: r.status, output: r.output }),
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 公開 Responses API アダプター(Sign in with ChatGPT のトークンで使う)。
+ * 会話状態は CLI 側が保持するため store:false で毎回全履歴を送る。
+ * 関数ツールは公式の名前空間契約(type:'function' のフラット形式)に合わせる。
+ */
+export class ResponsesApiModel implements Model {
+  readonly id: string;
+  private readonly accessToken: string;
+  private readonly model: string;
+  private readonly baseUrl: string;
+  private readonly fetchImpl: typeof fetch;
+
+  constructor(opts: ResponsesModelOptions) {
+    this.accessToken = opts.accessToken;
+    this.model = opts.model;
+    this.baseUrl = (opts.baseUrl ?? DEFAULT_RESPONSES_BASE_URL).replace(/\/$/, '');
+    this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.id = `chatgpt/${opts.model}`;
+  }
+
+  async *stream(req: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent> {
+    const body = {
+      model: this.model,
+      instructions: req.system,
+      input: toResponsesInput(req.messages),
+      tools: req.tools.map((t) => ({
+        type: 'function',
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+        strict: false,
+      })),
+      stream: true,
+      store: false,
+    };
+    let aborted = false;
+    let errorMessage: string | undefined;
+    let sawFunctionCall = false;
+    let completed = false;
+    try {
+      const res = await this.fetchImpl(`${this.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${this.accessToken}`,
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
+      if (!res.ok || res.body === null) {
+        const detail = res.body === null ? '' : await res.text();
+        yield { type: 'finish', stopReason: 'error', errorMessage: `Responses API エラー: ${res.status} ${detail}` };
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let separator: RegExpExecArray | null;
+          while ((separator = /\r?\n\r?\n/.exec(buffer)) !== null) {
+            const rawEvent = buffer.slice(0, separator.index);
+            buffer = buffer.slice(separator.index + separator[0].length);
+            const ev = parseSseData(rawEvent);
+            if (ev === null) continue;
+            if (ev['type'] === 'response.output_text.delta') {
+              const text = ev['delta'];
+              if (typeof text === 'string' && text.length > 0) {
+                yield { type: 'text-delta', text };
+              }
+            } else if (ev['type'] === 'response.output_item.done') {
+              const item = ev['item'] as { type?: string; call_id?: string; name?: string; arguments?: string } | undefined;
+              if (item?.type === 'function_call' && item.call_id && item.name) {
+                sawFunctionCall = true;
+                const args: unknown = JSON.parse(item.arguments ?? '{}');
+                if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+                  throw new Error('ツール引数はJSONオブジェクトである必要がある');
+                }
+                yield { type: 'tool-call', call: { id: item.call_id, name: item.name, args: args as Record<string, unknown> } };
+              }
+            } else if (ev['type'] === 'response.completed') {
+              completed = true;
+            } else if (ev['type'] === 'response.failed' || ev['type'] === 'response.incomplete') {
+              errorMessage = `Responses API 応答は未完了: ${ev['type']}`;
+            } else if (ev['type'] === 'error') {
+              errorMessage = String(ev['message'] ?? 'Responses API のエラーイベント');
+            }
+          }
+        }
+      } finally {
+        await reader.cancel();
+        reader.releaseLock();
+      }
+      aborted = signal.aborted;
+    } catch (e) {
+      aborted = signal.aborted;
+      if (!aborted) errorMessage = (e as Error).message;
+    }
+    if (aborted) {
+      yield { type: 'finish', stopReason: 'aborted' };
+    } else if (errorMessage !== undefined || !completed) {
+      yield { type: 'finish', stopReason: 'error', errorMessage: errorMessage ?? 'Responses API の完了イベントがない' };
+    } else {
+      yield { type: 'finish', stopReason: sawFunctionCall ? 'tool-calls' : 'stop' };
+    }
+  }
+}
+
+function parseSseData(raw: string): Record<string, unknown> | null {
+  const lines = raw.split('\n').filter((l) => l.startsWith('data:'));
+  if (lines.length === 0) return null;
+  const payload = lines.map((l) => l.slice(5).trim()).join('');
+  if (payload.length === 0 || payload === '[DONE]') return null;
+  try {
+    return JSON.parse(payload) as Record<string, unknown>;
+  } catch {
+    throw new Error('Responses API のSSE JSONが壊れている');
+  }
+}

@@ -1,0 +1,4 @@
+.agenticreplay/
+node_modules/
+dist/
+*.tgz

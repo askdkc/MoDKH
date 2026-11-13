@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14        # Apple Silicon (arm64)
+          - os: ubuntu-24.04    # x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: 依存導入
+        run: npm ci
+      - name: 型検査とビルド
+        run: npm run build
+      - name: オフライン回帰テスト
+        run: npm test
+      - name: tarball 受け入れ(隔離インストール + 固定応答モデルの会話)
+        run: sh scripts/acceptance.sh
