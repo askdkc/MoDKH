@@ -112,7 +112,9 @@ export class LspServer {
     connection.onNotification('window/logMessage', () => { /* logging is not user-facing evidence */ });
     connection.listen();
 
-    const abort = () => { void this.dispose(); };
+    // Track the stop so launch() can await it; an untracked dispose would outlive its caller.
+    let stopping: Promise<void> | undefined;
+    const abort = () => { stopping ??= this.dispose(); };
     signal?.addEventListener('abort', abort, { once: true });
     try {
       const rootUri = pathToFileURL(this.options.root).href;
@@ -142,7 +144,7 @@ export class LspServer {
       connection.sendNotification('initialized', {});
     } catch (e) {
       const detail = stderr.trim().split('\n').slice(-3).join(' ');
-      await this.dispose();
+      await (stopping ?? this.dispose());
       throw new Error(`${this.id} の初期化に失敗: ${(e as Error).message}${detail ? ` / ${detail.slice(0, 300)}` : ''}`);
     } finally {
       signal?.removeEventListener('abort', abort);
@@ -285,15 +287,28 @@ export class LspServer {
     this.connection = undefined; this.child = undefined; this.open.clear();
     if (connection) {
       // Dispose detaches the reader/writer; without this, later notifications race stream teardown.
+      // The writer may still flush a queued message, so its rejection stays observed but ignored.
       try { connection.dispose(); } catch { /* already gone */ }
     }
     if (child && child.exitCode === null) {
-      // Killing the process closes the pipes; calling end()/destroy() here is what makes a
-      // queued protocol write race the teardown. Stream errors are already ignored above.
+      // Stop the process and wait for it: returning early lets a queued protocol write land on a
+      // destroyed stream after the caller (or a test) has finished, which is an unhandled rejection.
+      const exited = new Promise<void>(resolve => {
+        if (child.exitCode !== null || child.signalCode !== null) { resolve(); return; }
+        child.once('exit', () => resolve());
+      });
       child.kill('SIGTERM');
-      const deadline = setTimeout(() => child.kill('SIGKILL'), 200);
-      child.once('exit', () => clearTimeout(deadline));
+      const deadline = setTimeout(() => child.kill('SIGKILL'), 1000);
+      try {
+        await Promise.race([exited, new Promise<void>(resolve => setTimeout(resolve, 3000))]);
+      } finally {
+        clearTimeout(deadline);
+      }
     }
+    // Pipes are closed only after the process is gone; nothing can write into them afterwards.
+    child?.stdin.destroy();
+    child?.stdout.destroy();
+    child?.stderr.destroy();
   }
 }
 

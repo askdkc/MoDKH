@@ -88,6 +88,33 @@ test('hover, definition and references report positions and refuse a dead server
   await assert.rejects(() => live.hover(file, { line: 0, character: 0 }), /起動していません/);
 });
 
+test('dispose waits for the process and never leaks a write after teardown', async () => {
+  const live = server('clean');
+  const file = path.join(root, 'src', 'dispose.ts');
+  await live.start();
+  await live.synchronize(file, 'const a = 1;\n');
+  const child = live['child'] as import('node:child_process').ChildProcess | undefined;
+  assert.ok(child, 'server process must exist');
+  const exited = new Promise<void>(resolve => { child!.once('exit', () => resolve()); });
+  await live.dispose();
+  // The runner fails a test file when work continues after the test; dispose must finish the job.
+  await exited;
+  assert.equal(child!.exitCode !== null || child!.signalCode !== null, true);
+  assert.equal(live.running, false);
+  await new Promise(resolve => setImmediate(resolve));
+});
+
+test('aborting startup stops the process instead of leaving it running', async () => {
+  const ac = new AbortController();
+  const live = server('no-initialize');
+  const starting = live.start(ac.signal);
+  setTimeout(() => ac.abort(), 50);
+  await assert.rejects(starting);
+  const child = live['child'] as import('node:child_process').ChildProcess | undefined;
+  assert.equal(child, undefined, 'the client must not keep a child after a stopped launch');
+  assert.equal(live.running, false);
+});
+
 test('workspace/applyEdit from a server is refused, not applied', async () => {
   const live = server('clean');
   try {

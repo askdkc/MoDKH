@@ -50,6 +50,8 @@ export interface PoolOptions {
 export class ServerPool {
   private readonly entries = new Map<string, Entry>();
   private readonly options: Required<PoolOptions>;
+  /** Stops started by capacity eviction; they are awaited by settled()/disposeAll(). */
+  private readonly pending = new Set<Promise<void>>();
   private disposing = false;
 
   constructor(options: PoolOptions = {}) {
@@ -105,7 +107,17 @@ export class ServerPool {
     }
     if (!oldest) return;
     this.entries.delete(oldest.key);
-    void oldest.server.dispose();
+    // Stopping is awaited later: an untracked dispose lets protocol writes outlive the caller.
+    this.pending.add(oldest.server.dispose().catch(() => undefined));
+  }
+
+  /** Resolves once every detached stop has completed; used before a caller reports closure. */
+  async settled(): Promise<void> {
+    while (this.pending.size > 0) {
+      const current = [...this.pending];
+      await Promise.all(current);
+      for (const entry of current) this.pending.delete(entry);
+    }
   }
 
   /** Stop servers that nobody used recently; called opportunistically between requests. */
@@ -118,11 +130,12 @@ export class ServerPool {
   }
 
   async disposeAll(): Promise<void> {
-    if (this.disposing) return;
+    if (this.disposing) { await this.settled(); return; }
     this.disposing = true;
     const entries = [...this.entries.values()];
     this.entries.clear();
     await Promise.all(entries.map(entry => entry.server.dispose()));
+    await this.settled();
   }
 }
 
