@@ -79,7 +79,7 @@ PROJ3="$WORK/project3"
 mkdir -p "$PROJ3"
 printf '# dkh サンプル\n' > "$PROJ3/README.md"
 OUT5=$(printf '/connect\n/connect fixed/scripted\n作業を開始して\ny\ny\ny\n/exit\n' | "$CLI" --cwd "$PROJ3" 2>&1 || true)
-echo "$OUT5" | grep -q '認証先: 1. chatgpt' || { echo "FAIL: /connect 単体の使い方が観測されない"; echo "$OUT5"; exit 1; }
+echo "$OUT5" | grep -q 'OpenAI' || { echo "FAIL: /connect 単体の使い方が観測されない"; echo "$OUT5"; exit 1; }
 echo "$OUT5" | grep -q '接続しました: fixed/scripted' || { echo "FAIL: /connect での接続が観測されない"; echo "$OUT5"; exit 1; }
 echo "$OUT5" | grep -q '(応答終了' || { echo "FAIL: /connect 後の会話が完了しなかった"; echo "$OUT5"; exit 1; }
 grep -q '固定応答モデルによる追記' "$PROJ3/README.md" || { echo "FAIL: /connect 後の編集が反映されていない"; exit 1; }
@@ -92,6 +92,6 @@ echo "$OUTMODELS" | grep -q '1. fixed/scripted' || { echo 'FAIL: 検索候補が
 echo "$OUTMODELS" | grep -q '接続中: fixed/scripted' || { echo 'FAIL: モデル選択が反映されない'; exit 1; }
 DKH_TEST_ENTRY="$CLI" DKH_TEST_CHAT="$WORK/install/node_modules/dkh/dist/cli/chat.js" node --test --test-reporter=tap \
   "$ROOT/test/cli.interactive.test.ts" "$ROOT/test/cli.safety.test.ts" \
-  "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.memory.test.ts"
+  "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.memory.test.ts" "$ROOT/test/cli.tui.test.ts"
 
 echo "ACCEPTANCE_OK"

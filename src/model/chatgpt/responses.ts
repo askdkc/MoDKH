@@ -1,9 +1,11 @@
 import type { AgentMessage, Model, ModelEvent, ModelRequest } from '../../agent/types.ts';
 
-export const DEFAULT_RESPONSES_BASE_URL = 'https://api.openai.com/v1';
+export const DEFAULT_RESPONSES_BASE_URL = 'https://chatgpt.com/backend-api/codex';
 
 export interface ResponsesModelOptions {
   accessToken: string;
+  accountId?: string;
+  credentials?: (signal: AbortSignal) => Promise<{ accessToken: string; accountId?: string }>;
   model: string;
   baseUrl?: string;
   fetchImpl?: typeof fetch;
@@ -51,19 +53,23 @@ export function toResponsesInput(messages: AgentMessage[]): ResponsesInputItem[]
 }
 
 /**
- * 公開 Responses API アダプター(Sign in with ChatGPT のトークンで使う)。
+ * ChatGPT Codex Responses アダプター(APIキー用の公開APIとは分離)。
  * 会話状態は CLI 側が保持するため store:false で毎回全履歴を送る。
  * 関数ツールは公式の名前空間契約(type:'function' のフラット形式)に合わせる。
  */
 export class ResponsesApiModel implements Model {
   readonly id: string;
   private readonly accessToken: string;
+  private readonly accountId?: string;
+  private readonly credentials?: ResponsesModelOptions['credentials'];
   private readonly model: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: ResponsesModelOptions) {
     this.accessToken = opts.accessToken;
+    this.accountId = opts.accountId;
+    this.credentials = opts.credentials;
     this.model = opts.model;
     this.baseUrl = (opts.baseUrl ?? DEFAULT_RESPONSES_BASE_URL).replace(/\/$/, '');
     this.fetchImpl = opts.fetchImpl ?? fetch;
@@ -90,11 +96,13 @@ export class ResponsesApiModel implements Model {
     let sawFunctionCall = false;
     let completed = false;
     try {
+      const credentials = this.credentials ? await this.credentials(signal) : { accessToken: this.accessToken, accountId: this.accountId };
       const res = await this.fetchImpl(`${this.baseUrl}/responses`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          authorization: `Bearer ${this.accessToken}`,
+          authorization: `Bearer ${credentials.accessToken}`,
+          ...(credentials.accountId ? { 'ChatGPT-Account-Id': credentials.accountId } : {}),
         },
         body: JSON.stringify(body),
         signal,

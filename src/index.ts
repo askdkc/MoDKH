@@ -2,7 +2,6 @@
 // dkh — 単独で動く最小コーディングハーネス
 
 import fs from 'node:fs';
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const VERSION = '0.1.0';
@@ -17,20 +16,29 @@ const HELP = `dkh ${VERSION} — 単独で動く最小コーディングハー�
   dkh session list
 
 対話中のコマンド:
-  /connect                                     接続状態と認証メニュー
+  /connect                                     検索できるプロバイダー一覧
+  /connect openai                              ChatGPT OAuth / APIキーを選択
   /connect chatgpt                             ブラウザで ChatGPT 認証
+  /connect ollama                              Ollama Local のモデル選択
+  /connect ollama-cloud                        Ollama Cloud の認証・モデル選択
   /models [検索語]                             名前の部分一致検索・番号でモデル選択
   /connect <provider>/<model> [--base-url <url>]   モデルをその場で接続(AI API / chatgpt / fixed)
 
 接続先:
   fixed/scripted                              固定応答モデル(オフライン検証用)
   openai|anthropic|google|deepseek/<model>    AI SDK アダプター
-  openrouter|groq|xai|ollama|lmstudio/<model> OpenAI互換アダプター
+  opencode|openrouter|infron|ollama|hermes/<model> OpenAI互換アダプター
+  ollama-cloud/<model>                        Ollama Cloud (OLLAMA_API_KEY)
+  groq|xai|lmstudio/<model>                    既存の互換アダプター
   compatible/<model> --base-url <url>         任意のOpenAI互換URL
   chatgpt/<model>                             Sign in with ChatGPT(/connect で認証可能)
 
 キーは環境変数から読む(例: OPENAI_API_KEY, ANTHROPIC_API_KEY,
-GOOGLE_GENERATIVE_AI_API_KEY, DEEPSEEK_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY, XAI_API_KEY)。
+GOOGLE_GENERATIVE_AI_API_KEY, DEEPSEEK_API_KEY, OPENCODE_API_KEY, OPENROUTER_API_KEY,
+INFRON_API_KEY, HERMES_API_KEY, OLLAMA_API_KEY, GROQ_API_KEY, XAI_API_KEY)。
+
+TTYではDKHロゴ・コマンド補完・検索メニューを表示。↑↓/Enterで選択、Escで戻る。
+DKH_PLAIN=1 dkh で行入力モード(スクリーンリーダー向け)。NO_COLORで色を無効化。
 `;
 
 export interface ParsedInvocation {

@@ -1,31 +1,72 @@
 # モデル接続と ChatGPT ログイン
 
-## モデル参照
+## モデル参照と選択画面
 
-`chat --model <provider>/<model>`、または対話中の `/connect <provider>/<model> [--base-url <url>]` で `provider` を選ぶ。`/connect` は未接続で起動したハーネスに後から接続するためのコマンド。
-モデルは明示的に指定する。接続に失敗しても別の接続先へ自動で切り替えない。
+`dkh` を起動し、`/connect` で OpenAI / OpenCode / Ollama Local / Ollama Cloud / OpenRouter / Infron / Hermes Agent を選ぶ。
+TTYでは入力で検索、↑↓で選択、Enterで決定、Escで戻る。OpenAIではChatGPT OAuthとAPIキーを選べる。
+APIキーは環境変数を優先し、未設定ならTTYで伏せ字入力できる。入力したキーはセッション内だけで保持する。
+`/models` は組み込み候補からの選択であり、利用可能なモデルの完全な一覧ではない。
 
-- `fixed/scripted`: 固定応答モデル。オフライン検証・受け入れ確認専用
-- `openai|anthropic|google|deepseek/<model>`: AI SDK アダプター。
-  API キーは `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`,
-  `DEEPSEEK_API_KEY` から読む。未設定なら明示エラーで終了する
-- `openrouter|groq|xai|ollama|lmstudio/<model>`: OpenAI 互換アダプター。
-  既定のベース URL は各社の公開 URL。`OLLAMA_BASE_URL` / `LMSTUDIO_BASE_URL` で上書きできる
-- `compatible/<model> --base-url <url>`: 任意の OpenAI 互換 URL
-- `chatgpt/<model>`: OpenAI 公開 Responses API。事前に `auth login chatgpt` が必要
+`chat --model <provider>/<model>`、または `/connect <provider>/<model> [--base-url <url>]` で直接指定もできる。
+接続に失敗しても別の接続先へ自動で切り替えない。モデルの選択だけではAPI到達や利用権限は検証されない。
+
+| Provider | 認証 | 既定URL・設定 |
+| --- | --- | --- |
+| `openai` | `OPENAI_API_KEY` | OpenAI API |
+| `opencode` | `OPENCODE_API_KEY` | `https://opencode.ai/inference/openai/v1` / `OPENCODE_BASE_URL` |
+| `ollama`（Local） | 不要 | `http://127.0.0.1:11434/v1` / `OLLAMA_BASE_URL` |
+| `ollama-cloud` | `OLLAMA_API_KEY` | `https://ollama.com/v1` / `OLLAMA_CLOUD_BASE_URL` |
+| `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
+| `infron` | `INFRON_API_KEY` | `https://llm.onerouter.pro/v1` / `INFRON_BASE_URL` |
+| `hermes` | `HERMES_API_KEY` | `http://127.0.0.1:8642/v1` / `HERMES_BASE_URL` |
+| `chatgpt` | ChatGPT OAuth | `https://chatgpt.com/backend-api/codex/responses` |
+
+既存の `anthropic` / `google` / `deepseek` / `groq` / `xai` / `lmstudio` も直接指定と `/models` から利用できる。
+`compatible/<model> --base-url <url>` は任意のOpenAI互換API、`fixed/scripted` はオフライン検証専用。
+
+HermesはモデルAPIではなく、サーバー側でツールを実行する別エージェント。
+Hermes側の `API_SERVER_KEY` をDKHの `HERMES_API_KEY` に指定する。
+DKHの個別承認やStopでリモートの副作用を制御・停止できる保証はないため、接続時に確認画面を出す。
+
+## Ollama Local / Cloud
+
+`/connect` には **Ollama Local** と **Ollama Cloud** を別々に表示する。
+ローカルは従来どおり `/connect ollama`。クラウドは `/connect ollama-cloud` でキーとモデルを選ぶ。
+`/models ollama-cloud/` でもクラウド候補に絞り込める。
+
+クラウドの組み込み候補は `gemma4:31b`、`gpt-oss:120b`、`gpt-oss:20b`。
+一覧外は直接入力できる。候補は固定リストで、モデルの利用可否は送信時に確認する。
+[公式の直接接続手順](https://docs.ollama.com/api/openai-compatibility)に従い、
+`https://ollama.com/v1` と `OLLAMA_API_KEY` を使う。ローカルOllamaのインストール・サインインは不要。
+直接APIでは `:cloud` 接尾辞を付けず、[API一覧のモデル名](https://ollama.com/api/tags)をそのまま使う。
+`OLLAMA_BASE_URL` はLocalだけ、`OLLAMA_CLOUD_BASE_URL` はCloudだけに適用する。
+Cloudのキー未設定・通信失敗時にLocalへ自動で切り替えない。
 
 ## Sign in with ChatGPT
 
 ```sh
 dkh auth login chatgpt
+# またはDKH内で /connect → OpenAI → ChatGPT
 ```
 
-- PKCE (S256) で `https://auth.openai.com` から認可コードを取得する
-- ローカルの `http://localhost:1455` でコールバックを受け取り、`error` パラメータも扱う
-- 取得したトークンは `$DKH_HOME/chatgpt-auth.json`(既定 `~/.config/dkh/`)
-  にパーミッション 0600 で保存する(ハーネス専用の保存先。Claude Code 等とは共有しない)
-- チャット時は公開 Responses API (`/v1/responses`) に `store: false` で接続し、
-  ツールは `type: "function"` (`strict: false`) で宣伝する
+- PKCE (S256) とランダムなstateを使い、`https://auth.openai.com/oauth/authorize` で認証する。
+- ローカルの `http://127.0.0.1:1455/auth/callback` を待ち受けてからブラウザを開く。
+- 正しいパス・stateのコールバックだけを受理し、`/oauth/token` で一度だけ交換する。
+- トークンを `$DKH_HOME/chatgpt-auth.json`（既定 `~/.config/dkh/`）へ0600で保存した後、ブラウザに成功を表示する。
+- ポート使用中、認証拒否、交換エラーは端末に表示する。他プロセスは停止しない。Ctrl+Cで中止でき、コールバックサーバーも閉じる。
+- ブラウザが自動で開かなければ表示URLを手動で開く。SSH・コンテナではコールバックへ到達できる構成が必要。
+- 期限切れの認証は次の送信前に更新する。更新失敗時は `/connect chatgpt` で再認証する。モデル要求を自動再送しない。
+- ChatGPT用トークンはCodex Responsesへ送信する。通常のOpenAI APIキー用エンドポイントとは分離する。
+  `store: false`、フラットな `type: "function"` のツール定義を使う。
 
-実 OAuth フローのライブ検証は行っていない(外部認証が必要なため)。PKCE 生成、
-コールバック待ち、トークン交換、Responses API の SSE 解析は偽サーバで単体検証済み。
+## 検証範囲と参照
+
+実OAuthログインや有料モデルへのライブ送信は未検証。ローカルの偽HTTPサーバーで
+PKCE・コールバック・交換・保存・キャンセル・ポート競合・期限切れ更新とCLI接続を検証する。
+TTY入出力ストリームの統合テストに加え、`scripts/terminal-acceptance.py` は実PTYで操作する。
+PTY権限のないサンドボックスでは後者を実行できない。
+
+- [OpenAI CodexのOAuth実装](https://github.com/openai/codex/blob/main/codex-rs/login/src/server.rs)
+- [OpenCode Console](https://opencode.ai/docs/console/models/)
+- [Infron OpenAI-compatible API](https://infron.ai/docs/llm-apis/openai-compatible-api/overview)
+- [Hermes Agent API server](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server)

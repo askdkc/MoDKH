@@ -7,12 +7,13 @@ import { runAgentLoop } from '../agent/loop.ts';
 import { FixedModel, type FixedStep } from '../model/fixed.ts';
 import { parseModelRef, resolveModel, type ModelSpec } from '../model/factory.ts';
 import { selectModel } from './models.ts';
-import { loginChatGpt, type LoginOptions } from '../model/chatgpt/login.ts';
+import { loginChatGpt, currentChatGptTokens, type LoginOptions } from '../model/chatgpt/login.ts';
 import { loadChatGptTokens } from '../model/chatgpt/tokens.ts';
 import { ResponsesApiModel } from '../model/chatgpt/responses.ts';
 import { SessionStore, type Session, type MemoryObservation } from '../session/store.ts';
 import { openKiokukoMemory } from '../memory/kiokuko.ts';
-import { LineSource } from './lines.ts';
+import { createTerminal } from './terminal.ts';
+import { chooseProvider, chooseProviderModel, confirmRemoteAgent, CONNECT_PROVIDERS } from './providers.ts';
 import { TerminalApprovalGate } from './approval.ts';
 import { loadConfig, type LiteConfig } from './config.ts';
 
@@ -69,7 +70,7 @@ function defaultFixedSteps(): FixedStep[] {
   ];
 }
 
-export function buildModelFromRef(ref: string, baseUrl?: string, fixedSkip?: number): Model {
+export function buildModelFromRef(ref: string, baseUrl?: string, fixedSkip?: number, apiKey?: string): Model {
   if (ref.startsWith('fixed/')) {
     return new FixedModel(defaultFixedSteps(), { skip: fixedSkip ?? 0 });
   }
@@ -80,11 +81,13 @@ export function buildModelFromRef(ref: string, baseUrl?: string, fixedSkip?: num
     }
     return new ResponsesApiModel({
       accessToken: tokens.accessToken,
+      accountId: tokens.accountId,
+      credentials: currentChatGptTokens,
       model: ref.slice('chatgpt/'.length),
       baseUrl,
     });
   }
-  const spec: ModelSpec = { ...parseModelRef(ref), baseUrl };
+  const spec: ModelSpec = { ...parseModelRef(ref), baseUrl, apiKey };
   return resolveModel(spec);
 }
 
@@ -116,7 +119,10 @@ function summarizeArgs(args: Record<string, unknown>): string {
 export async function runChat(opts: ChatOptions): Promise<void> {
   const args = opts.args;
   const cwd = path.resolve(args['cwd'] ?? process.cwd());
+  const ui = createTerminal(cwd);
+  try {
   const config: LiteConfig = loadConfig();
+  const sessionKeys = new Map<string, string>();
 
   const store = new SessionStore();
   let session: Session;
@@ -125,17 +131,17 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     if (fs.realpathSync(session.cwd) !== fs.realpathSync(cwd)) {
       throw new Error(`セッションの作業ルートが異なる: ${session.cwd} → ${cwd}。元のルートで再開するか新規セッションを使う`);
     }
-    process.stdout.write(`セッション ${session.id} を再開します(${session.messages.length}メッセージ)\n`);
+    ui.write(`セッション ${session.id} を再開します(${session.messages.length}メッセージ)\n`);
     const unknown = session.unknownToolResults();
     if (unknown.length > 0) {
-      process.stdout.write(
+      ui.write(
         `注意: 前回の中断により結果が不明なツールが${unknown.length}件あります(${unknown.map((u) => u.name).join(', ')})。自動では再実行しません。\n`,
       );
     }
   } else {
     session = store.create(cwd, args['model'] ?? 'unconnected');
     const hint = args['model'] ? `モデル: ${args['model']}` : '未接続 — /connect <provider>/<model> で接続';
-    process.stdout.write(`セッション ${session.id} を開始します(${hint})\n`);
+    ui.write(`セッション ${session.id} を開始します(${hint})\n`);
   }
 
   // モデルは再開のたびに組み立てる(NamiDSH 方式: 起動時にモデル・ツール・セッションを1つのループに渡す)。
@@ -145,13 +151,15 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     ? buildModelFromRef(args['model'], args['base-url'], session.messages.filter(m => m.role === 'assistant').length)
     : null;
 
+  if (modelId?.startsWith('hermes/') && !await confirmRemoteAgent(ui)) { model = null; modelId = null; }
   const registry = new ToolRegistry(defaultTools());
 
   // 1つの行キューを入力ループと承認プロンプトで共有する
-  const lines = new LineSource();
+  const lines = ui;
+  ui.setModel(modelId);
   const approval = new TerminalApprovalGate({
-    ask: async (_prompt, signal) => (await lines.next(signal)) ?? '',
-    write: (t) => process.stdout.write(t),
+    ask: async (_prompt, signal) => (await ui.ask('承認: y で実行 / それ以外は拒否', signal)) ?? '',
+    write: (t) => ui.write(t),
   });
 
   // 任意メモリ(既定無効)。接続不能でも会話は続く。
@@ -168,6 +176,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
 
   let aborted = false;
   const runTurn = async (input: string, activeModel: Model): Promise<void> => {
+    ui.write(`\n▶ You: ${input}\n`);
     session.setStatus('active');
     session.append({ role: 'user', content: input });
     const checkpoint = () => session.persistFrom(0);
@@ -186,7 +195,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         memoryText = await memory.recall(input, undefined, AbortSignal.any([ac.signal, AbortSignal.timeout(1500)]));
         auditMemory({ stage: memoryText === null ? 'unavailable' : 'retrieved',
           ...(memoryText !== null ? { content: memoryText } : {}), elapsedMs: Date.now() - started });
-        if (memoryText === null && !ac.signal.aborted) process.stdout.write('(メモリ取得不可 — 本作業は継続)\n');
+        if (memoryText === null && !ac.signal.aborted) ui.write('(メモリ取得不可 — 本作業は継続)\n');
       }
       let supplied = false;
       const hooks = {
@@ -196,12 +205,12 @@ export async function runChat(opts: ChatOptions): Promise<void> {
             supplied = true;
           }
         },
-        onText: (d: string) => process.stdout.write(d),
+        onText: (d: string) => ui.write(d),
         onToolCall: (call: { name: string; args: Record<string, unknown> }) => {
-          process.stdout.write(`\n▶ ${call.name} ${summarizeArgs(call.args)}\n`);
+          ui.write(`\n▶ ${call.name} ${summarizeArgs(call.args)}\n`);
         },
         onToolResult: (r: { status: string; output: string }) => {
-          process.stdout.write(`  (結果: ${r.status}) ${r.output.split('\n')[0].slice(0, 120)}\n`);
+          ui.write(`  (結果: ${r.status}) ${r.output.split('\n')[0].slice(0, 120)}\n`);
         },
       };
       const outcome = await runAgentLoop(session.messages, {
@@ -218,7 +227,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       checkpoint();
       session.setStatus(outcome.outcome);
       if (outcome.outcome === 'complete') {
-        process.stdout.write('\n\n(応答終了 — 目標達成の検証は未確認。実行結果と成果物を確認してください)\n');
+        ui.write('\n\n(応答終了 — 目標達成の検証は未確認。実行結果と成果物を確認してください)\n');
         // 会話完了後、メモリ保存の提案(有効かつ書き込み可のときだけ)
         const lastAssistant = [...session.messages].reverse().find((m) => m.role === 'assistant');
         if (config.memory.enabled && lastAssistant?.role === 'assistant' && lastAssistant.content) {
@@ -228,14 +237,14 @@ export async function runChat(opts: ChatOptions): Promise<void> {
             ac.signal,
           );
           auditMemory({ stage: 'capture', outcome: result });
-          process.stdout.write(`\n(メモリ: ${result}${result === 'unknown' ? ' — 保存結果不明。再送せず確認してください' : ''})\n`);
+          ui.write(`\n(メモリ: ${result}${result === 'unknown' ? ' — 保存結果不明。再送せず確認してください' : ''})\n`);
         }
       } else if (outcome.outcome === 'interrupted') {
-        process.stdout.write('\n\n(中断しました。セッションを保存済み。--resume で再開できます)\n');
+        ui.write('\n\n(中断しました。セッションを保存済み。--resume で再開できます)\n');
       } else if (outcome.outcome === 'turn-limit') {
-        process.stdout.write(`\n\n(打ち切り: ${outcome.errorMessage})\n`);
+        ui.write(`\n\n(打ち切り: ${outcome.errorMessage})\n`);
       } else {
-        process.stdout.write(`\n\n(エラー: ${outcome.errorMessage})\n`);
+        ui.write(`\n\n(エラー: ${outcome.errorMessage})\n`);
       }
 
     } finally {
@@ -248,23 +257,25 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   const connectModel = async (ref: string, baseUrl?: string): Promise<void> => {
     try {
       parseModelRef(ref);
+      if (ref.startsWith('hermes/') && !await confirmRemoteAgent(ui)) return;
       if (ref.startsWith('chatgpt/') && loadChatGptTokens() === null) {
-        process.stdout.write('ChatGPT の認証を開始します。\n');
-        await loginChatGpt(opts.loginOptions);
+        ui.write('ChatGPT の認証を開始します。\n');
+        await loginChatGpt({ ...opts.loginOptions, write: text => ui.write(text) });
       }
       const fixedSkip = ref.startsWith('fixed/')
         ? session.messages.filter((m) => m.role === 'assistant').length : 0;
-      const nextModel = buildModelFromRef(ref, baseUrl, fixedSkip);
+      const nextModel = buildModelFromRef(ref, baseUrl, fixedSkip, sessionKeys.get(parseModelRef(ref).provider));
       model = nextModel;
       modelId = ref;
-      process.stdout.write(`接続しました: ${ref}\n`);
+      ui.setModel(ref);
+      ui.write(`接続しました: ${ref} (API到達は送信時に確認)\n`);
     } catch (e) {
-      process.stdout.write(`(接続できません: ${(e as Error).message})\n`);
+      ui.write(`(接続できません: ${(e as Error).message})\n`);
     }
   };
 
-  process.stdout.write('/connect で認証、/models [検索語] でモデル選択、/exit で終了\n');
-  process.stdout.write(model === null
+  ui.write('/connect で認証、/models [検索語] でモデル選択、/exit で終了\n');
+  ui.write(model === null
     ? '入力してください (/connect <provider>/<model> で接続、/exit で終了):\n'
     : '入力してください (/exit で終了):\n');
   try {
@@ -274,6 +285,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const line = input.trim();
       if (line.length === 0) continue;
       if (line === '/exit' || line === '/quit') break;
+      if (line === '/help') {
+        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /exit: 終了\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止  PgUp/PgDn: 履歴\nDKH_PLAIN=1 dkh: スクリーンリーダー・行入力モード\n');
+        continue;
+      }
       if (line === '/models' || line.startsWith('/models ')) {
         const selected = await selectModel(lines, line.slice('/models'.length).trim(), modelId);
         if (selected) await connectModel(selected);
@@ -282,33 +297,58 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       if (line === '/connect' || line.startsWith('/connect ')) {
         let rest = line.slice('/connect'.length).trim();
         if (!rest) {
-          process.stdout.write(modelId ? `接続中: ${modelId}\n` : '未接続です。\n');
-          process.stdout.write('認証先: 1. chatgpt (ブラウザ認証)\nAPI キーは各プロバイダーの環境変数を使用します。\n1 / chatgpt / <provider>/<model> を入力。空行・/cancel で戻る: \n');
-          rest = (await lines.next())?.trim() ?? '';
-          if (!rest || rest === '/cancel') continue;
-          if (rest.startsWith('/')) { lines.unread(rest); continue; }
-          if (rest === '1') rest = 'chatgpt';
+          rest = await chooseProvider(ui, modelId) ?? '';
+          if (!rest) continue;
+        }
+        if (rest === 'hermes agent' || rest === 'hermes-agent') rest = 'hermes';
+        const provider = CONNECT_PROVIDERS.find(p => p.value === rest);
+        if (provider) {
+          let target: string = provider.value;
+          if (target === 'openai') {
+            const method = await ui.choose('OpenAI — 認証方法', [
+              { value: 'chatgpt', label: 'ChatGPT', detail: 'ブラウザでOAuth認証' },
+              { value: 'openai', label: 'API key', detail: 'OPENAI_API_KEY' },
+            ]);
+            if (!method) continue;
+            target = method;
+          }
+          if (target === 'chatgpt') {
+            try {
+              ui.write('ChatGPT の認証を開始します。\n');
+              await loginChatGpt({ ...opts.loginOptions, write: text => ui.write(text) });
+              ui.write('認証しました: chatgpt。モデルを選んでください。\n');
+            } catch (e) { ui.write(`(認証できません: ${(e as Error).message})\n`); continue; }
+          } else if (provider.key && !process.env[provider.key] && !sessionKeys.has(target)) {
+            if (!ui.interactive) { ui.write(`${provider.key} を環境変数に設定して再接続してください。行入力モードではキーを表示させないため入力を受け付けません。\n`); continue; }
+            const key = (await ui.ask(`${provider.key} を入力（このセッションのみ保持 / 空行で戻る）`, undefined, true))?.trim();
+            if (!key || key === '/cancel') continue;
+            if (key.startsWith('/')) { ui.unread(key); continue; }
+            sessionKeys.set(target, key);
+          }
+          const selected = await chooseProviderModel(ui, target);
+          if (selected) await connectModel(selected);
+          continue;
         }
         if (rest === 'chatgpt') {
           try {
-            process.stdout.write('ChatGPT の認証を開始します。\n');
-            await loginChatGpt(opts.loginOptions);
-            process.stdout.write('認証しました: chatgpt。/models chatgpt でモデルを選んでください。\n');
+            ui.write('ChatGPT の認証を開始します。\n');
+            await loginChatGpt({ ...opts.loginOptions, write: text => ui.write(text) });
+            ui.write('認証しました: chatgpt。/models chatgpt でモデルを選んでください。\n');
           } catch (e) {
-            process.stdout.write(`(認証できません: ${(e as Error).message})\n`);
+            ui.write(`(認証できません: ${(e as Error).message})\n`);
           }
           continue;
         }
         const parsed = parseConnectArgs(rest);
         if (!parsed) {
-          process.stdout.write('使い方: /connect chatgpt または /connect <provider>/<model> [--base-url <url>]\n');
+          ui.write('使い方: /connect chatgpt または /connect <provider>/<model> [--base-url <url>]\n');
           continue;
         }
         await connectModel(parsed.ref, parsed.baseUrl);
         continue;
       }
       if (model === null) {
-        process.stdout.write('(モデル未接続: /connect <provider>/<model> [--base-url <url>] で接続してから送信する)\n');
+        ui.write('(モデル未接続: /connect <provider>/<model> [--base-url <url>] で接続してから送信する)\n');
         continue;
       }
       await runTurn(input, model);
@@ -322,5 +362,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     await memory.close().catch(e => process.stderr.write(`メモリ切断失敗: ${String(e)}\n`));
   }
   // EOF は目標達成の証拠ではない。直近の状態を維持する。
+  ui.close();
   process.stdout.write(`セッション ${session.id} を終了しました(状態: ${session.status})\n`);
+  } finally { ui.close(); }
 }

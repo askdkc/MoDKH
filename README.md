@@ -3,19 +3,20 @@
 単独で動く最小コーディングハーネス CLI
 
 - Node.js >= 24.16 / TypeScript
-- プラグイン基盤も Web UI も持たない
-- 外部サービスの API キーは環境変数から読む。失敗しても別の接続先へ自動で切り替えない
+- DKHロゴ・入力欄・コマンド補完を備えたターミナルUI（Web UIではない）
+- APIキーは環境変数、またはTTYの伏せ字入力で指定する。入力したキーはセッション内だけで保持し、会話履歴や設定ファイルには保存しない。失敗時に別の接続先へ自動で切り替えない
 
 ## インストール
 
 ```sh
+npm run build
 npm pack
 npm install -g ./dkh-0.1.0.tgz   # または tarball を隔離環境に導入
 ```
 
 ## 使い方
 
-モデル指定なしで起動すると、opencode のようにハーネスが開いて未接続で待つ。
+モデル指定なしで起動すると、DKHのブロックロゴと入力欄を表示し、未接続で待つ。
 接続は対話中の `/connect` で行う:
 
 ```sh
@@ -32,17 +33,27 @@ dkh session list
 
 ```text
 /connect <provider>/<model> [--base-url <url>]   # その場でモデルを接続(AI API / chatgpt / fixed)
-/connect                                      # 接続状態と認証メニューを表示
+/connect                                      # 7プロバイダーの検索・選択画面
+/connect openai                               # ChatGPT OAuth / APIキーの選択
 /connect chatgpt                              # 起動したままブラウザで ChatGPT 認証
 /models [検索語]                              # モデル名を部分一致検索し、番号で選択
 ```
 
-`/connect` → `1` (または `chatgpt`) で表示される URL をブラウザで開いて認証します。
-認証後は `/models chatgpt` でモデルを選択できます。未認証の ChatGPT モデルを
-直接指定した場合も認証を開始します。API キー方式は従来どおり環境変数を使います。
+`/connect` は **OpenAI / OpenCode / Ollama Local / Ollama Cloud / OpenRouter / Infron / Hermes Agent** を表示します。
+文字入力で絞り込み、↑↓で選択、Enterで決定、Escで戻ります。
+OpenAI → ChatGPT を選ぶとブラウザ認証を開始し、保存後にモデル選択へ進みます。
+APIキー方式では環境変数を使い、未設定ならTTYでキーを伏せ字入力できます。
+モデル候補にないIDは「モデルIDを直接入力」から指定できます。
+
+`/connect chatgpt` も引き続き使えます。ブラウザが開かない場合は表示URLを手動で開いてください。
+認証には同じマシンの `127.0.0.1:1455/auth/callback` を使います。
+ポート使用中は別のログイン処理を終了して再試行してください。他プロセスを自動終了しません。
+Ctrl+Cで認証を中止して入力画面へ戻ります。SSH・コンテナではブラウザから
+このコールバックへ到達できる必要があります。認証エラーは `/connect chatgpt` で再試行できます。
+期限切れのトークンは次の送信前に更新し、モデル要求を自動再送しません。
 
 `/models` は大文字小文字を区別しない部分一致検索です。空白区切りで複数語を指定できます。
-一覧内で検索語を入力すると再検索、番号で接続、`*` で全候補、空行・`/cancel` で戻ります。
+TTYでは↑↓・Enterで選択、Escで戻ります。行入力モードでは番号で接続、`*` で全候補、空行・`/cancel` で戻ります。
 一覧は組み込みの候補であり、利用可能なモデルの完全な一覧ではありません。
 一覧外は `/connect <provider>/<model>` で指定してください。
 接続に失敗しても以前の接続を維持し、メニュー操作は会話履歴に記録しません。
@@ -54,12 +65,33 @@ dkh session list
 | `fixed/scripted` | 固定応答(スクリプト) | なし |
 | `openai/`・`anthropic/`・`google/`・`deepseek/<model>` | AI SDK | 各社の API キー(環境変数) |
 | `openrouter/`・`groq/`・`xai/`・`ollama/`・`lmstudio/<model>` | OpenAI互換 | API キーまたはローカルサーバ |
+| `ollama-cloud/<model>` | Ollama Cloud（ローカル版とは別） | `OLLAMA_API_KEY`、任意で `OLLAMA_CLOUD_BASE_URL` |
 | `compatible/<model> --base-url <url>` | OpenAI互換 | 任意の OpenAI 互換 URL |
-| `chatgpt/<model>` | OpenAI 公開 Responses API | `/connect chatgpt` または `auth login chatgpt` |
+| `chatgpt/<model>` | ChatGPT Codex Responses（APIキー用APIとは別） | `/connect chatgpt` または `auth login chatgpt` |
+| `opencode/<model>` | OpenCode Console互換API | `OPENCODE_API_KEY`、任意で `OPENCODE_BASE_URL` |
+| `infron/<model>` | Infron互換API | `INFRON_API_KEY`、任意で `INFRON_BASE_URL` |
+| `hermes/hermes-agent` | Hermes Agent API server | `HERMES_API_KEY`、任意で `HERMES_BASE_URL` |
+
+既定の接続先はOpenCodeが `https://opencode.ai/inference/openai/v1`、
+Infronが `https://llm.onerouter.pro/v1`、Ollamaが `http://127.0.0.1:11434/v1`、
+Hermesが `http://127.0.0.1:8642/v1` です。Ollamaは `OLLAMA_BASE_URL` で変更できます。
+Ollama Cloudは `https://ollama.com/v1` に直接接続し、Ollamaのローカルインストールは不要です。
+[OllamaのAPIキー](https://ollama.com/settings/keys)を `OLLAMA_API_KEY` に設定するか、TTYのキー入力を使います。
+`/connect ollama-cloud` でクラウド専用のモデル候補、`/connect ollama` でローカル候補を選べます。
+例: `/connect ollama-cloud/gemma4:31b`。`/models ollama-cloud/` でも検索できます。
+直接クラウドへ送るIDには `:cloud` を付けず、[クラウドAPIのモデル名](https://docs.ollama.com/cloud/models)を使います。
+ローカル用の `OLLAMA_BASE_URL` とクラウド用の `OLLAMA_CLOUD_BASE_URL` は独立し、キーもローカルへ転送しません。
+Hermes側の `API_SERVER_KEY` と同じ値をDKHの `HERMES_API_KEY` に指定します。
+Hermesはサーバー側でツールを実行する別エージェントです。DKHの個別承認やStopだけで
+リモートの副作用を制御・停止できる保証はありません。接続時にこの違いを確認します。
+「接続しました」はモデルと認証情報の選択を示し、API到達・モデル利用可否は送信時に確認します。
 
 端末での操作:
 
-- 会話は `> ` プロンプトに入力する。`/exit` で終了
+- 入力欄の `/` でコマンド補完。↑↓・Tab・Enterで選択し、`/exit` で終了する
+- Ctrl+Uで入力を消去、左右キーで編集、PageUp/PageDownで画面履歴を確認する
+- `NO_COLOR=1 dkh` で色を無効化。`DKH_PLAIN=1 dkh` はスクリーンリーダー向けの行入力モード
+- パイプ入力・`TERM=dumb` は自動的に行入力へ切り替える。行入力モードのAPIキーは環境変数で指定する
 - 未接続のままメッセージを送ると、実行せずに `/connect` の案内を出す。
   接続はセッション内のみ有効(設定ファイルには書かない)
 - 編集・コマンド実行は 1 件ずつ差分(またはコマンド)を表示して承認を求める。`y` で実行、それ以外は拒否
@@ -116,6 +148,7 @@ JSONLの `memory` イベントは `retrieved`・`supplied`・`unavailable`・`ca
 npm run build    # tsc ビルド(dist/ 生成)
 npm test         # node --test によるオフライン回帰テスト
 sh scripts/acceptance.sh   # tarball を隔離環境へ導入しての受け入れ確認
+python3 scripts/terminal-acceptance.py  # POSIX PTYでの実端末検証（Python 3・PTY権限が必要）
 ```
 
 CI は `.github/workflows/ci.yml` で macOS arm64 と Linux x64 の両方で同じ手順を実行する。
@@ -134,5 +167,6 @@ CI は `.github/workflows/ci.yml` で macOS arm64 と Linux x64 の両方で同�
 ## 未検証の範囲
 
 - 実モデルAPIとChatGPTの実OAuth、実Kiokuko MCPは未検証。偽サーバを使う境界・CLIテストで代替している
+- TUIは端末ストリームの統合テストでも確認する。PTYテストにはOSの端末デバイス権限が必要で、サンドボックスによっては実行できない。スクリーンリーダーでの実機評価は未実施
 - 記憶が実際の判断で同じ誤りを防ぐ割合、長時間運用、複数CLIによる同時再開は未検証
 - 意図的にprocess groupを離脱したdaemonは停止保証の対象外。OS全体を隔離するsandboxではない

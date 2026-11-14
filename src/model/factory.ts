@@ -11,6 +11,7 @@ export interface ModelSpec {
   model: string;
   /** compatible プロバイダーやプリセット上書き用の OpenAI互換 URL。 */
   baseUrl?: string;
+  apiKey?: string;
 }
 
 export class MissingKeyError extends Error {}
@@ -37,9 +38,13 @@ const PRESETS: Record<string, Preset> = {
   google: { env: 'GOOGLE_GENERATIVE_AI_API_KEY' },
   deepseek: { env: 'DEEPSEEK_API_KEY' },
   openrouter: { env: 'OPENROUTER_API_KEY', baseURL: 'https://openrouter.ai/api/v1' },
+  opencode: { env: 'OPENCODE_API_KEY', baseURL: 'https://opencode.ai/inference/openai/v1', baseURLVar: 'OPENCODE_BASE_URL' },
+  infron: { env: 'INFRON_API_KEY', baseURL: 'https://llm.onerouter.pro/v1', baseURLVar: 'INFRON_BASE_URL' },
+  hermes: { env: 'HERMES_API_KEY', baseURL: 'http://127.0.0.1:8642/v1', baseURLVar: 'HERMES_BASE_URL' },
   groq: { env: 'GROQ_API_KEY', baseURL: 'https://api.groq.com/openai/v1' },
   xai: { env: 'XAI_API_KEY', baseURL: 'https://api.x.ai/v1' },
   ollama: { env: null, baseURL: 'http://127.0.0.1:11434/v1', baseURLVar: 'OLLAMA_BASE_URL' },
+  'ollama-cloud': { env: 'OLLAMA_API_KEY', baseURL: 'https://ollama.com/v1', baseURLVar: 'OLLAMA_CLOUD_BASE_URL' },
   lmstudio: { env: null, baseURL: 'http://127.0.0.1:1234/v1', baseURLVar: 'LMSTUDIO_BASE_URL' },
   compatible: { env: null },
 };
@@ -64,7 +69,7 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
   if (spec.provider === 'compatible' && !baseUrl) {
     throw new Error('compatible プロバイダーには --base-url で互換APIのURLが必要');
   }
-  const key = preset.env ? env[preset.env] : undefined;
+  const key = spec.apiKey ?? (preset.env ? env[preset.env] : undefined);
 
   const id = `${spec.provider}/${spec.model}`;
   if (preset.env && !key) {
@@ -75,7 +80,7 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
   }
   switch (spec.provider) {
     case 'openai':
-      return new AiSdkModel({ id, languageModel: createOpenAI({ apiKey: key! })(spec.model) });
+      return new AiSdkModel({ id, languageModel: createOpenAI({ apiKey: key!, baseURL: baseUrl })(spec.model) });
     case 'anthropic':
       return new AiSdkModel({ id, languageModel: createAnthropic({ apiKey: key! })(spec.model) });
     case 'google':
@@ -86,7 +91,7 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
     case 'deepseek':
       return new AiSdkModel({ id, languageModel: createDeepSeek({ apiKey: key! })(spec.model) });
     default:
-      // OpenAI互換: openrouter / groq / xai / ollama / lmstudio / compatible
+      // OpenAI互換プリセット（Ollama Local / Cloud はURLと認証情報を分離）。
       return new AiSdkModel({
         id,
         languageModel: createOpenAICompatible({

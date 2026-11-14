@@ -36,6 +36,8 @@ function sse(res: http.ServerResponse, chunks: Chunk[]): void {
 
 interface RecordedRequest {
   body: Record<string, unknown>;
+  url?: string;
+  authorization?: string;
 }
 
 /** OpenAI互換の最小偽サーバ。1回目はツール要求、2回目は最終テキストを返す。 */
@@ -48,7 +50,7 @@ async function startFakeServer(): Promise<{ url: string; close(): Promise<void>;
     });
     req.on('end', () => {
       const body = JSON.parse(raw) as Record<string, unknown>;
-      requests.push({ body });
+      requests.push({ body, url: req.url, authorization: req.headers.authorization });
       const messages = (body['messages'] ?? []) as { role: string }[];
       const hasToolResult = messages.some((m) => m.role === 'tool');
       if (!hasToolResult) {
@@ -125,6 +127,29 @@ test('OpenAI互換アダプターが偽SSEサーバでストリーミング+ツ�
     await fake.close();
   }
 });
+
+for (const [provider, keyName, baseName] of [
+  ['opencode', 'OPENCODE_API_KEY', 'OPENCODE_BASE_URL'],
+  ['infron', 'INFRON_API_KEY', 'INFRON_BASE_URL'],
+  ['hermes', 'HERMES_API_KEY', 'HERMES_BASE_URL'],
+  ['ollama', '', 'OLLAMA_BASE_URL'],
+  ['ollama-cloud', 'OLLAMA_API_KEY', 'OLLAMA_CLOUD_BASE_URL'],
+]) {
+  test(`${provider} reaches its configured OpenAI-compatible endpoint with the exact model/key`, async () => {
+    const fake = await startFakeServer();
+    try {
+      const env = { [baseName]: fake.url, ...(keyName ? { [keyName]: 'test-key' } : {}) };
+      const model = resolveModel({ provider, model: 'org/model' }, env);
+      const events = [];
+      for await (const event of model.stream({ messages: [{ role: 'user', content: 'test' }], tools: [] }, new AbortController().signal)) events.push(event);
+      assert.equal(fake.requests.length, 1);
+      assert.equal(fake.requests[0].url, '/v1/chat/completions');
+      assert.equal(fake.requests[0].body.model, 'org/model');
+      assert.equal(fake.requests[0].authorization, keyName ? 'Bearer test-key' : undefined);
+      assert.ok(events.some(event => event.type === 'text-delta'));
+    } finally { await fake.close(); }
+  });
+}
 
 test('APIキー未設定は明示エラーとなり、別の接続先へ切り替えない', () => {
   const env: NodeJS.ProcessEnv = {};

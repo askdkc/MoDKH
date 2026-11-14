@@ -62,7 +62,7 @@ test('PKCE ペアと認可URLがS256で作られる', () => {
       state: 'st-1',
     }),
   );
-  assert.equal(url.origin + url.pathname, 'https://auth.example.test/authorize');
+  assert.equal(url.origin + url.pathname, 'https://auth.example.test/oauth/authorize');
   assert.equal(url.searchParams.get('response_type'), 'code');
   assert.equal(url.searchParams.get('client_id'), 'client-x');
   assert.equal(url.searchParams.get('code_challenge'), challenge);
@@ -109,7 +109,7 @@ test('auth login chatgpt は認可URL→ローカル受信→交換→保存ま�
   await withHomeAsync(async () => {
     const tokenRequests: Record<string, string>[] = [];
     const server = http.createServer((req, res) => {
-      if (req.url?.startsWith('/token')) {
+      if (req.url === '/oauth/token') {
         let raw = '';
         req.on('data', (d: Buffer) => (raw += d.toString('utf8')));
         req.on('end', () => {
@@ -137,7 +137,7 @@ test('auth login chatgpt は認可URL→ローカル受信→交換→保存ま�
           // 検証ではブラウザの代わりに、認可URLから state を取ってリダイレクトを再現する
           const u = new URL(url);
           await fetch(
-            `http://127.0.0.1:${redirectPort}/callback?code=code-9&state=${u.searchParams.get('state')}`,
+            `${u.searchParams.get('redirect_uri')}?code=code-9&state=${u.searchParams.get('state')}`,
           );
         },
       });
@@ -242,7 +242,7 @@ test('Responses API アダプターが偽SSEでストリーミング+関数往�
 });
 
 test('Responses API のHTTPエラーは error としてループに伝わる', async () => {
-  const server = http.createServer((req, res) => {
+  const server = http.createServer((_req, res) => {
     res.writeHead(500, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: { message: 'boom' } }));
   });

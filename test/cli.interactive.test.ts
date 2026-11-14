@@ -8,12 +8,12 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 const entry = process.env['DKH_TEST_CHAT'] ?? new URL('../src/cli/chat.ts', import.meta.url).href;
-async function chat(input: string, options = '{}') {
+async function chat(input: string, options = '{}', env: NodeJS.ProcessEnv = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-interactive-'));
   try {
     const child = spawn(process.execPath, ['--input-type=module', '-e',
       `import { runChat } from ${JSON.stringify(entry)}; await runChat({args: {}, ...${options}});`],
-    { env: { ...process.env, DKH_HOME: home, OPENAI_API_KEY: '' }, stdio: ['pipe', 'pipe', 'pipe'] });
+    { env: { ...process.env, DKH_HOME: home, OPENAI_API_KEY: '', OLLAMA_API_KEY: '', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     child.stdout.on('data', (data) => { stdout += data; });
     child.stderr.on('data', (data) => { stderr += data; });
@@ -51,6 +51,29 @@ test('モデル選択の失敗後も既存接続を保つ', async () => {
   assert.match(stdout, /接続中: fixed\/scripted/);
 });
 
+test('/connect lists all seven providers and can return without sending a message', async () => {
+  const { stdout, session } = await chat('/connect\n\n/exit\n');
+  for (const provider of ['OpenAI', 'OpenCode', 'Ollama Local', 'Ollama Cloud', 'OpenRouter', 'Infron', 'Hermes Agent']) assert.ok(stdout.includes(provider), provider);
+  assert.doesNotMatch(session, /"role":"user"/);
+});
+
+test('cloud and local pickers select separate models; cloud failure preserves the existing connection', async () => {
+  const { stdout, session } = await chat('/connect\nollama-cloud\n1\n/connect\n\n/connect ollama\n1\n/connect\n\n/exit\n', '{}', { OLLAMA_API_KEY: 'test-cloud-key' });
+  assert.match(stdout, /接続しました: ollama-cloud\/gemma4:31b/);
+  assert.match(stdout, /接続しました: ollama\/llama3.2/);
+  assert.doesNotMatch(stdout + session, /test-cloud-key/);
+  const missing = await chat('/connect fixed/scripted\n/connect ollama-cloud\n/connect\n\n/exit\n');
+  assert.match(missing.stdout, /OLLAMA_API_KEY/);
+  assert.match(missing.stdout, /接続中: fixed\/scripted/);
+});
+
+test('/models can search the cloud-only namespace', async () => {
+  const { stdout } = await chat('/models ollama-cloud/\n1\n/exit\n', '{}', { OLLAMA_API_KEY: 'test-cloud-key' });
+  assert.match(stdout, /1\. ollama-cloud\/gemma4:31b/);
+  assert.doesNotMatch(stdout, /ollama\/llama3.2/);
+  assert.match(stdout, /接続しました: ollama-cloud\/gemma4:31b/);
+});
+
 test('/connect は認証先を案内し、キャンセルできる', async () => {
   const { stdout } = await chat('/connect\n\n/exit\n');
   assert.match(stdout, /chatgpt/);
@@ -61,7 +84,7 @@ test('/connect は認証先を案内し、キャンセルできる', async () =>
 test('/connect chatgpt はログイン処理を通り、モデル選択に進む', async () => {
   let exchanges = 0;
   const issuer = http.createServer((req, res) => {
-    assert.equal(req.url, '/token');
+    assert.equal(req.url, '/oauth/token');
     exchanges++;
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ access_token: 'test-token' }));

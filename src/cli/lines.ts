@@ -9,35 +9,30 @@ export class LineSource {
   constructor(stdin?: NodeJS.ReadableStream) {
     this.stdin = stdin ?? process.stdin;
     this.stdin.setEncoding?.('utf8');
-    this.stdin.on('data', (chunk: string) => {
-      this.buffer += chunk;
-      let at = this.buffer.indexOf('\n');
-      while (at >= 0) {
-        this.queue.push(this.buffer.slice(0, at).replace(/\r$/, ''));
-        this.buffer = this.buffer.slice(at + 1);
-        at = this.buffer.indexOf('\n');
-      }
-      this.wake();
-    });
-    this.stdin.on('end', () => {
-      // 残りの未改行データも1行として扱う
-      if (this.buffer.length > 0) {
-        this.queue.push(this.buffer.replace(/\r$/, ''));
-        this.buffer = '';
-      }
-      this.closed = true;
-      this.wake();
-    });
-    this.stdin.on('error', () => {
-      this.closed = true;
-      this.wake();
-    });
+    this.stdin.on('data', this.onData);
+    this.stdin.on('end', this.onEnd);
+    this.stdin.on('error', this.onError);
   }
 
+  private onData = (chunk: string): void => {
+    this.buffer += chunk;
+    let at = this.buffer.indexOf('\n');
+    while (at >= 0) {
+      this.queue.push(this.buffer.slice(0, at).replace(/\r$/, ''));
+      this.buffer = this.buffer.slice(at + 1);
+      at = this.buffer.indexOf('\n');
+    }
+    this.wake();
+  };
+  private onEnd = (): void => {
+    if (this.buffer.length > 0) { this.queue.push(this.buffer.replace(/\r$/, '')); this.buffer = ''; }
+    this.closed = true;
+    this.wake();
+  };
+  private onError = (): void => { this.closed = true; this.wake(); };
+
   /** メニュー中のコマンドを通常入力へ戻す。 */
-  unread(line: string): void {
-    this.queue.unshift(line);
-  }
+  unread(line: string): void { this.queue.unshift(line); }
 
   /** 次の1行。入力終端なら null。 */
   next(signal?: AbortSignal): Promise<string | null> {
@@ -56,6 +51,17 @@ export class LineSource {
       this.waiters.push(finish);
       signal?.addEventListener('abort', onAbort, { once: true });
     });
+  }
+
+  close(): void {
+    this.closed = true;
+    this.stdin.removeListener('data', this.onData);
+    this.stdin.removeListener('end', this.onEnd);
+    this.stdin.removeListener('error', this.onError);
+    this.stdin.pause();
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const waiter of waiters) waiter(null);
   }
 
   private wake(): void {
