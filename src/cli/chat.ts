@@ -28,7 +28,7 @@ import { chooseProvider, chooseProviderModel, confirmRemoteAgent, CONNECT_PROVID
 import { TerminalApprovalGate } from './approval.ts';
 import { DEFAULT_POLICY, describePolicy, parsePermissionPolicy, POLICY_LEVELS } from './permissions.ts';
 import { DEFAULT_MAX_TURNS, MAX_TURNS_CEILING, parseMaxTurns } from './limits.ts';
-import { loadConfig, saveConfig, updateConfig, parseTimeoutMs, type LiteConfig } from './config.ts';
+import { loadConfig, updateConfig, parseTimeoutMs, type LiteConfig } from './config.ts';
 import { keysPath, loadSavedKeys, saveKey, removeKey, savedKeyProviders, resolveApiKey } from './keys.ts';
 import { parseReasoningLevel, REASONING_LEVELS, type ReasoningLevel } from '../model/reasoning.ts';
 import { recordSessionRecord } from '../session/workspace.ts';
@@ -54,7 +54,9 @@ const SYSTEM_PROMPT =
   + '待たずに別の作業を進める。結果は job_output で読み、止めるときは job_kill を使う。'
   + '前景のまま制限時間に達した場合もジョブへ移り、job_id が返る。'
   + 'コマンドはOSユーザー権限で動くため、承認内容と作業対象を守る。'
+  + 'ユーザーの依頼に必要な調査・変更・検証を実行し、説明や計画だけで止めない。'
   + '元の依頼を保ち、実行終了・テスト成功・目標達成を区別する。'
+  + 'ツールの error / denied / not-executed は成功ではない。修正可能なら原因を調べて修正し、編集・検証に成功した証拠だけを報告する。'
   + '結果不明の操作を再送せず、状態を調べる。未確認の事項は未確認と報告する。'
   + '必要なときは list_subagents で有効な役割を調べ、run_subagent で限定した仕事を委譲できる。子の報告は検証済みの証拠ではない。'
   + 'シンボル探索では文字列検索より code_outline / code_definition / code_references / code_hover を優先する。'
@@ -106,18 +108,6 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   // 前回使ったモデルを --model 未指定のとき復元する(config は /connect で更新済み)。
   const savedModelRef = typeof config.model === 'string' ? config.model : undefined;
   const savedModelBaseUrl = typeof config.modelBaseUrl === 'string' && config.modelBaseUrl.length > 0 ? config.modelBaseUrl : undefined;
-  let restoredRef: string | null = null;
-  let restoredModel: Model | null = null;
-  if (!args['model'] && savedModelRef) {
-    try {
-      const provider = parseModelRef(savedModelRef).provider;
-      restoredModel = buildModelFromRef(savedModelRef, savedModelBaseUrl, 0, resolveApiKey(provider), { timeoutMs });
-      restoredRef = savedModelRef;
-      // 復元は静かに行う(接続中モデルはステータス行に既に出る)。失敗だけは理由を表示する。
-    } catch (e) {
-      ui.write(`(前回のモデル ${savedModelRef} を復元できません: ${(e as Error).message})\n`);
-    }
-  }
   let session: Session;
   if (args['resume']) {
     session = store.load(args['resume']);
@@ -133,29 +123,41 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       );
     }
   } else {
-    session = store.create(cwd, restoredRef ?? args['model'] ?? 'unconnected');
-    const hint = session.model === 'unconnected' ? '未接続 — /connect <provider>/<model> で接続' : `モデル: ${session.model}`;
-    ui.write(`セッション ${session.id} を開始します(${hint})\n`);
+    session = store.create(cwd, 'unconnected');
   }
 
-  // モデルは再開のたびに組み立てる(NamiDSH 方式: 起動時にモデル・ツール・セッションを1つのループに渡す)。
-  // --model がない場合は前回のモデル(あれば)で接続し、なければ未接続で開く(opencode 方式の拡張)。
-  let modelId: string | null = args['model'] ?? restoredRef;
-  let model: Model | null = restoredModel;
-  const initialRef = args['model'] ?? restoredRef;
-  if (initialRef && initialRef !== restoredRef) {
-    model = buildModelFromRef(initialRef, args['base-url'],
-      session.messages.filter(m => m.role === 'assistant' && m.origin !== 'manual').length,
-      resolveApiKey(parseModelRef(initialRef).provider), { timeoutMs });
-  }
-
-  if (modelId?.startsWith('hermes/') && !await confirmRemoteAgent(ui)) { model = null; modelId = null; }
-  let connectionBaseUrl = args['base-url'];
-  // --model で起動した接続も「前回のモデル」として次回起動に残す(失敗しても会話は続く)。
-  if (modelId !== null && model !== null) {
+  // Explicit selection wins; resume uses the session's own connection before global defaults.
+  // A persisted offline fixture must never become an implicit coding model.
+  const sessionRef = args['resume'] && session.model !== 'unconnected' ? session.model : undefined;
+  const candidate = args['model'] ?? sessionRef ?? savedModelRef;
+  let connectionBaseUrl = args['base-url'] ?? (sessionRef && !args['model']
+    ? session.modelBaseUrl ?? (sessionRef === savedModelRef ? savedModelBaseUrl : undefined)
+    : !args['model'] || args['model'] === savedModelRef ? savedModelBaseUrl : undefined);
+  let modelId: string | null = null;
+  let model: Model | null = null;
+  if (candidate && (!candidate.startsWith('fixed/') || args['model'])) {
     try {
-      updateConfig((c) => { c.model = modelId; c.modelBaseUrl = connectionBaseUrl; });
-    } catch (e) { ui.write(`(前回のモデル保存に失敗: ${(e as Error).message})\n`); }
+      model = buildModelFromRef(candidate, connectionBaseUrl,
+        session.messages.filter(m => m.role === 'assistant' && m.origin !== 'manual').length,
+        resolveApiKey(parseModelRef(candidate).provider), { timeoutMs });
+      modelId = candidate;
+    } catch (e) {
+      if (args['model']) throw e;
+      ui.write(`(モデル ${candidate} を復元できません: ${(e as Error).message})\n`);
+    }
+  }
+  if (modelId?.startsWith('hermes/') && !await confirmRemoteAgent(ui)) { model = null; modelId = null; }
+  if (modelId !== null && model !== null) {
+    session.setConnection(modelId, connectionBaseUrl);
+    if (!modelId.startsWith('fixed/')) {
+      try {
+        updateConfig((c) => { c.model = modelId; c.modelBaseUrl = connectionBaseUrl; });
+      } catch (e) { ui.write(`(前回のモデル保存に失敗: ${(e as Error).message})\n`); }
+    } else ui.write('(検証専用: fixed/scripted は依頼を解釈せず固定手順を実行します。通常作業には /connect でモデルを選択してください)\n');
+  }
+  if (!args['resume'] && !ui.interactive) {
+    const hint = modelId === null ? '未接続 — /connect <provider>/<model> で接続' : `モデル: ${modelId}`;
+    ui.write(`セッション ${session.id} を開始します(${hint})\n`);
   }
 
   // 1つの行キューを入力ループと承認プロンプトで共有する
@@ -298,7 +300,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           ui.write(`\n▶ ${call.name} ${summarizeArgs(call.args)}\n`);
         },
         onToolResult: (r: { status: string; output: string }) => {
-          ui.write(`  (結果: ${r.status}) ${r.output.split('\n')[0].slice(0, 120)}\n`);
+          const output = r.output.split('\n');
+          ui.write(`  (結果: ${r.status}) ${output[0].slice(0, 240)}\n`);
+          for (const line of output.slice(1, 13)) ui.write(`  ${line.slice(0, 240)}\n`);
+          if (output.length > 13) ui.write(`  … 残り${output.length - 13}行（全文はセッション記録）\n`);
         },
       };
       const outcome = direct
@@ -366,12 +371,17 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ? session.messages.filter((m) => m.role === 'assistant' && m.origin !== 'manual').length : 0;
       const provider = parseModelRef(ref).provider;
       const nextModel = buildModelFromRef(ref, baseUrl, fixedSkip, resolveApiKey(provider, process.env) ?? sessionKeys.get(provider), { timeoutMs });
+      session.setConnection(ref, baseUrl);
       model = nextModel;
       modelId = ref;
       connectionBaseUrl = baseUrl;
       ui.setModel(ref);
       ui.write(`接続しました: ${ref} (API到達は送信時に確認)\n`);
       // 次回起動時に同じ接続で開けるよう保存する(workspace外の設定ディレクトリに書く)。
+      if (ref.startsWith('fixed/')) {
+        ui.write('(検証専用: 依頼を解釈しない固定手順です。通常の接続設定には保存しません)\n');
+        return;
+      }
       try {
         updateConfig((c) => { c.model = ref; c.modelBaseUrl = baseUrl; });
       } catch (e) { ui.write(`(前回のモデル保存に失敗: ${(e as Error).message} — このセッションでは使用します)\n`); }
@@ -444,10 +454,12 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     await connectModel(parsed.ref, parsed.baseUrl);
   };
 
-  ui.write('/connect で認証、/models [検索語] でモデル選択、/agents で子の一覧、/exit で終了\n');
-  ui.write(model === null
-    ? '入力してください (/connect <provider>/<model> で接続、/exit で終了):\n'
-    : '入力してください (/exit で終了):\n');
+  if (!ui.interactive) {
+    ui.write('/connect で認証、/models [検索語] でモデル選択、/agents で子の一覧、/exit で終了\n');
+    ui.write(model === null
+      ? '入力してください (/connect <provider>/<model> で接続、/exit で終了):\n'
+      : '入力してください (/exit で終了):\n');
+  }
   try {
     for (;;) {
       const input = await lines.next();
@@ -469,7 +481,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         approval.setPolicy(next);
         if (flag === '--save') {
           try {
-            saveConfig({ ...config, permissions: next });
+            updateConfig((c) => { c.permissions = next; });
             ui.write(`(設定に保存しました: permissions=${next})\n`);
           } catch (e) { ui.write(`(設定を保存できません: ${(e as Error).message} — このセッションでは有効です)\n`); }
         }

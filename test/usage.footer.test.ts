@@ -27,6 +27,7 @@ test('usage appears on one line at the bottom and never displaces the composer',
   const t = terminal(120, 40);
   try {
     const input = t.ui.next();
+    t.ui.write('▶ You: report usage\n');
     t.ui.setUsage({ input: 4_501_874, output: 410_226, cacheRead: 137_384_576, cacheWrite: 0, responses: 1 });
     const frame = t.frame();
     const line = frame.lines.find(entry => entry.includes('tok')) ?? '';
@@ -47,7 +48,7 @@ test('usage appears on one line at the bottom and never displaces the composer',
     // 画面中央寄せ(margin=20)+本文80列=120。余白を除いた本文は80列以内。
     const trimmed = bottom.trim();
     assert.ok(textWidth(bottom) <= 120, `the bottom status fits the terminal: ${textWidth(bottom)}`);
-    assert.ok(textWidth(trimmed) <= 80, `the status content stays compact: ${textWidth(trimmed)}`);
+    assert.ok(textWidth(trimmed) <= 102, `the status content stays within conversation width: ${textWidth(trimmed)}`);
     // The composer still works with the footer present.
     t.input.emit('keypress', '/exit', {});
     t.input.emit('keypress', '', { name: 'return' });

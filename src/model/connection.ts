@@ -40,7 +40,7 @@ function defaultFixedSteps(): FixedStep[] {
       { type: 'finish', stopReason: 'tool-calls' },
     ],
     [
-      delta('確認が完了しました。README.md に追記し、node のバージョンを表示しました。'),
+      delta('固定シナリオを終了しました。各操作の成否は上のツール結果を参照してください。ユーザーの依頼は解釈していません。'),
       { type: 'finish', stopReason: 'stop' },
     ],
   ];

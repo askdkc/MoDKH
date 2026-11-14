@@ -19,6 +19,35 @@ function terminal(columns = 100, rows = 30) {
     key: (name: string, value = '', ctrl = false) => input.emit('keypress', value, { name, ctrl }) };
 }
 
+test('welcome groups logo and composer in the middle like the reference, including resize and menus', async () => {
+  const t = terminal(160, 48);
+  try {
+    t.ui.setModel('compatible/example');
+    const pending = t.ui.next();
+    const check = (rows: number) => {
+      const screen = screenFrom(t.raw(), rows);
+      const top = screen.findIndex(line => line.includes('██████╗'));
+      const input = screen.findIndex(line => line.includes('何を調べますか'));
+      const bottom = screen.findIndex(line => line.includes('/workspace'));
+      assert.ok(input - top <= 10, `logo and input must be adjacent: ${top}, ${input}`);
+      assert.ok(Math.abs((top + bottom) / 2 - (rows - 1) / 2) <= 2, `group must be centered: ${top}, ${bottom}`);
+      assert.ok(rows - bottom > 5, 'welcome input must not be pinned to the bottom');
+    };
+    check(48);
+    t.output.rows = 36; t.output.emit('resize'); check(36);
+    t.key('slash', '/');
+    assert.equal((screenFrom(t.raw(), 36).join('\n').match(/Commands/g) ?? []).length, 1);
+    t.key('u', '', true);
+    check(36);
+    t.key('return'); await pending;
+    t.ui.write('▶ You: do the work\n');
+    const active = t.ui.next();
+    const screen = screenFrom(t.raw(), 36);
+    assert.equal(screen.findIndex(line => line.includes('/workspace')), 35, 'conversation composer stays at bottom');
+    t.key('return'); await active;
+  } finally { t.ui.close(); }
+});
+
 test('the welcome block stays compact, and a conversation widens to ~85% of the screen', async () => {
   const t = terminal(200, 40);
   try {

@@ -198,7 +198,7 @@ test('resize keeps the live block within its width and history remains streamed'
     t.input.emit('keypress', '日本🙂', {});
     t.output.columns = 24; t.output.rows = 10; t.output.emit('resize');
     const narrow = t.text().split('\n');
-    const divider = narrow.findIndex(line => line.includes('──'));
+    const divider = narrow.findIndex(line => line.includes('│'));
     assert.ok(divider >= 0, 'the composer block is on screen');
     assert.ok(narrow.slice(divider).every(line => textWidth(line) <= 24), `live block respects the new width: ${JSON.stringify(narrow)}`);
     t.output.columns = 160; t.output.rows = 30; t.output.emit('resize');

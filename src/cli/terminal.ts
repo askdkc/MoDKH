@@ -100,7 +100,7 @@ const MAX_INPUT_BYTES = 128 * 1024;
 /**
  * メインスクリーンに流し込むストリーミングUI。
  * - 完成したトランスクリプト行は一度だけ出力し、その後は端末のスクロールバックへ流れる
- * - 入力欄・状態行・ライブ推論は画面最下部の固定ブロックとして毎回再描画する
+ * - 起動時はロゴと入力欄を中央にまとめ、会話開始後は入力欄を最下部に描画する
  * 代替スクリーン(?1049)は使わない。これが「起動前バッファしか辿れない」問題の原因だった。
  */
 export class TerminalUI implements ChatTerminal {
@@ -147,6 +147,7 @@ export class TerminalUI implements ChatTerminal {
   private readonly colorizer = new TranscriptColorizer();
   private colorizerState: ColorizerState = { mode: 'text', inDiff: false };
   private palette: Palette = paletteFor('dark');
+  private panelStyle = '48;5;235';
   private backgroundProbe = false;
   /** 背景プローブ中(返信待ち)。時間による入力抑制には使わない。 */
   private backgroundWaiting = false;
@@ -171,7 +172,7 @@ export class TerminalUI implements ChatTerminal {
     process.on('exit', this.close);
     input.resume();
     output.write('\x1b[?2004h');
-    // 起動時は一度だけ画面を消して、ロゴを上端に整えて出す(前回実行の残りを見せない)。
+    // 起動時は一度だけ画面を消す(前回実行の残りを見せない)。
     this.clearPending = true;
     if (this.backgroundProbe) this.output.write('\x1b]11;?\x1b\\');
     this.render();
@@ -196,7 +197,11 @@ export class TerminalUI implements ChatTerminal {
       if (osc === null) return;
       finishProbe();
       const classified = classifyBackground(osc, process.env);
-      if (classified !== null) { this.palette = paletteFor(classified); this.render(); }
+      if (classified !== null) {
+        this.palette = paletteFor(classified);
+        this.panelStyle = classified === 'light' ? '48;5;255' : '48;5;235';
+        this.render();
+      }
     };
     const finishProbe = (): void => {
       clearTimeout(timer);
@@ -408,7 +413,7 @@ export class TerminalUI implements ChatTerminal {
    * 1フレームの描画。
    * 1) 前回のライブブロック(最下部)を消去。伸びた分は先にスクロールして確定させる
    * 2) 確定したトランスクリプト行を出力(はみ出した行はスクロールバックへ確定)
-   * 3) 最下部ブロック(ライブ推論・メニュー・入力欄・状態行)を常に最下段に再描画
+   * 3) ライブブロックを、起動時は縦中央、会話中は最下段に再描画
    * 再描画は最下部ブロックに限るため、過去の履歴が端末のスクロールバックに蓄積する。
    */
   private render = (): void => {
@@ -464,7 +469,8 @@ export class TerminalUI implements ChatTerminal {
         optionsLines.push({ text: label, style: active ? '97;44' : choice.pinned ? '2' : '' });
       });
     }
-    const lines: { text: string; style: string }[] = [...optionsLines, { text: '─'.repeat(width), style: ACCENT }];
+    const lines: { text: string; style: string }[] = [...optionsLines,
+      { text: this.started ? '─'.repeat(width) : '', style: ACCENT }];
     const editorStart = partialCount + liveReasoning.length + lines.length;
     // 入力欄が表示行数を超えたら、カーソルが常に窓内に来るようにスクロールする。
     if (cursor.row < this.editorScroll) this.editorScroll = cursor.row;
@@ -490,28 +496,32 @@ export class TerminalUI implements ChatTerminal {
       : this.cwd;
     lines.push({ text: bottom, style: '2' });
 
-    const styled = (row: { text: string; style: string }): string =>
-      this.paint(fitText(row.text, width), row.style);
+    const styled = (row: { text: string; style: string }): string => {
+      const fitted = fitText(row.text, width);
+      if (row.text.startsWith('│ ')) {
+        const padded = fitted + ' '.repeat(Math.max(0, width - textWidth(fitted)));
+        return this.paint('│', ACCENT) + this.paint(padded.slice(1), `${this.panelStyle}${row.style ? `;${row.style}` : ''}`);
+      }
+      return this.paint(fitted, row.style);
+    };
     // 会話が始まる前のウェルカム: ロゴ+案内を縦中央に整える。
     // paintMargin は両フェーズ共通(画面全体に対する中央寄せ)。
     const marginStyled = (row: { text: string; style: string }): string => marginPrefix + styled(row);
     let body: string[] = [];
     let editorStartIdx = editorStart;
     if (!this.started) {
-      // 旧デザインと同じ: ロゴはコンテンツ幅の中央、タイトルと案内は左端から。
+      // タイトルとロゴをコンテンツ幅の中央に揃える。
       const widthCenter = (line: string): string => {
         const pad = Math.max(0, Math.floor((width - textWidth(line)) / 2));
         return ' '.repeat(pad) + line;
       };
       const welcome: { text: string; style: string }[] = [
-        { text: 'DKH  ·  Coding Harness', style: '1' },
+        { text: widthCenter('DKH  ·  Coding Harness'), style: '1' },
         ...LOGO.map(line => ({ text: widthCenter(line), style: ACCENT })),
-        ...this.bootLines.slice(-8).map(line => ({ text: line, style: '' })),
+        ...this.bootLines.slice(-8).flatMap(line => wrap(line, width).map(text => ({ text, style: '' }))),
       ];
-      // 縦中央寄せは「ロゴと入力欄の間」の余白で行う(ブロックは最下段固定のため、
-      // 上端の余白ではグループの位置は動かない)。
-      const composerRows = partialCount + liveReasoning.length + optionsLines.length + lines.length;
-      const midPad = Math.max(0, Math.floor((rows - welcome.length - composerRows) / 2) - 1);
+      // ロゴと入力欄は一つのまとまり。余白を両者の間に入れない。
+      const midPad = 1;
       body = [
         ...welcome.map(row => marginStyled(row)),
         ...Array.from({ length: midPad }, () => marginPrefix),
@@ -566,8 +576,9 @@ export class TerminalUI implements ChatTerminal {
       r++;
     }
     this.streamRow = Math.max(1, Math.min(rows, r));
-    // ライブブロックは常に最下段。入る余白がなければ不足分行をスクロールして空ける。
-    const liveStart = Math.max(1, rows - liveCount + 1);
+    // 起動時はグループ全体を縦中央へ。会話中は最下段に必要な余白を空ける。
+    const liveStart = this.started ? Math.max(1, rows - liveCount + 1)
+      : Math.max(1, Math.floor((rows - liveCount) / 2) + 1);
     if (liveStart < this.streamRow) {
       const scrolls = Math.min(rows, this.streamRow - liveStart);
       out += `\x1b[${rows};1H` + '\n'.repeat(scrolls);

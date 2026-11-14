@@ -21,6 +21,7 @@ test('CLI closes connected optional memory when journal persistence fails', () =
     SessionStore.prototype.create = () => session;
     Session.prototype.append = function(message) { this.messages.push(message); };
     Session.prototype.setStatus = function(status) { this.status = status; };
+    Session.prototype.setConnection = function(model, baseUrl) { this.model = model; this.modelBaseUrl = baseUrl; };
     Session.prototype.recordMemory = () => {};
     Session.prototype.persistFrom = () => { throw new Error('simulated journal failure'); };
     let connects = 0, closes = 0;

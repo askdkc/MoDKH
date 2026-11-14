@@ -31,6 +31,7 @@ export interface MemoryObservation {
 
 type SessionEvent =
   | SessionHeader
+  | { type: 'connection'; model: string; baseUrl?: string }
   | { type: 'format'; version: 2 }
   | { type: 'delegation'; record: DelegationRecord }
   | (MemoryObservation & { type: 'memory'; at: string })
@@ -124,6 +125,7 @@ export class Session {
   cwd: string;
   model: string;
   private file: string;
+  modelBaseUrl?: string;
   private persistedCount = 0;
   private version: 1 | 2 = 1;
   parentSessionId?: string;
@@ -164,6 +166,9 @@ export class Session {
       if (ev.type === 'format') {
         if (ev.version !== 2) throw new Error('Unsupported session format');
         session.version = 2;
+      } else if (ev.type === 'connection') {
+        session.model = ev.model;
+        session.modelBaseUrl = ev.baseUrl;
       } else if (ev.type === 'delegation') session.acceptDelegation(ev.record);
       else if (ev.type === 'status') {
         session.status = ev.status;
@@ -230,6 +235,12 @@ export class Session {
     this.write({ ...observation, type: 'memory', at: new Date().toISOString() });
   }
 
+  setConnection(model: string, baseUrl?: string): void {
+    this.write({ type: 'connection', model, ...(baseUrl ? { baseUrl } : {}) });
+    this.model = model;
+    this.modelBaseUrl = baseUrl;
+  }
+
   setStatus(status: SessionStatus, diagnostic?: string): void {
     this.persistFrom(0);
     const detail = diagnostic?.slice(0, 2048);
@@ -285,15 +296,17 @@ function summarize(file: string, text: string): SessionSummary {
   const header = JSON.parse(lines[0] ?? '') as SessionHeader;
   if (header.type !== 'session') throw new Error(`ヘッダが先頭にない: ${file}`);
   let status: SessionStatus = 'active';
+  let model = header.model;
   for (const line of lines.slice(1)) {
     const ev = JSON.parse(line) as SessionEvent;
     if (ev.type === 'status') status = ev.status;
+    if (ev.type === 'connection') model = ev.model;
   }
   return {
     id: header.id,
     createdAt: header.createdAt,
     cwd: header.cwd,
-    model: header.model,
+    model,
     status,
     seq: header.seq ?? 0,
   };

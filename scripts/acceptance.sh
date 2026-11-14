@@ -86,11 +86,12 @@ echo "$OUT5" | grep -q 'OpenAI' || { echo "FAIL: /connect 単体の使い方が�
 echo "$OUT5" | grep -q '接続しました: fixed/scripted' || { echo "FAIL: /connect での接続が観測されない"; echo "$OUT5"; exit 1; }
 echo "$OUT5" | grep -q '(応答終了' || { echo "FAIL: /connect 後の会話が完了しなかった"; echo "$OUT5"; exit 1; }
 grep -q '固定応答モデルによる追記' "$PROJ3/README.md" || { echo "FAIL: /connect 後の編集が反映されていない"; exit 1; }
-# 前回のモデルは静かに自動復元される(案内は出さない)。復元はセッションヘッダの model で確認する。
+# 固定シナリオを通常の接続として保存・復元しない。
 OUTNOMODEL=$(printf 'hello\n/exit\n' | "$CLI" --cwd "$PROJ3" 2>&1 || true)
 LASTJSON=$(ls -t "$WORK/home/sessions"/*.jsonl | head -1)
-head -1 "$LASTJSON" | grep -q '"model":"fixed/scripted"' || { echo "FAIL: 前回のモデルが復元されない"; echo "$OUTNOMODEL"; exit 1; }
-echo "$OUTNOMODEL" | grep -q '(応答終了' || { echo "FAIL: 復元したモデルでの会話が完了しなかった"; echo "$OUTNOMODEL"; exit 1; }
+head -1 "$LASTJSON" | grep -q '"model":"unconnected"' || { echo "FAIL: 固定モデルが自動復元された"; echo "$OUTNOMODEL"; exit 1; }
+echo "$OUTNOMODEL" | grep -q 'モデル未接続' || { echo "FAIL: 未接続時の案内がない"; echo "$OUTNOMODEL"; exit 1; }
+if echo "$OUTNOMODEL" | grep -q '▶ run_command'; then echo "FAIL: 指定していない固定シナリオが実行された"; exit 1; fi
 
 # 未接続のホームで送信すると、接続先選びが自動で開く。
 FRESH_HOME="$WORK/fresh-home"
