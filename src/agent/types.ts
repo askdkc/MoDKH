@@ -29,6 +29,8 @@ export interface ApprovalRequest {
   kind: 'edit' | 'command';
   title: string;
   detail: string;
+  /** Cancels only this approval request (e.g. a timed-out child). */
+  signal?: AbortSignal;
 }
 
 export interface ApprovalGate {
@@ -41,6 +43,8 @@ export interface ToolContext {
   approval: ApprovalGate;
   /** Ctrl+C などで中断されたときに打ち切る。 */
   signal?: AbortSignal;
+  /** Assigned by the registry, never a model-controlled argument. */
+  callId?: string;
 }
 
 /** ツール内部の期待される失敗。モデルへ status:'error' として返す。 */
@@ -63,7 +67,7 @@ export interface Tool {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
-  execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string>;
+  execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string | Pick<ToolResult, 'status' | 'output'>>;
 }
 
 /** モデルストリームのイベント。 */
@@ -79,7 +83,7 @@ export type ModelEvent =
 /** 会話メッセージ。tool メッセージは1つのアシスタント応答に対する結果群を保持する。 */
 export type AgentMessage =
   | { role: 'user'; content: string }
-  | { role: 'assistant'; content: string; toolCalls?: ToolCall[] }
+  | { role: 'assistant'; content: string; toolCalls?: ToolCall[]; origin?: 'manual' }
   | { role: 'tool'; results: ToolResult[] };
 
 export interface ModelRequest {

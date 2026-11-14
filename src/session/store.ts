@@ -2,13 +2,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
-import type { AgentMessage, ToolResult } from '../agent/types.ts';
+import type { AgentMessage, ToolCall, ToolResult } from '../agent/types.ts';
+import type { DelegationRecord } from '../subagents/types.ts';
+import { parseDelegation, delegationDigest } from '../subagents/request.ts';
 
 export type SessionStatus = 'active' | 'complete' | 'interrupted' | 'error' | 'turn-limit';
 
 /** JSONL の1行目。セッションの基本情報。seq は同ディレクトリ内の作成順(一覧の決定的並び替え用)。 */
 export interface SessionHeader {
   type: 'session';
+  version?: 2;
+  parentSessionId?: string;
+  rootSessionId?: string;
   id: string;
   createdAt: string;
   cwd: string;
@@ -25,6 +30,8 @@ export interface MemoryObservation {
 
 type SessionEvent =
   | SessionHeader
+  | { type: 'format'; version: 2 }
+  | { type: 'delegation'; record: DelegationRecord }
   | (MemoryObservation & { type: 'memory'; at: string })
   | { type: 'status'; status: SessionStatus; at: string }
   | { type: 'message'; message: AgentMessage };
@@ -57,14 +64,14 @@ export class SessionStore {
     this.dir = dir;
   }
 
-  create(cwd: string, model: string): Session {
+  create(cwd: string, model: string, child?: { id: string; parentSessionId: string; rootSessionId: string }): Session {
     const createdAt = new Date().toISOString();
-    const id = `${createdAt.slice(0, 10)}-${randomUUID().slice(0, 8)}`;
+    const id = child?.id ?? `${createdAt.slice(0, 10)}-${randomUUID().slice(0, 8)}`;
     fs.mkdirSync(this.dir, { recursive: true });
     const seq = fs.readdirSync(this.dir).filter((n) => n.endsWith('.jsonl')).length;
     const file = this.fileOf(id);
-    const header: SessionHeader = { type: 'session', id, createdAt, cwd, model, seq };
-    fs.writeFileSync(file, `${JSON.stringify(header)}\n`, { encoding: 'utf8', flag: 'wx' });
+    const header: SessionHeader = { type: 'session', version: 2, ...child, id, createdAt, cwd, model, seq };
+    fs.writeFileSync(file, `${JSON.stringify(header)}\n`, { encoding: 'utf8', flag: 'wx', flush: true });
     return Session.fromText(id, file, `${JSON.stringify(header)}\n`);
   }
 
@@ -114,6 +121,10 @@ export class Session {
   model: string;
   private file: string;
   private persistedCount = 0;
+  private version: 1 | 2 = 1;
+  parentSessionId?: string;
+  rootSessionId?: string;
+  private delegationLog = new Map<string, DelegationRecord>();
 
   private constructor(id: string, file: string, cwd: string, model: string) {
     this.id = id;
@@ -136,18 +147,26 @@ export class Session {
       }
       if (i === 0) {
         if (ev.type !== 'session') throw new Error(`ヘッダが先頭にない: ${id}`);
+        if (ev.version !== undefined && ev.version !== 2) throw new Error('Unsupported session format');
         header = ev;
+        session.version = ev.version ?? 1;
+        session.parentSessionId = ev.parentSessionId;
+        session.rootSessionId = ev.rootSessionId;
         session.cwd = ev.cwd;
         session.model = ev.model;
         return;
       }
-      if (ev.type === 'status') session.status = ev.status;
+      if (ev.type === 'format') {
+        if (ev.version !== 2) throw new Error('Unsupported session format');
+        session.version = 2;
+      } else if (ev.type === 'delegation') session.acceptDelegation(ev.record);
+      else if (ev.type === 'status') session.status = ev.status;
       else if (ev.type === 'message') session.messages.push(ev.message);
     });
     if (header === undefined) throw new Error(`ヘッダが先頭にない: ${id}`);
     session.persistedCount = session.messages.length;
     // A crash after the request journal but before a receipt is not proof of no effect.
-    const pending = new Map<string, { id: string; name: string }>();
+    const pending = new Map<string, ToolCall>();
     for (const message of session.messages) {
       if (message.role === 'assistant') {
         for (const call of message.toolCalls ?? []) pending.set(call.id, call);
@@ -156,13 +175,27 @@ export class Session {
       }
     }
     if (pending.size) {
-      session.messages.push({ role: 'tool', results: [...pending.values()].map(call => ({
-        callId: call.id, name: call.name, status: 'unknown',
-        output: '保存された要求に結果がない。実行状態は不明。自動再実行せず状態を確認する',
-      })) });
-      session.status = 'interrupted';
+      const results = [...pending.values()].map(call => session.recoverPending(call));
+      session.messages.push({ role: 'tool', results });
+      if (results.some(result => result.status === 'unknown')) session.status = 'interrupted';
     }
     return session;
+  }
+
+  private recoverPending(call: ToolCall): ToolResult {
+    const base = { callId: call.id, name: call.name };
+    if (call.name === 'run_subagent') {
+      const record = [...this.delegationLog.values()].find(row => row.callId === call.id);
+      if (record?.state === 'finished' && record.result) {
+        try {
+          if (delegationDigest(parseDelegation(call.args)) === record.requestDigest) {
+            const result = record.result;
+            return { ...base, status: result.status === 'completed' ? 'ok' : result.status === 'unknown' ? 'unknown' : 'error', output: JSON.stringify(result) };
+          }
+        } catch { /* Invalid or mismatched requests never inherit a completion receipt. */ }
+      }
+    }
+    return { ...base, status: 'unknown', output: '保存された要求に結果がない。実行状態は不明。自動再実行せず状態を確認する' };
   }
 
   append(msg: AgentMessage): void {
@@ -189,6 +222,31 @@ export class Session {
     this.persistFrom(0);
     this.write({ type: 'status', status, at: new Date().toISOString() });
     this.status = status;
+  }
+
+  delegations(): DelegationRecord[] { return [...this.delegationLog.values()].map(record => structuredClone(record)); }
+
+  private acceptDelegation(record: DelegationRecord): void {
+    if (!record || record.parentSessionId !== this.id || typeof record.runId !== 'string' || typeof record.callId !== 'string'
+      || !/^[a-f0-9]{64}$/.test(record.requestDigest) || !/^[a-f0-9]{64}$/.test(record.operationDigest)
+      || !['starting', 'running', 'stopping', 'finished'].includes(record.state)
+      || (record.state === 'finished') !== !!record.result
+      || (record.result && (!['completed', 'error', 'cancelled', 'unknown'].includes(record.result.status) || typeof record.result.text !== 'string' || record.result.runId !== record.runId || record.result.agentId !== record.childSessionId || !['settled', 'unknown'].includes(record.result.cleanup) || (record.result.status === 'completed' && record.result.cleanup !== 'settled')))) throw new Error('Invalid delegation journal');
+    if ([...this.delegationLog.values()].some(row => row.callId === record.callId && row.runId !== record.runId)) throw new Error('Conflicting delegation call ID');
+    const previous = this.delegationLog.get(record.runId);
+    if (previous && (previous.state === 'finished' || previous.requestDigest !== record.requestDigest || previous.operationDigest !== record.operationDigest || previous.callId !== record.callId)) throw new Error('Conflicting delegation journal');
+    this.delegationLog.set(record.runId, structuredClone(record));
+  }
+
+  recordDelegation(record: DelegationRecord): void {
+    // Validate without changing the live projection until persistence succeeds.
+    const before = this.delegationLog;
+    this.delegationLog = new Map(before);
+    try {
+      this.acceptDelegation(record);
+      if (this.version === 1) { this.write({ type: 'format', version: 2 }); this.version = 2; }
+      this.write({ type: 'delegation', record });
+    } catch (e) { this.delegationLog = before; throw e; }
   }
 
   /** 結果不明のツール呼び出し(中断の痕跡)。再開時の表示と再実行禁止の根拠に使う。 */

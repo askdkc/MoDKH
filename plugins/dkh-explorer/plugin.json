@@ -1,0 +1,1 @@
+{"apiVersion":1,"id":"dkh-explorer","version":"1.0.0","title":"Explorer","description":"読み取り専用の調査。編集・シェル・再委譲なし。","kind":"local","entry":"./index.mjs"}

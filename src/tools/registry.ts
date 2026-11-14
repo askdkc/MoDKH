@@ -13,7 +13,11 @@ export class ToolRegistry {
   private tools: Map<string, Tool>;
 
   constructor(tools: Tool[]) {
-    this.tools = new Map(tools.map((t) => [t.name, t]));
+    this.tools = new Map();
+    for (const tool of tools) {
+      if (this.tools.has(tool.name)) throw new Error(`Duplicate tool: ${tool.name}`);
+      this.tools.set(tool.name, tool);
+    }
   }
 
   specs(): { name: string; description: string; parameters: Record<string, unknown> }[] {
@@ -73,8 +77,10 @@ export class ToolRegistry {
       }
     }
     try {
-      const output = await tool.execute(call.args as Record<string, unknown>, ctx);
-      return { ...base, status: 'ok', output };
+      const output = await tool.execute(call.args as Record<string, unknown>, { ...ctx, callId: call.id });
+      if (typeof output === 'string') return { ...base, status: 'ok', output };
+      if (!output || !['ok', 'error', 'unknown', 'not-executed'].includes(output.status) || typeof output.output !== 'string') throw new Error('Invalid tool outcome');
+      return { ...base, status: output.status, output: output.output };
     } catch (e) {
       if (e instanceof ToolError && (e.code === 'NOT_EXECUTED' || e.code === 'DENIED')) {
         return { ...base, status: e.code === 'DENIED' ? 'error' : 'not-executed', output: `[${e.code}] ${e.message}` };

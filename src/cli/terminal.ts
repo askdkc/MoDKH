@@ -17,6 +17,7 @@ export interface ChatTerminal {
 export const COMMANDS: readonly Choice[] = [
   { value: '/connect', label: '/connect', detail: 'プロバイダーに接続' },
   { value: '/models', label: '/models', detail: 'モデルを選択' },
+  { value: '/agents', label: '/agents', detail: '子エージェントの一覧・委譲' },
   { value: '/help', label: '/help', detail: '操作ガイド' },
   { value: '/exit', label: '/exit', detail: '終了' },
 ];

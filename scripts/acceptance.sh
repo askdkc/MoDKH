@@ -92,6 +92,13 @@ echo "$OUTMODELS" | grep -q '1. fixed/scripted' || { echo 'FAIL: 検索候補が
 echo "$OUTMODELS" | grep -q '接続中: fixed/scripted' || { echo 'FAIL: モデル選択が反映されない'; exit 1; }
 DKH_TEST_ENTRY="$CLI" DKH_TEST_CHAT="$WORK/install/node_modules/dkh/dist/cli/chat.js" node --test --test-reporter=tap \
   "$ROOT/test/cli.interactive.test.ts" "$ROOT/test/cli.safety.test.ts" \
-  "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.memory.test.ts" "$ROOT/test/cli.tui.test.ts"
+  "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.memory.test.ts" "$ROOT/test/cli.tui.test.ts" \
+  "$ROOT/test/plugins.entry.test.ts"
+
+# Verify the exported SDK from the installed package, not the source checkout.
+node --input-type=module -e 'await import("dkh/plugin-api")'
+test -f node_modules/dkh/dist/plugins/api.d.ts
+printf 'import type { LocalPlugin } from "dkh/plugin-api"; const plugin: LocalPlugin = { define: () => ({ system: "Review", tools: ["read_file"] }) }; void plugin;\n' > sdk-consumer.ts
+node "$ROOT/node_modules/typescript/bin/tsc" --noEmit --strict --skipLibCheck --target es2023 --module nodenext sdk-consumer.ts
 
 echo "ACCEPTANCE_OK"

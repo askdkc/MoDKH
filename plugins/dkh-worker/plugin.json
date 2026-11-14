@@ -1,0 +1,1 @@
+{"apiVersion":1,"id":"dkh-worker","version":"1.0.0","title":"Worker","description":"承認付きの実装。編集・コマンドは親の端末で個別承認。","kind":"local","entry":"./index.mjs"}

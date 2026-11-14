@@ -14,6 +14,7 @@ const HELP = `dkh ${VERSION} — 単独で動く最小コーディングハー�
   dkh chat --model <provider>/<model> [--cwd <dir>] [--resume <id>] [--base-url <url>]
   dkh auth login chatgpt
   dkh session list
+  dkh plugin list | add <directory> | enable <id> | disable <id> | remove <id>
 
 対話中のコマンド:
   /connect                                     検索できるプロバイダー一覧
@@ -21,6 +22,8 @@ const HELP = `dkh ${VERSION} — 単独で動く最小コーディングハー�
   /connect chatgpt                             ブラウザで ChatGPT 認証
   /connect ollama                              Ollama Local のモデル選択
   /connect ollama-cloud                        Ollama Cloud の認証・モデル選択
+  /agents                                      子エージェント一覧
+  /agents run [ID] [依頼]                       子を選んで限定した仕事を委譲
   /models [検索語]                             名前の部分一致検索・番号でモデル選択
   /connect <provider>/<model> [--base-url <url>]   モデルをその場で接続(AI API / chatgpt / fixed)
 
@@ -96,6 +99,11 @@ async function dispatch(cmd: string, args: Record<string, string | undefined>): 
     if (cmd === 'chat') {
       const { runChat } = await import('./cli/chat.ts');
       await runChat({ args });
+      return;
+    }
+    if (cmd === 'plugin') {
+      const { runPluginCommand } = await import('./cli/plugins.ts');
+      await runPluginCommand(args['@positional'] ?? '');
       return;
     }
     if (cmd === 'auth') {

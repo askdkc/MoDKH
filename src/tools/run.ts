@@ -68,7 +68,7 @@ export const runCommandTool: Tool = {
   },
 };
 
-function runShell(command: string, cwd: string, signal?: AbortSignal): Promise<string> {
+export function runShell(command: string, cwd: string, signal?: AbortSignal, env?: NodeJS.ProcessEnv): Promise<string> {
   // Approval is asynchronous: Stop may have arrived after the earlier check.
   if (signal?.aborted) return Promise.reject(new ToolError('NOT_EXECUTED', '中断済みのため実行しない'));
   return new Promise((resolve, reject) => {
@@ -76,6 +76,7 @@ function runShell(command: string, cwd: string, signal?: AbortSignal): Promise<s
     // This is not a sandbox: commands deliberately daemonizing must not be used.
     const child = spawn('/bin/sh', ['-c', command], {
       cwd,
+      env,
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

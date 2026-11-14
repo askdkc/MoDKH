@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { ToolRegistry, defaultTools } from '../src/tools/registry.ts';
 import { TerminalApprovalGate } from '../src/cli/approval.ts';
 import { LineSource } from '../src/cli/lines.ts';
@@ -37,16 +40,39 @@ test('Stop terminates shell descendants, not only the shell', async () => {
 });
 
 test('Stop escalates for a descendant that ignores TERM after shell exit', async () => {
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-stop-ready-')));
+  const readyFile = path.join(directory, 'ready.json');
   const ac = new AbortController();
-  const script = 'process.on("SIGTERM",()=>{}); console.log("READY"); setTimeout(()=>console.log("CHILD_SURVIVED"),1600)';
+  const watcher = fs.watch(directory);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const ready = new Promise<void>((resolve, reject) => {
+    watcher.on('error', reject);
+    watcher.on('change', () => { if (fs.existsSync(readyFile)) resolve(); });
+    timer = setTimeout(() => reject(new Error('Child did not become ready')), 5000);
+  });
+  // Publish readiness atomically only after installing the TERM handler. A live
+  // interval has no natural exit: the host must escalate and reap the process.
+  const script = `const fs=require("node:fs"); process.on("SIGTERM",()=>{}); console.log("READY");
+    fs.writeFileSync(${JSON.stringify(readyFile + '.tmp')},JSON.stringify({pid:process.pid}));
+    fs.renameSync(${JSON.stringify(readyFile + '.tmp')},${JSON.stringify(readyFile)}); setInterval(()=>{},1000);`;
   const pending = run(`${nodeCommand(script)} & wait`, ac.signal);
-  const timer = setTimeout(() => ac.abort(), 200);
   try {
+    await Promise.race([ready, pending.then(result => { throw new Error(`Child exited before readiness: ${result.output}`); })]);
+    clearTimeout(timer);
+    const { pid } = JSON.parse(fs.readFileSync(readyFile, 'utf8')) as { pid: number };
+    ac.abort();
     const result = await pending;
     assert.equal(result.status, 'unknown');
     assert.match(result.output, /READY/);
-    assert.doesNotMatch(result.output, /CHILD_SURVIVED/);
-  } finally { clearTimeout(timer); }
+    assert.doesNotMatch(result.output, /停止を確認できない/);
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  } finally {
+    clearTimeout(timer);
+    watcher.close();
+    ac.abort();
+    await pending;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('shell exit cannot abandon its background children and report success', async () => {

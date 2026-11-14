@@ -47,3 +47,5 @@ Ollama Cloudのキーは[こちら](https://ollama.com/settings/keys)で作成�
 Hermes Agentはサーバー側でツールを実行するため、DKHの個別承認・Stopの保証対象外です。
 
 その他の接続先やURLの変更方法は[プロバイダー設定の詳細](<docs/models.md>)を参照してください。
+
+子への調査・実装の委譲は `/agents`。追加方法と制限は[サブエージェント](<docs/subagents.md>)を参照してください。

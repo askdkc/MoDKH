@@ -13,8 +13,12 @@
   "files": [
     "dist",
     "README.md",
-    "docs"
+    "docs",
+    "plugins"
   ],
+  "exports": {
+    "./plugin-api": { "types": "./dist/plugins/api.d.ts", "default": "./dist/plugins/api.js" }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json",
