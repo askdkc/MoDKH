@@ -1,5 +1,5 @@
 import type { ChatTerminal, Choice } from './terminal.ts';
-import { MODEL_SUGGESTIONS } from './models.ts';
+import { suggestionsFor, noteFor, isRecommended, SEARCH_ROW_VALUE } from './catalog.ts';
 
 export const CONNECT_PROVIDERS = [
   { value: 'openai', label: 'OpenAI', detail: 'ChatGPT OAuth (chatgpt) / OPENAI_API_KEY', key: 'OPENAI_API_KEY' },
@@ -23,12 +23,39 @@ export async function confirmRemoteAgent(ui: ChatTerminal): Promise<boolean> {
   ]) === 'connect';
 }
 export async function chooseProviderModel(ui: ChatTerminal, provider: string): Promise<string | null> {
-  const choices: Choice[] = MODEL_SUGGESTIONS.filter(ref => ref.startsWith(`${provider}/`)).map(ref => ({ value: ref, label: ref }));
+  const choices: Choice[] = suggestionsFor(provider).map(ref => {
+    const note = noteFor(ref);
+    const detail = [isRecommended(ref) ? 'おすすめ' : '', note ?? ''].filter(Boolean).join(' · ');
+    return { value: ref, label: ref, ...(detail ? { detail } : {}) };
+  });
   choices.push({ value: 'custom', label: 'モデルIDを直接入力', detail: '一覧にないモデル' });
-  const selected = await ui.choose(`${provider} — モデルを選択`, choices);
-  if (selected !== 'custom') return selected;
-  const model = (await ui.ask('モデルID（空行・/cancelで戻る）'))?.trim();
-  if (!model || model === '/cancel') return null;
-  if (model.startsWith('/')) { ui.unread(model); return null; }
-  return model.startsWith(`${provider}/`) ? model : `${provider}/${model}`;
+  for (;;) {
+    // The search row is pinned first so a bare Enter never connects to an arbitrary model.
+    const selected = await ui.choose(`${provider} — モデルを選択`, [
+      { value: SEARCH_ROW_VALUE, label: '🔍 キーワード検索', pinned: true },
+      ...choices,
+    ]);
+    if (selected !== SEARCH_ROW_VALUE) {
+      if (selected !== 'custom') return selected;
+      const model = (await ui.ask('モデルID（空行・/cancelで戻る）'))?.trim();
+      if (!model || model === '/cancel') return null;
+      if (model.startsWith('/')) { ui.unread(model); return null; }
+      return model.startsWith(`${provider}/`) ? model : `${provider}/${model}`;
+    }
+    // Choosing the row with a keyword already typed just reopens the same filtered list; an empty
+    // box asks for the keyword explicitly so the row is never a dead end.
+    const keyword = (await ui.ask('キーワード検索（空白区切りは語順自由。例: seek deep / 空行・/cancelで戻る）'))?.trim();
+    if (!keyword || keyword === '/cancel') continue;
+    if (keyword.startsWith('/')) { ui.unread(keyword); return null; }
+    const reopened = await ui.choose(`${provider} — モデルを選択`, [
+      { value: SEARCH_ROW_VALUE, label: '🔍 キーワード検索', pinned: true },
+      ...choices,
+    ], keyword);
+    if (reopened === SEARCH_ROW_VALUE) continue;
+    if (reopened !== 'custom') return reopened;
+    const model = (await ui.ask('モデルID（空行・/cancelで戻る）'))?.trim();
+    if (!model || model === '/cancel') return null;
+    if (model.startsWith('/')) { ui.unread(model); return null; }
+    return model.startsWith(`${provider}/`) ? model : `${provider}/${model}`;
+  }
 }

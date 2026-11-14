@@ -26,6 +26,10 @@ import { parseLanguageSettings, DEFAULT_LANGUAGE_SETTINGS } from '../language/de
 import { chooseProvider, chooseProviderModel, confirmRemoteAgent, CONNECT_PROVIDERS } from './providers.ts';
 import { TerminalApprovalGate } from './approval.ts';
 import { loadConfig, type LiteConfig } from './config.ts';
+import { keysPath, loadSavedKeys, saveKey, removeKey, savedKeyProviders, resolveApiKey } from './keys.ts';
+
+/** Shown before a secret is typed; the file itself is never printed. */
+const keysHint = (): string => keysPath();
 
 export interface ChatOptions {
   args: Record<string, string | undefined>;
@@ -76,7 +80,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   const ui = opts.terminal ?? createTerminal(cwd);
   try {
   const config: LiteConfig = loadConfig();
-  const sessionKeys = new Map<string, string>();
+  // Keys saved by an earlier /connect are available immediately; this session's entries win.
+  const sessionKeys = new Map<string, string>(Object.entries(loadSavedKeys()));
 
   const store = new SessionStore();
   let session: Session;
@@ -103,7 +108,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   // --model がない場合は未接続で開き、/connect で後から接続する(opencode 方式)。
   let modelId: string | null = args['model'] ?? null;
   let model: Model | null = args['model']
-    ? buildModelFromRef(args['model'], args['base-url'], session.messages.filter(m => m.role === 'assistant' && m.origin !== 'manual').length)
+    ? buildModelFromRef(args['model'], args['base-url'], session.messages.filter(m => m.role === 'assistant' && m.origin !== 'manual').length,
+        resolveApiKey(parseModelRef(args['model']).provider))
     : null;
 
   if (modelId?.startsWith('hermes/') && !await confirmRemoteAgent(ui)) { model = null; modelId = null; }
@@ -264,7 +270,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       }
       const fixedSkip = ref.startsWith('fixed/')
         ? session.messages.filter((m) => m.role === 'assistant' && m.origin !== 'manual').length : 0;
-      const nextModel = buildModelFromRef(ref, baseUrl, fixedSkip, sessionKeys.get(parseModelRef(ref).provider));
+      const provider = parseModelRef(ref).provider;
+      const nextModel = buildModelFromRef(ref, baseUrl, fixedSkip, resolveApiKey(provider, process.env) ?? sessionKeys.get(provider));
       model = nextModel;
       modelId = ref;
       connectionBaseUrl = baseUrl;
@@ -287,8 +294,22 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const line = input.includes('\n') ? '' : input.trim();
       if (!input.trim() && !ui.imageCount) continue;
       if (line === '/exit' || line === '/quit') break;
+      if (line === '/keys' || line.startsWith('/keys ')) {
+        const [, action, provider] = line.split(/\s+/);
+        try {
+          if (!action) {
+            const names = savedKeyProviders();
+            ui.write(names.length ? `保存済みのAPIキー: ${names.join(', ')}\n保存先: ${keysPath()}\n` : `保存済みのAPIキーはありません。\n保存先: ${keysPath()}\n`);
+          } else if (action === 'remove' && provider) {
+            ui.write(removeKey(provider) ? `${provider} のキーを削除しました。\n` : `保存されたキーはありません: ${provider}\n`);
+          } else {
+            ui.write('使い方: /keys（一覧） /keys remove <provider>\n');
+          }
+        } catch (e) { ui.write(`(キー操作に失敗: ${(e as Error).message})\n`); }
+        continue;
+      }
       if (line === '/help') {
-        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止  PgUp/PgDn: 履歴\n入力: Enter 送信 / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 dkh: スクリーンリーダー・行入力モード\n');
+        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /keys: 保存済みキー  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止  PgUp/PgDn: 履歴\n入力: Enter 送信 / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 dkh: スクリーンリーダー・行入力モード\n');
         continue;
       }
       if (line === '/agents' || line.startsWith('/agents ')) {
@@ -341,10 +362,14 @@ export async function runChat(opts: ChatOptions): Promise<void> {
             } catch (e) { ui.write(`(認証できません: ${(e as Error).message})\n`); continue; }
           } else if (provider.key && !process.env[provider.key] && !sessionKeys.has(target)) {
             if (!ui.interactive) { ui.write(`${provider.key} を環境変数に設定して再接続してください。行入力モードではキーを表示させないため入力を受け付けません。\n`); continue; }
-            const key = (await ui.ask(`${provider.key} を入力（このセッションのみ保持 / 空行で戻る）`, undefined, true))?.trim();
+            const key = (await ui.ask(`${provider.key} を入力（保存先: ${keysHint()} / 空行で戻る）`, undefined, true))?.trim();
             if (!key || key === '/cancel') continue;
             if (key.startsWith('/')) { ui.unread(key); continue; }
             sessionKeys.set(target, key);
+            // Persist immediately so the next launch does not ask again. Failure to save does not
+            // block this connection, but it is reported instead of silently forgetting the key.
+            try { saveKey(target, key); ui.write(`(${provider.key} を保存しました)\n`); }
+            catch (e) { ui.write(`(キーを保存できません: ${(e as Error).message} — このセッションでは使用します)\n`); }
           }
           const selected = await chooseProviderModel(ui, target);
           if (selected) await connectModel(selected);

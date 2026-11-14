@@ -58,7 +58,8 @@ test('/connect lists all seven providers and can return without sending a messag
 });
 
 test('cloud and local pickers select separate models; cloud failure preserves the existing connection', async () => {
-  const { stdout, session } = await chat('/connect\nollama-cloud\n1\n/connect\n\n/connect ollama\n1\n/connect\n\n/exit\n', '{}', { OLLAMA_API_KEY: 'test-cloud-key' });
+  // Row 1 is the pinned keyword search, so the first model is row 2.
+  const { stdout, session } = await chat('/connect\nollama-cloud\n2\n/connect\n\n/connect ollama\n2\n/connect\n\n/exit\n', '{}', { OLLAMA_API_KEY: 'test-cloud-key' });
   assert.match(stdout, /接続しました: ollama-cloud\/gemma4:31b/);
   assert.match(stdout, /接続しました: ollama\/llama3.2/);
   assert.doesNotMatch(stdout + session, /test-cloud-key/);

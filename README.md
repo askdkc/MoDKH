@@ -15,7 +15,7 @@ dkh
 ## AIプロバイダーの設定
 
 DKHを起動して `/connect` を入力し、プロバイダーとモデルを選びます。
-APIキーは環境変数で設定可能です。端末上で/connectから入力して設定も可能です。入力したキーはそのセッション内だけで保持します。
+APIキーは環境変数で設定できます。`/connect` で入力したキーは `~/.config/dkh/keys.json`（`DKH_HOME` 指定時はその配下）に保存し、次回以降は入力不要です。ファイルは本人だけが読める権限で作り、環境変数が設定されていればそちらを優先します。保存したキーの一覧と削除は `/keys` で行えます。
 
 | プロバイダー | 設定方法 |
 | --- | --- |
@@ -40,10 +40,15 @@ DKH内で直接選ぶこともできます。
 /connect openai          # ChatGPT認証 / APIキーを選択
 /connect ollama          # ローカルのモデルを選択
 /connect ollama-cloud    # クラウドのモデルを選択
-/models                 # モデル候補を検索
+/models                  # モデル候補を検索（語順自由）
+/keys                    # 保存済みAPIキーの一覧 / /keys remove <provider>
 ```
 
-Ollama Cloudのキーは[こちら](https://ollama.com/settings/keys)で作成できます。
+モデル選択の先頭行は `🔍 キーワード検索` です。入力欄に打ち込むと絞り込まれ、空白区切りは語順を問いません（`seek deep` で deepseek が一致）。Enterで確定、↑↓で移動します。
+
+Ollama Cloudの候補には deepseek-v4.1-flash や glm-5.3-flash などの代表的なモデルを同梱しています（`ollama.com/v1/models` の取得結果）。一覧は目安であり、利用可否は契約に依存します。一覧にないモデルは `/connect ollama-cloud/<model>` で直接指定できます。
+
+Ollama Cloudのキーは[こちら](https://ollama.com/settings/keys)で作成できます。キーを保存したくない場合は環境変数（`OLLAMA_API_KEY` など）を使ってください。
 Hermes Agentはサーバー側でツールを実行するため、DKHの個別承認・Stopの保証対象外です。
 
 その他の接続先やURLの変更方法は[プロバイダー設定の詳細](<docs/models.md>)を参照してください。

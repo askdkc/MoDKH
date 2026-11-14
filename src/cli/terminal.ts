@@ -7,7 +7,8 @@ import { MAX_IMAGES, parseImage, type ImageAttachment } from '../agent/images.ts
 import type { ReadStream, WriteStream } from 'node:tty';
 import { LineSource } from './lines.ts';
 
-export interface Choice { value: string; label: string; detail?: string }
+/** `pinned` rows stay on top and are never filtered away; they are actions, not selections. */
+export interface Choice { value: string; label: string; detail?: string; pinned?: boolean }
 export interface ChatTerminal {
   readonly interactive: boolean;
   readonly imageCount?: number;
@@ -32,9 +33,10 @@ export const COMMANDS: readonly Choice[] = [
 const LOGO = ['██████╗  ██╗  ██╗ ██╗  ██╗', '██╔══██╗ ██║ ██╔╝ ██║  ██║',
   '██║  ██║ █████╔╝  ███████║', '██║  ██║ ██╔═██╗  ██╔══██║', '██████╔╝ ██║  ██╗ ██║  ██║', '╚═════╝  ╚═╝  ╚═╝ ╚═╝  ╚═╝'];
 const ACCENT = '34'; // Use the terminal theme's blue; NO_COLOR is respected by paint().
+/** Every term must appear in any order, so "seek deep" finds deepseek. Pinned rows always survive. */
 function matching(choices: readonly Choice[], query: string): Choice[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  return choices.filter(c => terms.every(t => `${c.label} ${c.value} ${c.detail ?? ''}`.toLowerCase().includes(t)));
+  return choices.filter(c => c.pinned || terms.every(t => `${c.label} ${c.value} ${c.detail ?? ''}`.toLowerCase().includes(t)));
 }
 
 /** Non-TTY / screen-reader mode preserves the line protocol and never emits ANSI. */
@@ -148,7 +150,11 @@ export class TerminalUI implements ChatTerminal {
   }
   private options(): Choice[] | undefined {
     if (this.pending?.secret) return undefined;
-    if (this.pending?.choices) return matching(this.pending.choices, this.text);
+    if (this.pending?.choices) {
+      const visible = matching(this.pending.choices, this.text);
+      // Pinned rows are actions: they stay on top so a bare Enter cannot pick an arbitrary model.
+      return [...visible.filter(c => c.pinned), ...visible.filter(c => !c.pinned)];
+    }
     if (!this.hiddenCompletion && this.text.startsWith('/') && !(/\s/.test(this.text))) return matching(COMMANDS, this.text);
     return undefined;
   }
@@ -289,10 +295,13 @@ export class TerminalUI implements ChatTerminal {
       const top = panel - height - 2;
       place(top, this.pending?.choices ? this.pending.title : 'Commands', '1');
       if (!options.length) place(top + 1, '該当なし — 検索語を変える / Esc で戻る');
+      const matched = options.filter(choice => !choice.pinned).length;
       options.slice(start, start + height).forEach((choice, i) => {
         const active = start + i === this.selection;
-        const label = `${active ? '›' : ' '} ${choice.label}  ${choice.detail ?? ''}`;
-        place(top + i + 1, label, active ? '97;44' : '');
+        const detail = choice.pinned && this.pending?.choices
+          ? `${this.text ? `${matched}件一致` : `${matched}件`} · 空白区切りは語順自由` : choice.detail ?? '';
+        const label = `${active ? '›' : ' '} ${choice.label}  ${detail}`;
+        place(top + i + 1, label, active ? '97;44' : choice.pinned ? '2' : '');
       });
     }
     place(panel + 1, this.pending?.secret ? this.pending.title : '─'.repeat(width), ACCENT);

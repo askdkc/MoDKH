@@ -75,6 +75,8 @@ test('public CLI terminal path: logo → completion → seven providers → conn
     for (const label of ['OpenAI', 'OpenCode', 'Ollama Local', 'Ollama Cloud', 'OpenRouter', 'Infron', 'Hermes Agent']) assert.ok(output.slice(start).includes(label), label);
     send('oll'); await wait('│ oll');
     send('\r'); await wait('ollama/llama3.2');
+    // The keyword-search row is pinned first, so Down selects the first model.
+    send('\x1b[B'); await wait('› ollama/llama3.2');
     send('\r'); await wait('接続しました: ollama/llama3.2');
     send('こんにちは\r'); await wait('TUI_RESPONSE_OK:こんにちは'); await wait('何を調べますか');
     send('slow\r'); await wait('WAITING_FOR_STOP');
@@ -83,9 +85,11 @@ test('public CLI terminal path: logo → completion → seven providers → conn
     send('cloud'); await wait('│ cloud');
     send('\r'); await wait('OLLAMA_API_KEY を入力');
     send('tui-cloud-secret\r'); await wait('ollama-cloud/gemma4:31b');
+    send('\x1b[B'); await wait('› ollama-cloud/gemma4:31b');
     send('\r'); await wait('接続しました: ollama-cloud/gemma4:31b');
     send('cloud hello\r'); await wait('TUI_RESPONSE_OK:cloud hello'); await wait('何を調べますか');
     send('/connect ollama\r'); await wait('ollama — モデルを選択');
+    send('\x1b[B'); await wait('› ollama/llama3.2');
     send('\r'); await wait('接続しました: ollama/llama3.2');
     send('local again\r'); await wait('TUI_RESPONSE_OK:local again'); await wait('何を調べますか');
     send('/connect\r'); await wait('Hermes Agent');
