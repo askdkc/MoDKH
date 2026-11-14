@@ -80,6 +80,7 @@ export interface Tool {
 /** モデルストリームのイベント。 */
 export type ModelEvent =
   | { type: 'activity'; stage: 'reasoning' | 'tool-input' }
+  | { type: 'usage'; input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
   | { type: 'text-delta'; text: string }
   | { type: 'tool-call'; call: ToolCall }
   | {

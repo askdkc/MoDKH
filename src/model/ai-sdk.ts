@@ -91,6 +91,7 @@ export class AiSdkModel implements Model {
     const timer = setTimeout(() => { timedOut = true; deadline.abort(); }, this.timeoutMs);
     const requestSignal = AbortSignal.any([signal, deadline.signal]);
     let activity: 'reasoning' | 'tool-input' | undefined;
+    let usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined;
     let errorMessage: string | undefined;
     let sawToolCall = false;
     let finishReason: 'stop' | 'tool-calls' | undefined;
@@ -124,6 +125,15 @@ export class AiSdkModel implements Model {
             },
           };
         } else if (part.type === 'finish') {
+          // totalUsage is the provider's own count; undefined means unreported, not zero.
+          if (part.totalUsage) {
+            usage = {
+              input: part.totalUsage.inputTokens,
+              output: part.totalUsage.outputTokens,
+              cacheRead: part.totalUsage.inputTokenDetails?.cacheReadTokens,
+              cacheWrite: part.totalUsage.inputTokenDetails?.cacheWriteTokens,
+            };
+          }
           if (part.finishReason === 'stop' || part.finishReason === 'tool-calls') {
             finishReason = part.finishReason;
           } else {
@@ -139,6 +149,7 @@ export class AiSdkModel implements Model {
       if (!aborted) errorMessage = (e as Error).message;
     } finally { clearTimeout(timer); }
     if (timedOut && !signal.aborted) errorMessage = `モデル応答が制限時間（${this.timeoutMs}ms）を超えました。自動再送はしません。`;
+    if (usage && (usage.input !== undefined || usage.output !== undefined)) yield { type: 'usage', ...usage };
     if (aborted) {
       yield { type: 'finish', stopReason: 'aborted' };
     } else if (errorMessage !== undefined || finishReason === undefined || (finishReason === 'tool-calls') !== sawToolCall) {

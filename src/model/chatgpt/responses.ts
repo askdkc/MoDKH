@@ -101,6 +101,7 @@ export class ResponsesApiModel implements Model {
     let aborted = false;
     let errorMessage: string | undefined;
     let sawFunctionCall = false;
+    let usage: { input?: number; output?: number; cacheRead?: number } | undefined;
     let completed = false;
     try {
       const credentials = this.credentials ? await this.credentials(signal) : { accessToken: this.accessToken, accountId: this.accountId };
@@ -150,6 +151,16 @@ export class ResponsesApiModel implements Model {
               }
             } else if (ev['type'] === 'response.completed') {
               completed = true;
+              // Codex reports cached tokens in a nested detail object; missing values stay undefined.
+              const reported = ev['response'] as { usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } } } | undefined;
+              const tokens = reported?.usage;
+              if (tokens) {
+                usage = {
+                  input: tokens.input_tokens,
+                  output: tokens.output_tokens,
+                  cacheRead: tokens.input_tokens_details?.cached_tokens,
+                };
+              }
             } else if (ev['type'] === 'response.failed' || ev['type'] === 'response.incomplete') {
               errorMessage = `Responses API 応答は未完了: ${ev['type']}`;
             } else if (ev['type'] === 'error') {
@@ -166,6 +177,7 @@ export class ResponsesApiModel implements Model {
       aborted = signal.aborted;
       if (!aborted) errorMessage = (e as Error).message;
     }
+    if (usage && (usage.input !== undefined || usage.output !== undefined)) yield { type: 'usage', ...usage };
     if (aborted) {
       yield { type: 'finish', stopReason: 'aborted' };
     } else if (errorMessage !== undefined || !completed) {

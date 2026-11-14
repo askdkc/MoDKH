@@ -1,4 +1,5 @@
 import { emitKeypressEvents, type Key } from 'node:readline';
+import { usageFooter, type UsageTotals } from './usage.ts';
 import { chars, clean, fitText, wrap, editorLayout, verticalCursor, lineEdge } from './editor.ts';
 export { textWidth, fitText } from './editor.ts';
 import { readClipboardImage, type ClipboardReader } from './clipboard.ts';
@@ -18,6 +19,7 @@ export interface ChatTerminal {
   choose(title: string, choices: readonly Choice[], query?: string): Promise<string | null>;
   setModel(model: string | null): void;
   setActivity?(activity: string | null): void;
+  setUsage?(usage: UsageTotals): void;
   close(): void;
 }
 export const COMMANDS: readonly Choice[] = [
@@ -43,6 +45,11 @@ class PlainTerminal implements ChatTerminal {
   next(signal?: AbortSignal): Promise<string | null> { return this.lines.next(signal); }
   unread(line: string): void { this.lines.unread(line); }
   setModel(_model: string | null): void {}
+  /** Line mode has no footer; report the same totals once so piped runs stay observable. */
+  setUsage(usage: UsageTotals): void {
+    const line = usageFooter(usage, 120);
+    if (line) this.write(`\n(使用量: ${line})\n`);
+  }
   close(): void { this.lines.close(); }
   ask(title: string, signal?: AbortSignal): Promise<string | null> { this.write(`${title}\n`); return this.next(signal); }
   async choose(title: string, choices: readonly Choice[], query = ''): Promise<string | null> {
@@ -78,6 +85,7 @@ export class TerminalUI implements ChatTerminal {
   private transcript = '';
   private model: string | null = null;
   private activity: string | null = null;
+  private usage: UsageTotals | null = null;
   private closed = false;
   private paste = false;
   private pasteBuffer = '';
@@ -111,6 +119,7 @@ export class TerminalUI implements ChatTerminal {
   write(text: string): void { this.transcript = (this.transcript + clean(text)).slice(-64_000); this.scroll = 0; this.render(); }
   setModel(model: string | null): void { this.model = model; this.render(); }
   setActivity(activity: string | null): void { if (this.activity !== activity) { this.activity = activity; this.render(); } }
+  setUsage(usage: UsageTotals): void { this.usage = usage; this.render(); }
   unread(line: string): void { this.queued.unshift(line); }
   get imageCount(): number { return this.images.length; }
   takeImages(): ImageAttachment[] { const images = this.images; this.images = []; this.render(); return images; }
@@ -298,7 +307,11 @@ export class TerminalUI implements ChatTerminal {
     const hints = !this.pending ? 'Ctrl+C 中止（入力は応答完了後）' : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
       : composer ? 'Enter 送信  Ctrl+J 改行  Ctrl+V 画像  Cmd+V テキスト' : 'Enter 決定  Ctrl+C 中止';
     place(panel + 3 + inputRows, hints);
-    place(panel + 4 + inputRows, this.cwd);
+    // Usage is the least important line: it takes the bottom row and yields to cwd when narrow.
+    const footer = this.usage ? usageFooter(this.usage, width) : '';
+    const showFooter = footer.length > 0 && (width >= 40 || this.cwd.length + footer.length + 3 > width);
+    place(panel + 4 + inputRows, showFooter ? footer : this.cwd, showFooter ? '2' : '');
+    if (showFooter) place(panel + 5 + inputRows, this.cwd, '2');
     const cursorRow = Math.min(rows, panel + 3 + cursor.row - this.editorScroll);
     const cursorCol = Math.min(columns, left + 3 + cursor.column);
     this.output.write('\x1b[?25l\x1b[H' + screen.map(line => line + '\x1b[K').join('\r\n')

@@ -20,6 +20,7 @@ import { SessionStore, type Session, type MemoryObservation } from '../session/s
 import { openKiokukoMemory } from '../memory/kiokuko.ts';
 import { createTerminal, type ChatTerminal } from './terminal.ts';
 import { LanguageService, formatDiagnostics } from '../language/lsp/service.ts';
+import { addUsage, EMPTY_USAGE, type UsageTotals } from './usage.ts';
 import { languageTools } from '../tools/language.ts';
 import { parseLanguageSettings, DEFAULT_LANGUAGE_SETTINGS } from '../language/detect.ts';
 import { chooseProvider, chooseProviderModel, confirmRemoteAgent, CONNECT_PROVIDERS } from './providers.ts';
@@ -160,6 +161,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     catch (e) { process.stderr.write(`メモリ監査の保存失敗(本作業は継続): ${String(e)}\n`); }
   };
 
+  // Session-wide totals: only provider-reported numbers are added, never estimates.
+  let usageTotals: UsageTotals = EMPTY_USAGE;
   let aborted = false;
   const runTurn = async (input: string, activeModel: Model | null, direct?: DelegationRequest, images: ImageAttachment[] = []): Promise<void> => {
     ui.write(`\n▶ You: ${input}${images.length ? ` [画像${images.length}枚]` : ''}\n`);
@@ -192,6 +195,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
             auditMemory({ stage: 'supplied' });
             supplied = true;
           }
+        },
+        onUsage: (reported: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }) => {
+          usageTotals = addUsage(usageTotals, reported);
+          ui.setUsage?.(usageTotals);
         },
         onModelActivity: (stage: 'reasoning' | 'tool-input') => ui.setActivity?.(stage === 'reasoning' ? 'モデルが推論中… Ctrl+Cで中止' : 'ツール要求を受信中… Ctrl+Cで中止'),
         onText: (d: string) => { ui.setActivity?.('モデル応答を受信中… Ctrl+Cで中止'); ui.write(d); },

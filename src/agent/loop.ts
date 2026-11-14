@@ -6,6 +6,8 @@ export interface LoopHooks {
   /** Input passed to the adapter, not proof of provider receipt or memory application. */
   onModelRequest?(): void;
   onModelActivity?(stage: 'reasoning' | 'tool-input'): void;
+  /** Provider-reported token usage for one completed step; never an estimate. */
+  onUsage?(usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }): void;
   onText?(delta: string): void;
   onToolCall?(call: ToolCall): void;
   onToolResult?(r: ToolResult): void;
@@ -68,7 +70,9 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
       opts.hooks?.onModelRequest?.();
       for await (const ev of opts.model.stream({ messages, tools: toolSpecs, system: opts.system }, opts.signal)) {
         if (opts.signal.aborted) break;
-        if (ev.type === 'activity') {
+        if (ev.type === 'usage') {
+          opts.hooks?.onUsage?.(ev);
+        } else if (ev.type === 'activity') {
           opts.hooks?.onModelActivity?.(ev.stage);
         } else if (ev.type === 'text-delta') {
           text += ev.text;
