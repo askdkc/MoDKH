@@ -95,18 +95,22 @@ test('the OSC background reply never lands in the input box', async () => {
   const t = ttyTerminal();
   try {
     const line = t.ui.next();
-    t.input.write('garbage'); // プローブ応答待ちの間の文字は握りつぶす
-    await new Promise(resolve => setImmediate(resolve));
-    assert.doesNotMatch(t.text(), /garbage/, 'input during the probe is dropped');
+    t.input.write('garbage'); // ユーザーの打鍵はプローブ中でも通常通り入る
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.match(t.text(), /garbage/, 'real typing is not suppressed');
     t.input.write('\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\');
-    await new Promise(resolve => setImmediate(resolve));
-    assert.doesNotMatch(t.text(), /11;rgb/, 'the reply is not typed into the composer');
-    t.key('x'); // プローブ済みなら通常入力は生きる(応答を取りこぼしても250msで抑制解除になる)
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.doesNotMatch(t.text(), /11;rgb/, 'the reply chunk is swallowed');
+    t.input.emit('keypress', 'x', {}); // 文字入力は data と同じ経路
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.match(t.text(), /garbagex/, 'input works normally after the reply is consumed');
+    t.key('return');
     const outcome = await Promise.race([
       line.then(value => ({ value })),
       new Promise<'timeout'>(resolve => setTimeout(() => resolve('timeout'), 3000)),
     ]);
-    assert.ok(outcome !== 'timeout', 'the composer must accept input after the probe settles');
+    assert.ok(outcome !== 'timeout' && outcome.value === 'garbagex',
+      `the composer must accept input after the probe settles: ${JSON.stringify(outcome)}`);
   } finally { t.finish(); t.ui.close(); }
 });
 

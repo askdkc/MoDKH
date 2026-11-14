@@ -146,13 +146,21 @@ export class TerminalUI implements ChatTerminal {
   private colorizerState: ColorizerState = { mode: 'text', inDiff: false };
   private palette: Palette = paletteFor('dark');
   private backgroundProbe = false;
-  /** 背景プローブ中。端末返信の文字を入力へ流さない。 */
+  /** 背景プローブ中(返信待ち)。時間による入力抑制には使わない。 */
   private backgroundWaiting = false;
+  /** 返信チャンク由来のキー入力だけを一時的に握りつぶす。 */
+  private replySilenced = false;
+  /** 返信の先頭(\x1b]11;)から返信完了まで、分割チャンクごとに抑制を続ける。 */
+  private replyStarted = false;
+  private replyDone = false;
 
   constructor(cwd: string, input: ReadStream = process.stdin, output: WriteStream = process.stdout, options: TerminalOptions = {}) {
     this.clipboardReader = options.readClipboardImage ?? readClipboardImage;
     this.cwd = cwd; this.input = input; this.output = output;
     this.previousRaw = input.isRaw; this.color = process.env.NO_COLOR === undefined;
+    // 背景プローブの data 購読を readline より先に付ける。返信チャンクからだけ
+    // キー入力を落とし、ユーザーの打鍵はいつでも通常通り処理する。
+    if (this.color && (input as unknown as { isTTY?: boolean }).isTTY === true) this.probeBackground();
     emitKeypressEvents(input);
     input.setRawMode(true);
     input.on('keypress', this.keypress);
@@ -163,13 +171,15 @@ export class TerminalUI implements ChatTerminal {
     output.write('\x1b[?2004h');
     // 起動時は一度だけ画面を消して、ロゴを上端に整えて出す(前回実行の残りを見せない)。
     this.clearPending = true;
-    if (this.color && (input as unknown as { isTTY?: boolean }).isTTY === true) this.probeBackground();
+    if (this.backgroundProbe) this.output.write('\x1b]11;?\x1b\\');
     this.render();
   }
 
-  /** OSC 11 で端末の背景色を問い合わせる。返信がなければダーク扱い(既定パレット)。
-   * 問い合わせ中の端末返信は readline が文字入力として流し込むので、
-   * プローブが終わるまでの入力は握りつぶす(Ctrl+C は通す)。 */
+  /**
+   * OSC 11 で端末の背景色を問い合わせる。返信がなければダーク扱い(既定パレット)。
+   * 返信バイトを readline が文字入力として流し込むので、返信を含むチャンクから
+   * 生じるキー入力だけを握りつぶす。返信が来ない端末では何も握らない(CIでも安全)。
+   */
   private probeBackground(): void {
     if (this.backgroundProbe) return;
     this.backgroundProbe = true;
@@ -178,21 +188,36 @@ export class TerminalUI implements ChatTerminal {
     let timer: NodeJS.Timeout | undefined;
     const onData = (chunk: string): void => {
       buffer += chunk;
+      if (this.backgroundWaiting && buffer.includes('\x1b]11;')) this.replyStarted = true;
+      if (this.replyStarted && !this.replyDone) this.silenceReplyKeys();
       const osc = parseOscBackground(buffer);
-      if (osc !== null) {
-        cleanup();
-        const classified = classifyBackground(osc, process.env);
-        if (classified !== null) { this.palette = paletteFor(classified); this.render(); }
-      }
+      if (osc === null) return;
+      finishProbe();
+      const classified = classifyBackground(osc, process.env);
+      if (classified !== null) { this.palette = paletteFor(classified); this.render(); }
     };
-    const cleanup = (): void => {
+    const finishProbe = (): void => {
       clearTimeout(timer);
       this.backgroundWaiting = false;
+      this.replyDone = true;
       this.input.off('data', onData);
+      // 分割到着で入力欄に紛れた返信文字があれば取り除く(単一チャンクは握りつぶし済み)。
+      const tail = /\x1b\]11;([^\x07\x1b]*)/.exec(buffer)?.[1];
+      if (tail && this.text.includes(tail)) {
+        this.text = this.text.split(tail).join('');
+        this.cursor = Math.min(this.cursor, Math.max(0, this.text.length));
+        this.render();
+      }
     };
     this.input.on('data', onData);
-    timer = setTimeout(cleanup, 250);
-    this.output.write('\x1b]11;?\x1b\\');
+    timer = setTimeout(finishProbe, 250);
+  }
+
+  /** 返信チャンクから生じるキー入力を、現在の入力処理の終わりまで握りつぶす。 */
+  private silenceReplyKeys(): void {
+    if (this.replySilenced) return;
+    this.replySilenced = true;
+    queueMicrotask(() => { this.replySilenced = false; });
   }
 
   /** リサイズ: 画面を作り直す。トランスクリプトはスクロールバックに確定済み。 */
@@ -263,7 +288,7 @@ export class TerminalUI implements ChatTerminal {
     return undefined;
   }
   private insertText(value: string): void {
-    if (this.backgroundWaiting) return; // OSC 返信の取り込みを入力にしない
+    if (this.replySilenced) return; // OSC 返信の取り込みを入力にしない
     const normalized = clean(value.replace(/\r\n?/g, '\n').replace(/\t/g, '  '));
     const added = chars(this.pending?.composer ? normalized : normalized.replace(/\n/g, ' '));
     const parts = chars(this.text);
@@ -312,8 +337,8 @@ export class TerminalUI implements ChatTerminal {
       } else this.pending?.finish(null);
       return;
     }
-    // 背景プローブ中は端末返信(11;rgb:… など)を打ち込ませない。Ctrl+C だけは上で通す。
-    if (this.backgroundWaiting) return;
+    // 返信チャンク(OSC 応答)から生じたキー入力だけを握りつぶす。Ctrl+C は通す。
+    if (this.replySilenced && !(key.ctrl && key.name === 'c')) return;
     // PageUp/PgDn は端末本来のスクロールに任せる(代替スクリーンを使わないため)。
     if (!this.pending) return;
     if (key.ctrl && key.name === 'v') { void this.pasteImage(); return; }
