@@ -11,14 +11,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14        # Apple Silicon (arm64)
-          - os: ubuntu-24.04    # x64
+          - os: macos-latest # Apple Silicon (arm64)
+          - os: ubuntu-26.04 # x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 26
       - name: 依存導入
         run: npm ci
       - name: 型検査とビルド
