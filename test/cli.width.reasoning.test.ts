@@ -53,10 +53,10 @@ test('a real TUI conversation uses 85% of the width and shows provider reasoning
     });
     let output = '';
     child.stdout!.on('data', data => { output += data; });
-    // Lines are streamed at full width; measure the widest visible row on the current screen.
+    // ウェルカムは端末中央寄せ(余白込みで広がらない)。本文幅を測るため余白を除く。
     const widest = (): number => {
       const lines = screenFrom(output, 40);
-      return Math.max(...lines.map(line => [...line].length));
+      return Math.max(...lines.map(line => [...line.trim()].length));
     };
     const wait = async (text: string): Promise<void> => {
       const deadline = Date.now() + 8000;

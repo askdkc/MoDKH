@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import type { ReadStream, WriteStream } from 'node:tty';
-import { stripVTControlCharacters } from 'node:util';
 import { TerminalUI, textWidth } from '../src/cli/terminal.ts';
 import { FixedModel } from '../src/model/fixed.ts';
 import { runAgentLoop } from '../src/agent/loop.ts';
 import { ToolRegistry } from '../src/tools/registry.ts';
+import { screenFrom } from './tui.screen.ts';
 
 function terminal(columns = 100, rows = 30) {
   const input = new PassThrough() as unknown as ReadStream;
@@ -19,10 +19,7 @@ function terminal(columns = 100, rows = 30) {
   return {
     ui: new TerminalUI('/workspace', input, output), input, output,
     clear: () => { raw = ''; },
-    frame: () => {
-      const latest = raw.slice(raw.lastIndexOf('\x1b[H') + 3);
-      return { raw: latest, lines: stripVTControlCharacters(latest).split('\r\n') };
-    },
+    frame: () => ({ lines: screenFrom(raw, Math.max(6, output.rows || 24)), raw }),
   };
 }
 

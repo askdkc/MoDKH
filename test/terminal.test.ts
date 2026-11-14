@@ -45,28 +45,34 @@ test('TUI shows DKH once, completes /conn, searches and selects providers by key
 });
 
 test('the DKH banner is streamed exactly once and never erased', () => {
-  const t = terminal();
+  const t = terminal(120, 30);
   try {
     const input = t.ui.next();
     t.ui.write('▶ You: 最初の会話\n');
-    const full = strip(t.screen());
-    assert.equal(full.split('██████╗').length - 1, 1, 'the banner is painted once');
-    assert.match(strip(t.screen()), /█/, 'banner survives later frames');
+    t.ui.write('回答の本文です\n');
+    // 会話開始後の最終画面にロゴは1組だけ(フレーム再描画の重複ではない)
+    const view = t.text();
+    assert.equal(view.split('██████╗').length - 1, 1, 'the banner is painted once');
+    assert.match(view, /最初の会話/);
+    assert.match(view, /回答の本文です/);
     t.key('return'); void input;
   } finally { t.ui.close(); }
 });
 
-test('startup clears the screen and centers the banner at the top', () => {
+test('startup clears the screen and centers the welcome like the old design', () => {
   const t = terminal(120, 30);
   try {
     assert.match(t.screen(), /\x1b\[2J/, 'the startup view starts from a clean screen');
     const rows = t.text().split('\n');
-    assert.match(rows[0] ?? '', /DKH  ·  Coding Harness/, `banner is on the first row: ${JSON.stringify(rows.slice(0, 8))}`);
-    const logo = rows.find(line => line.includes('██████╗'));
-    assert.ok(logo !== undefined);
+    const padRows = rows.findIndex(line => line.includes('██████╗'));
+    // ロゴは縦中央(画面下端の入力欄の上、上端から数行空けた位置)
+    assert.ok(padRows >= 6 && padRows <= 20, `logo is vertically centered, row=${padRows}`);
+    const logo = rows[padRows];
     const pad = logo.length - logo.trimStart().length;
-    // 幅120・80列のロゴ領域なら両側におおむね均等な余りが出る
-    assert.ok(pad > 5, `the banner is centered, left pad=${pad}`);
+    // 幅120・80列分のコンテンツを画面中央に: 余りは左右ほぼ均等
+    assert.ok(pad > 10, `the banner is centered on screen, left pad=${pad}`);
+    const title = rows[padRows - 1] ?? '';
+    assert.match(title.trim(), /DKH  ·  Coding Harness/, 'the title rides directly above the logo');
   } finally { t.ui.close(); }
 });
 
@@ -113,8 +119,6 @@ test('the OSC background reply never lands in the input box', async () => {
       `the composer must accept input after the probe settles: ${JSON.stringify(outcome)}`);
   } finally { t.finish(); t.ui.close(); }
 });
-
-function strip(raw: string): string { return raw; }
 
 test('secret prompt masks pasted credentials and does not retain them on screen', async () => {
   const t = terminal();

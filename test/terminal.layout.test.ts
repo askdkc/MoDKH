@@ -23,15 +23,22 @@ test('the welcome block stays compact, and a conversation widens to ~85% of the 
   const t = terminal(200, 40);
   try {
     const input = t.ui.next();
-    const welcome = t.text();
-    const wide = Math.max(...welcome.split('\n').map(line => textWidth(line)));
-    assert.ok(wide <= 80, `welcome stays compact: ${wide}`);
+    const welcome = t.text().split('\n');
+    // ウェルカムは端末全体の中央に寄せられる。コンテンツ幅は80列で、
+    // 余白(margin)を除いた本文は80列以内。
+    const used = Math.max(...welcome.map(line => textWidth(line.trim())));
+    assert.ok(used <= 80, `welcome stays compact: ${used}`);
+    const margins = welcome.filter(line => line.trim().startsWith('█'))
+      .map(line => line.length - line.trimStart().length);
+    assert.ok(margins.every(pad => Math.abs(pad - 60) <= 4),
+      `welcome content is centered on the 200-column screen: ${JSON.stringify(margins)}`);
 
     t.ui.write('▶ You: 作業を始めます\n');
-    const used = Math.max(...screenFrom(t.raw(), 40).map(line => textWidth(line)));
+    const conversation = screenFrom(t.raw(), 40);
+    const used2 = Math.max(...conversation.map(line => textWidth(line)));
     // 85% of 200 columns is 170; streamed conversation lines must actually use it.
-    assert.ok(used >= 160, `conversation should use the width: ${used}`);
-    assert.ok(used <= 200, 'never exceeds the terminal');
+    assert.ok(used2 >= 160, `conversation should use the width: ${used2}`);
+    assert.ok(used2 <= 200, 'never exceeds the terminal');
 
     t.input.emit('keypress', 'x', {});
     t.key('return');

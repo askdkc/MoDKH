@@ -115,7 +115,9 @@ export class TerminalUI implements ChatTerminal {
   /** まだ改行が来ていない最終行。ライブブロックの一部として再描画する。 */
   private partial = '';
   private started = false;
-  private bannerPending = true;
+  /** 会話開始前の案内行(ウェルカムブロックに表示し、会話開始時に本文へ流す)。 */
+  private bootLines: string[] = [];
+  private bootFlushed = false;
   /** 現在のコントロール範囲の先頭行(次の確定行を書き込む絶対行)。0 は未初期化(=最下段扱い)。 */
   private streamRow = 0;
   /** 最後に出した絶対カーソルの物理行(消去の起点)。 */
@@ -239,8 +241,7 @@ export class TerminalUI implements ChatTerminal {
       : Math.max(8, Math.min(columns - 2, 80));
   }
 
-  write(text: string): void { this.appendTranscript(text); this.render(); }
-  setModel(model: string | null): void { this.model = model; this.render(); }
+  write(text: string): void { this.appendTranscript(text); this.render(); }  setModel(model: string | null): void { this.model = model; this.render(); }
   setActivity(activity: string | null): void { if (this.activity !== activity) { this.activity = activity; this.render(); } }
   setUsage(usage: UsageTotals): void { this.usage = usage; this.render(); }
   /** Accumulate one reasoning delta, or flush the finished block into the transcript with `null`. */
@@ -394,6 +395,8 @@ export class TerminalUI implements ChatTerminal {
       if (at < 0) { this.partial = source; break; }
       const logicalLine = source.slice(0, at);
       source = source.slice(at + 1);
+      // 会話が始まる前の案内行はウェルカムブロックへ(会話開始時に一括で出力する)。
+      if (!this.started) { this.bootLines.push(logicalLine); continue; }
       for (const wrapped of wrap(logicalLine, width)) this.queue.push(wrapped);
       this.partial = '';
     }
@@ -415,16 +418,13 @@ export class TerminalUI implements ChatTerminal {
     const stream = this.queue.splice(0, this.queue.length)
       .map(line => this.color ? this.colorizer.line(line, this.palette) : line);
     this.colorizerState = this.colorizer.state();
-    if (this.bannerPending) {
-      this.bannerPending = false;
-      const center = (line: string): string => {
-        const pad = Math.max(0, Math.floor((width - textWidth(line)) / 2));
-        return ' '.repeat(pad) + line;
-      };
-      const banner: string[] = [];
-      banner.unshift(this.paint('DKH  ·  Coding Harness', '1'));
-      for (const line of LOGO) banner.push(this.paint(center(line), ACCENT));
-      stream.unshift(...banner.map(center));
+    // 会話が始まった瞬間、ウェルカム(ロゴ+案内)を一度だけ本文へ流し込む。
+    if (this.started && !this.bootFlushed) {
+      this.bootFlushed = true;
+      const banner = ['DKH  ·  Coding Harness', ...LOGO];
+      stream.unshift(...banner.map(l => this.paint(l, l.startsWith('DKH') ? '1' : ACCENT)),
+        ...this.bootLines.flatMap(l => wrap(l, width)));
+      this.bootLines = [];
     }
 
     // --- ライブブロック(最下部)を構成する ---
@@ -486,18 +486,42 @@ export class TerminalUI implements ChatTerminal {
 
     const styled = (row: { text: string; style: string }): string =>
       this.paint(fitText(row.text, width), row.style);
-    let body: string[] = [
-      ...(this.partial ? partialLines.map(line => this.color ? this.fork().line(line, this.palette) : line) : []),
-      ...liveReasoning.map(row => this.paint(fitText(row.text, width), row.style)),
-      ...optionsLines.map(styled),
-      ...lines.map(styled),
-    ];
+    // 会話が始まる前のウェルカム: ロゴ+案内を縦中央に整え、全体を画面中央に寄せる。
+    const paintMargin = this.started ? 0 : Math.max(0, Math.floor((this.columns() - width) / 2));
+    const marginPrefix = ' '.repeat(Math.min(paintMargin, Math.max(0, this.columns() - 6)));
+    const marginStyled = (row: { text: string; style: string }): string => marginPrefix + styled(row);
+    let body: string[] = [];
     let editorStartIdx = editorStart;
+    if (!this.started) {
+      const welcome: { text: string; style: string }[] = [
+        { text: 'DKH  ·  Coding Harness', style: '1' },
+        ...LOGO.map(line => ({ text: line, style: ACCENT })),
+        ...this.bootLines.slice(-8).map(line => ({ text: line, style: '' })),
+      ];
+      const composerRows = partialCount + liveReasoning.length + optionsLines.length + lines.length;
+      const topPad = Math.max(0, Math.min(20, Math.floor((rows - welcome.length - composerRows) / 2) - 1));
+      body = [
+        ...Array.from({ length: Math.max(0, topPad) }, () => ''),
+        ...welcome.map(row => marginPrefix + styled(row)),
+        ...(this.partial ? partialLines.map(line => marginPrefix + (this.color ? this.fork().line(line, this.palette) : line)) : []),
+        ...liveReasoning.map(row => marginPrefix + this.paint(fitText(row.text, width), row.style)),
+        ...optionsLines.map(marginStyled),
+        ...lines.map(marginStyled),
+      ];
+      editorStartIdx = topPad + welcome.length + partialCount + liveReasoning.length + optionsLines.length + 1;
+    } else {
+      body = [
+        ...(this.partial ? partialLines.map(line => this.color ? this.fork().line(line, this.palette) : line) : []),
+        ...liveReasoning.map(row => this.paint(fitText(row.text, width), row.style)),
+        ...optionsLines.map(styled),
+        ...lines.map(styled),
+      ];
+    }
     // 最下部ブロックは1行以上の余白を残して画面に収める。はみ出すときは上侧から落とす。
     const overflow = Math.max(0, body.length - (rows - 1));
     if (overflow > 0) {
       body = body.slice(overflow);
-      editorStartIdx = Math.max(0, editorStart - overflow);
+      editorStartIdx = Math.max(0, editorStartIdx - overflow);
     }
     const liveCount = body.length;
     // --- 描画。消去は「最終トランスクリプト行の下一行」から下端まで。
@@ -541,7 +565,7 @@ export class TerminalUI implements ChatTerminal {
       out += `\x1b[${liveStart + i};1H\x1b[K${body[i]}` + (i === liveCount - 1 ? '' : '\r\n');
     }
     const cursorLiveRow = Math.min(rows, liveStart + editorStartIdx + (cursor.row - this.editorScroll));
-    const cursorCol = Math.min(this.columns(), 3 + cursor.column);
+    const cursorCol = Math.min(this.columns(), paintMargin + 3 + cursor.column);
     out += `\x1b[${cursorLiveRow};${cursorCol}H` + (this.pending ? '\x1b[?25h' : '\x1b[?25l');
     this.cursorRow = cursorLiveRow;
     this.output.write(out);
