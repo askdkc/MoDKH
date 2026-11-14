@@ -90,10 +90,17 @@ echo "$OUTNOMODEL" | grep -q 'モデル未接続: /connect' || { echo "FAIL: 未
 OUTMODELS=$(printf '/models ScRiPt\n1\n/connect\n\n/exit\n' | "$CLI" --cwd "$PROJ3")
 echo "$OUTMODELS" | grep -q '1. fixed/scripted' || { echo 'FAIL: 検索候補がない'; exit 1; }
 echo "$OUTMODELS" | grep -q '接続中: fixed/scripted' || { echo 'FAIL: モデル選択が反映されない'; exit 1; }
-DKH_TEST_ENTRY="$CLI" DKH_TEST_CHAT="$WORK/install/node_modules/dkh/dist/cli/chat.js" node --test --test-reporter=tap \
+DKH_TEST_ENTRY="$CLI" DKH_TEST_CHAT="$WORK/install/node_modules/dkh/dist/cli/chat.js" DKH_TEST_TERMINAL="$WORK/install/node_modules/dkh/dist/cli/terminal.js" node --test --test-reporter=tap \
   "$ROOT/test/cli.interactive.test.ts" "$ROOT/test/cli.safety.test.ts" \
   "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.memory.test.ts" "$ROOT/test/cli.tui.test.ts" \
-  "$ROOT/test/plugins.entry.test.ts"
+  "$ROOT/test/plugins.entry.test.ts" "$ROOT/test/composer.flow.test.ts" "$ROOT/test/cli.harness.test.ts"
+
+# 10) 言語機能: 配布物から空の管理領域へ実TypeScriptサーバーを自動導入し、診断・再利用・編集後の再診断を確認。
+PROJLANG="$WORK/langproject"
+mkdir -p "$PROJLANG/src"
+printf '{"compilerOptions":{"strict":true,"target":"es2022","module":"esnext","moduleResolution":"bundler"},"include":["src"]}\n' > "$PROJLANG/tsconfig.json"
+printf 'export const value: number = "oops";\n' > "$PROJLANG/src/bad.ts"
+python3 "$ROOT/scripts/language-acceptance.py" "$CLI" "$WORK" "$PROJLANG"
 
 # Verify the exported SDK from the installed package, not the source checkout.
 node --input-type=module -e 'await import("dkh/plugin-api")'

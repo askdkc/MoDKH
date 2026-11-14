@@ -1,17 +1,23 @@
 import { emitKeypressEvents, type Key } from 'node:readline';
-import { stripVTControlCharacters } from 'node:util';
+import { chars, clean, fitText, wrap, editorLayout, verticalCursor, lineEdge } from './editor.ts';
+export { textWidth, fitText } from './editor.ts';
+import { readClipboardImage, type ClipboardReader } from './clipboard.ts';
+import { MAX_IMAGES, parseImage, type ImageAttachment } from '../agent/images.ts';
 import type { ReadStream, WriteStream } from 'node:tty';
 import { LineSource } from './lines.ts';
 
 export interface Choice { value: string; label: string; detail?: string }
 export interface ChatTerminal {
   readonly interactive: boolean;
+  readonly imageCount?: number;
+  takeImages?(): ImageAttachment[];
   write(text: string): void;
   next(signal?: AbortSignal): Promise<string | null>;
   unread(line: string): void;
   ask(title: string, signal?: AbortSignal, secret?: boolean): Promise<string | null>;
   choose(title: string, choices: readonly Choice[], query?: string): Promise<string | null>;
   setModel(model: string | null): void;
+  setActivity?(activity: string | null): void;
   close(): void;
 }
 export const COMMANDS: readonly Choice[] = [
@@ -23,34 +29,7 @@ export const COMMANDS: readonly Choice[] = [
 ];
 const LOGO = ['██████╗  ██╗  ██╗ ██╗  ██╗', '██╔══██╗ ██║ ██╔╝ ██║  ██║',
   '██║  ██║ █████╔╝  ███████║', '██║  ██║ ██╔═██╗  ██╔══██║', '██████╔╝ ██║  ██╗ ██║  ██║', '╚═════╝  ╚═╝  ╚═╝ ╚═╝  ╚═╝'];
-const segments = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-function chars(text: string): string[] { return [...segments.segment(text)].map(s => s.segment); }
-function clean(text: string): string { return stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, ''); }
-function cellWidth(char: string): number {
-  if (/\p{Extended_Pictographic}/u.test(char)) return 2;
-  const cp = char.codePointAt(0)!;
-  return cp >= 0x1100 && (cp <= 0x115f || cp >= 0x2e80 && cp <= 0xa4cf || cp >= 0xac00 && cp <= 0xd7a3
-    || cp >= 0xf900 && cp <= 0xfaff || cp >= 0xfe10 && cp <= 0xfe6f || cp >= 0xff00 && cp <= 0xff60 || cp >= 0x20000) ? 2 : 1;
-}
-export function textWidth(text: string): number { return chars(clean(text)).reduce((sum, c) => sum + cellWidth(c), 0); }
-export function fitText(text: string, width: number): string {
-  let result = '', used = 0;
-  for (const c of chars(clean(text))) { const n = cellWidth(c); if (used + n > width) break; result += c; used += n; }
-  return result;
-}
-function wrap(text: string, width: number): string[] {
-  const lines: string[] = [];
-  for (const source of clean(text).split('\n')) {
-    let line = '', used = 0;
-    for (const c of chars(source)) {
-      const n = cellWidth(c);
-      if (used + n > width) { lines.push(line); line = ''; used = 0; }
-      line += c; used += n;
-    }
-    lines.push(line);
-  }
-  return lines;
-}
+const ACCENT = '34'; // Use the terminal theme's blue; NO_COLOR is respected by paint().
 function matching(choices: readonly Choice[], query: string): Choice[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   return choices.filter(c => terms.every(t => `${c.label} ${c.value} ${c.detail ?? ''}`.toLowerCase().includes(t)));
@@ -85,7 +64,9 @@ class PlainTerminal implements ChatTerminal {
   }
 }
 
-type Pending = { finish: (value: string | null) => void; title: string; choices?: readonly Choice[]; secret?: boolean };
+type Pending = { finish: (value: string | null) => void; title: string; choices?: readonly Choice[]; secret?: boolean; composer?: boolean };
+export interface TerminalOptions { readClipboardImage?: ClipboardReader }
+const MAX_INPUT_BYTES = 128 * 1024;
 /** One owner for raw input, screen and modal focus. Business effects stay in runChat. */
 export class TerminalUI implements ChatTerminal {
   readonly interactive = true;
@@ -96,8 +77,16 @@ export class TerminalUI implements ChatTerminal {
   private queued: string[] = [];
   private transcript = '';
   private model: string | null = null;
+  private activity: string | null = null;
   private closed = false;
   private paste = false;
+  private pasteBuffer = '';
+  private pasteBytes = 0;
+  private editorScroll = 0;
+  private images: ImageAttachment[] = [];
+  private clipboardTask?: AbortController;
+  private inputNotice = '';
+  private readonly clipboardReader: ClipboardReader;
   private scroll = 0;
   private hiddenCompletion = false;
   private readonly previousRaw: boolean;
@@ -105,7 +94,8 @@ export class TerminalUI implements ChatTerminal {
   private readonly input: ReadStream;
   private readonly output: WriteStream;
   private readonly cwd: string;
-  constructor(cwd: string, input: ReadStream = process.stdin, output: WriteStream = process.stdout) {
+  constructor(cwd: string, input: ReadStream = process.stdin, output: WriteStream = process.stdout, options: TerminalOptions = {}) {
+    this.clipboardReader = options.readClipboardImage ?? readClipboardImage;
     this.cwd = cwd; this.input = input; this.output = output;
     this.previousRaw = input.isRaw; this.color = process.env.NO_COLOR === undefined;
     emitKeypressEvents(input);
@@ -120,22 +110,29 @@ export class TerminalUI implements ChatTerminal {
   }
   write(text: string): void { this.transcript = (this.transcript + clean(text)).slice(-64_000); this.scroll = 0; this.render(); }
   setModel(model: string | null): void { this.model = model; this.render(); }
+  setActivity(activity: string | null): void { if (this.activity !== activity) { this.activity = activity; this.render(); } }
   unread(line: string): void { this.queued.unshift(line); }
-  next(signal?: AbortSignal): Promise<string | null> { return this.wait('何を調べますか？ / でコマンド', undefined, '', signal); }
+  get imageCount(): number { return this.images.length; }
+  takeImages(): ImageAttachment[] { const images = this.images; this.images = []; this.render(); return images; }
+  next(signal?: AbortSignal): Promise<string | null> { return this.wait('何を調べますか？ / でコマンド', undefined, '', signal, false, true); }
   ask(title: string, signal?: AbortSignal, secret = false): Promise<string | null> { return this.wait(title, undefined, '', signal, secret); }
   choose(title: string, choices: readonly Choice[], query = ''): Promise<string | null> { return this.wait(title, choices, query); }
-  private wait(title: string, choices?: readonly Choice[], query = '', signal?: AbortSignal, secret = false): Promise<string | null> {
+  private wait(title: string, choices?: readonly Choice[], query = '', signal?: AbortSignal, secret = false, composer = false): Promise<string | null> {
     if (signal?.aborted || this.closed) return Promise.resolve(null);
     if (this.queued.length) return Promise.resolve(this.queued.shift()!);
     if (this.pending) throw new Error('端末の入力待ちは同時に1件だけです');
     this.text = query; this.cursor = chars(query).length; this.selection = 0; this.hiddenCompletion = false;
+    this.editorScroll = 0; this.inputNotice = '';
     return new Promise(resolve => {
       const abort = () => finish(null);
       const finish = (value: string | null) => {
         signal?.removeEventListener('abort', abort);
+        this.clipboardTask?.abort(); this.clipboardTask = undefined;
+        this.paste = false; this.pasteBuffer = ''; this.pasteBytes = 0;
+        if (value === null && composer) this.images = [];
         this.pending = undefined; this.text = ''; this.cursor = 0; this.render(); resolve(value);
       };
-      this.pending = { title, choices, finish, secret };
+      this.pending = { title, choices, finish, secret, composer };
       signal?.addEventListener('abort', abort, { once: true });
       this.render();
     });
@@ -143,33 +140,83 @@ export class TerminalUI implements ChatTerminal {
   private options(): Choice[] | undefined {
     if (this.pending?.secret) return undefined;
     if (this.pending?.choices) return matching(this.pending.choices, this.text);
-    if (!this.hiddenCompletion && this.text.startsWith('/') && !this.text.includes(' ')) return matching(COMMANDS, this.text);
+    if (!this.hiddenCompletion && this.text.startsWith('/') && !(/\s/.test(this.text))) return matching(COMMANDS, this.text);
     return undefined;
+  }
+  private insertText(value: string): void {
+    const normalized = clean(value.replace(/\r\n?/g, '\n').replace(/\t/g, '  '));
+    const added = chars(this.pending?.composer ? normalized : normalized.replace(/\n/g, ' '));
+    const parts = chars(this.text);
+    const next = parts.slice(0, this.cursor).concat(added, parts.slice(this.cursor)).join('');
+    if (Buffer.byteLength(next) > MAX_INPUT_BYTES) { this.inputNotice = '入力は128 KiB以内にしてください'; return; }
+    this.text = next; this.cursor += added.length;
+    this.selection = 0; this.hiddenCompletion = false; this.inputNotice = '';
+  }
+  private async pasteImage(): Promise<void> {
+    const pending = this.pending;
+    if (!pending?.composer || pending.secret || this.clipboardTask) return;
+    if (this.images.length >= MAX_IMAGES) { this.inputNotice = `添付画像は最大${MAX_IMAGES}枚です`; this.render(); return; }
+    const controller = new AbortController();
+    this.clipboardTask = controller; this.inputNotice = '画像を読込中…'; this.render();
+    try {
+      const image = parseImage(await this.clipboardReader(controller.signal));
+      if (controller.signal.aborted || this.pending !== pending || this.closed) return;
+      this.images.push(image); this.inputNotice = '';
+    } catch (e) {
+      if (!controller.signal.aborted && this.pending === pending) this.inputNotice = e instanceof Error ? e.message : '画像の読み取りに失敗しました';
+    } finally {
+      if (this.clipboardTask === controller) this.clipboardTask = undefined;
+      this.render();
+    }
   }
   private onEnd = (): void => { this.pending?.finish(null); this.close(); };
   private keypress = (value: string | undefined, key: Key): void => {
-    if (key.name === 'paste-start') { this.paste = true; return; }
-    if (key.name === 'paste-end') { this.paste = false; this.render(); return; }
+    if (key.name === 'paste-start') { this.paste = true; this.pasteBuffer = ''; this.pasteBytes = 0; return; }
+    if (key.name === 'paste-end') {
+      this.paste = false;
+      if (this.pending && this.pasteBytes <= MAX_INPUT_BYTES) this.insertText(this.pasteBuffer);
+      else if (this.pasteBytes > MAX_INPUT_BYTES) this.inputNotice = '貼り付けるテキストは128 KiB以内にしてください';
+      this.pasteBuffer = ''; this.pasteBytes = 0; this.render(); return;
+    }
+    if (this.paste) {
+      this.pasteBytes += Buffer.byteLength(value ?? '');
+      if (this.pasteBytes <= MAX_INPUT_BYTES) this.pasteBuffer += value ?? '';
+      return;
+    }
     if (key.ctrl && key.name === 'c') {
+      this.clipboardTask?.abort(); this.clipboardTask = undefined; this.inputNotice = '';
       if (process.listenerCount('SIGINT') > 0) process.emit('SIGINT');
-      else if (this.pending?.choices || this.text) { this.pending?.choices ? this.pending.finish(null) : this.text = ''; this.cursor = 0; this.render(); }
-      else this.pending?.finish(null);
+      else if (this.pending?.choices || this.text || this.images.length) {
+        if (this.pending?.choices) this.pending.finish(null);
+        else { this.text = ''; this.cursor = 0; this.images = []; this.render(); }
+      } else this.pending?.finish(null);
       return;
     }
     if (key.name === 'pageup' || key.name === 'pagedown') {
       this.scroll = Math.max(0, this.scroll + (key.name === 'pageup' ? 8 : -8)); this.render(); return;
     }
     if (!this.pending) return;
+    if (key.ctrl && key.name === 'v') { void this.pasteImage(); return; }
+    if (key.ctrl && key.name === 'x' && this.pending.composer) {
+      this.clipboardTask?.abort(); this.clipboardTask = undefined;
+      this.images.pop(); this.inputNotice = ''; this.render(); return;
+    }
     const options = this.options();
-    if (!this.paste && (key.name === 'escape' || key.ctrl && key.name === 'd')) {
+    if (key.name === 'escape' || key.ctrl && key.name === 'd') {
       if (this.pending.choices) this.pending.finish(null);
       else if (options?.length && key.name === 'escape') { this.hiddenCompletion = true; this.render(); }
       else if (!this.text && key.ctrl) this.pending.finish(null);
       return;
     }
-    if (options && (key.name === 'up' || key.name === 'down')) {
+    const newline = this.pending.composer && (value === '\n' || key.ctrl && key.name === 'j' || (key.name === 'return' || key.name === 'enter') && (key.shift || key.meta));
+    if (newline) this.insertText('\n');
+    else if (options && (key.name === 'up' || key.name === 'down')) {
       this.selection = options.length ? (this.selection + (key.name === 'down' ? 1 : -1) + options.length) % options.length : 0;
-    } else if (!this.paste && (key.name === 'return' || key.name === 'enter' || key.name === 'tab')) {
+    } else if (this.pending.composer && (key.name === 'up' || key.name === 'down')) {
+      const width = Math.max(5, Math.min((this.output.columns || 80) - 4, 80) - 3);
+      this.cursor = verticalCursor(this.text, this.cursor, width, key.name === 'up' ? -1 : 1);
+    } else if (key.name === 'return' || key.name === 'enter' || key.name === 'tab') {
+      if (this.clipboardTask) { this.inputNotice = '画像の読込中です。完了後にEnterで送信'; this.render(); return; }
       const selected = options?.[this.selection];
       if (key.name === 'tab') {
         if (selected && !this.pending.choices) { this.text = selected.value; this.cursor = chars(this.text).length; }
@@ -177,39 +224,49 @@ export class TerminalUI implements ChatTerminal {
       else this.pending.finish(selected?.value ?? this.text);
     } else if (key.name === 'left') this.cursor = Math.max(0, this.cursor - 1);
     else if (key.name === 'right') this.cursor = Math.min(chars(this.text).length, this.cursor + 1);
-    else if (key.name === 'home' || key.ctrl && key.name === 'a') this.cursor = 0;
-    else if (key.name === 'end' || key.ctrl && key.name === 'e') this.cursor = chars(this.text).length;
-    else if (key.ctrl && key.name === 'u') { this.text = ''; this.cursor = 0; }
-    else {
+    else if (key.name === 'home' || key.ctrl && key.name === 'a') this.cursor = lineEdge(this.text, this.cursor, 'start');
+    else if (key.name === 'end' || key.ctrl && key.name === 'e') this.cursor = lineEdge(this.text, this.cursor, 'end');
+    else if (key.ctrl && key.name === 'u') { this.text = ''; this.cursor = 0; this.inputNotice = ''; }
+    else if (key.name === 'backspace' || key.name === 'delete') {
       const parts = chars(this.text);
-      if (key.name === 'backspace') { if (this.cursor > 0) parts.splice(--this.cursor, 1); }
+      if (key.name === 'backspace' && this.cursor > 0) parts.splice(--this.cursor, 1);
       else if (key.name === 'delete') parts.splice(this.cursor, 1);
-      else if (value && (!key.ctrl && !key.meta || this.paste)) {
-        const added = chars(clean(value.replace(/[\r\n\t]/g, ' ')));
-        parts.splice(this.cursor, 0, ...added); this.cursor += added.length;
-      }
       this.text = parts.join(''); this.selection = 0; this.hiddenCompletion = false;
-    }
+    } else if (value && !key.ctrl && !key.meta) this.insertText(value);
     this.render();
   };
   private paint(text: string, code: string): string { return this.color ? `\x1b[${code}m${text}\x1b[0m` : text; }
   private render = (): void => {
     if (this.closed) return;
     const columns = Math.max(12, this.output.columns || 80), rows = Math.max(6, this.output.rows || 24);
-    const width = Math.max(8, Math.min(columns - 4, 96));
+    const width = Math.max(8, Math.min(columns - 4, 80));
     const left = Math.max(0, Math.floor((columns - width) / 2));
     const screen = Array<string>(rows).fill('');
     const place = (row: number, text: string, style = '') => {
       if (row >= 0 && row < rows) screen[row] = ' '.repeat(left) + this.paint(fitText(text, width), style);
     };
-    const panel = Math.max(1, rows - 6);
+    const displayText = this.pending?.secret ? '•'.repeat(chars(this.text).length) : this.text;
+    const editor = editorLayout(displayText, width - 3);
+    const cursor = editor.positions[Math.min(this.cursor, editor.positions.length - 1)];
+    const composer = !this.pending || this.pending.composer;
+    const inputRows = Math.min(Math.max(1, rows - 7), Math.max(composer ? 3 : 1, editor.lines.length));
+    if (cursor.row < this.editorScroll) this.editorScroll = cursor.row;
+    if (cursor.row >= this.editorScroll + inputRows) this.editorScroll = cursor.row - inputRows + 1;
+    this.editorScroll = Math.min(this.editorScroll, Math.max(0, editor.lines.length - inputRows));
+    const extraRows = inputRows - 1;
     const logs = wrap(this.transcript.trimEnd(), width);
-    if (this.transcript.includes('▶') || this.transcript.includes('https://') || this.scroll > 0 || logs.length > 8) {
+    const history = this.transcript.includes('▶') || this.transcript.includes('https://') || this.scroll > 0 || logs.length > 8;
+    const showLogo = !history && rows >= 20 + extraRows && width >= 28;
+    const bottomPanel = Math.max(1, rows - 6 - extraRows);
+    // Center the whole welcome group, not just its logo. During a conversation
+    // the editor stays at the bottom so the available history area is retained.
+    const welcomeTop = Math.max(0, Math.floor((rows - (showLogo ? 16 : 9) - extraRows) / 2));
+    const panel = history ? bottomPanel : Math.min(bottomPanel, Math.max(1, welcomeTop + (showLogo ? 10 : 3)));
+    if (history) {
       const end = Math.max(0, logs.length - this.scroll);
       logs.slice(Math.max(0, end - panel), end).forEach((line, i) => place(i, line));
     } else {
-      const logoTop = Math.max(0, Math.floor((panel - 8) / 2));
-      if (panel >= 9 && width >= 28) LOGO.forEach((line, i) => place(logoTop + i, ' '.repeat(Math.floor((width - 26) / 2)) + line, '35'));
+      if (showLogo) LOGO.forEach((line, i) => place(panel - 10 + i, ' '.repeat(Math.floor((width - 26) / 2)) + line, ACCENT));
       place(Math.max(0, panel - 2), 'DKH  ·  Coding Harness', '1');
       // Recent status stays visible; PageUp exposes earlier connection/auth output.
       const end = Math.max(0, logs.length - this.scroll);
@@ -229,22 +286,29 @@ export class TerminalUI implements ChatTerminal {
         place(top + i + 1, label, active ? '97;44' : '');
       });
     }
-    place(panel + 1, this.pending?.secret ? this.pending.title : '─'.repeat(width), '35');
-    const parts = chars(this.pending?.secret ? '•'.repeat(chars(this.text).length) : this.text), before = parts.slice(0, this.cursor).join('');
-    let visibleBefore = before;
-    while (textWidth(visibleBefore) > width - 6) visibleBefore = chars(visibleBefore).slice(1).join('');
-    const display = visibleBefore + parts.slice(this.cursor).join('');
-    place(panel + 2, `│ ${display || (this.pending?.choices ? 'Search…' : this.pending?.title ?? '処理中… Ctrl+C で中止')}`, '');
-    place(panel + 3, `│ DKH  ·  ${this.model ?? '未接続 — /connect'}`, '35');
-    place(panel + 4, this.pending?.choices ? '↑↓ 選択  Enter 決定  Esc 戻る' : 'Enter 送信  Ctrl+U 消去  / コマンド  PgUp 履歴');
-    place(panel + 5, this.cwd);
-    const cursorRow = Math.min(rows, panel + 3), cursorCol = Math.min(columns, left + 3 + textWidth(visibleBefore));
+    place(panel + 1, this.pending?.secret ? this.pending.title : '─'.repeat(width), ACCENT);
+    for (let i = 0; i < inputRows; i++) {
+      const line = editor.lines[this.editorScroll + i] ?? '';
+      const placeholder = i === 0 && !this.text ? (this.pending?.choices ? 'Search…' : this.pending?.title ?? this.activity ?? '処理中… Ctrl+C で中止') : '';
+      place(panel + 2 + i, `│ ${line || placeholder}`);
+    }
+    const attachments = composer && this.images.length ? ` · 画像${this.images.length}枚 (Ctrl+Xで削除)` : '';
+    const status = this.inputNotice && !this.pending?.secret ? this.inputNotice : `DKH  ·  ${this.model ?? '未接続 — /connect'}${attachments}`;
+    place(panel + 2 + inputRows, `│ ${status}`, ACCENT);
+    const hints = !this.pending ? 'Ctrl+C 中止（入力は応答完了後）' : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
+      : composer ? 'Enter 送信  Ctrl+J 改行  Ctrl+V 画像  Cmd+V テキスト' : 'Enter 決定  Ctrl+C 中止';
+    place(panel + 3 + inputRows, hints);
+    place(panel + 4 + inputRows, this.cwd);
+    const cursorRow = Math.min(rows, panel + 3 + cursor.row - this.editorScroll);
+    const cursorCol = Math.min(columns, left + 3 + cursor.column);
     this.output.write('\x1b[?25l\x1b[H' + screen.map(line => line + '\x1b[K').join('\r\n')
       + `\x1b[${cursorRow};${cursorCol}H` + (this.pending ? '\x1b[?25h' : ''));
   };
   close = (): void => {
     if (this.closed) return;
     this.closed = true;
+    this.clipboardTask?.abort(); this.clipboardTask = undefined;
+    this.images = [];
     this.pending?.finish(null);
     this.input.removeListener('keypress', this.keypress);
     this.input.removeListener('end', this.onEnd);

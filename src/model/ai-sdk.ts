@@ -9,18 +9,26 @@ import {
   type ToolResultPart,
   type ToolSet,
 } from 'ai';
-import type { AgentMessage, Model, ModelEvent, ModelRequest, ToolSpec } from '../agent/types.ts';
+import { toolContext } from './context.ts';
+import { parseImages } from '../agent/images.ts';
+import type { Model, ModelEvent, ModelRequest, ToolSpec } from '../agent/types.ts';
 
 export interface AiSdkModelOptions {
   id: string;
   languageModel: LanguageModel;
+  timeoutMs?: number;
 }
 
 function toCoreMessages(req: ModelRequest): ModelMessage[] {
   const out: ModelMessage[] = [];
-  for (const m of req.messages) {
+  const outputs = toolContext(req.messages);
+  for (const [index, m] of req.messages.entries()) {
     if (m.role === 'user') {
-      out.push({ role: 'user', content: m.content });
+      const images = parseImages(m.images);
+      out.push({ role: 'user', content: images.length ? [
+        ...(m.content ? [{ type: 'text' as const, text: m.content }] : []),
+        ...images.map(image => ({ type: 'file' as const, data: Buffer.from(image.data, 'base64'), mediaType: image.mediaType })),
+      ] : m.content });
     } else if (m.role === 'assistant') {
       const content: AssistantContent = [];
       if (m.content.length > 0) content.push({ type: 'text', text: m.content });
@@ -35,11 +43,11 @@ function toCoreMessages(req: ModelRequest): ModelMessage[] {
       }
       out.push({ role: 'assistant', content });
     } else {
-      const parts: ToolResultPart[] = m.results.map((r) => ({
+      const parts: ToolResultPart[] = m.results.map((r, resultIndex) => ({
         type: 'tool-result',
         toolCallId: r.callId,
         toolName: r.name,
-        output: { type: 'text', value: JSON.stringify({ status: r.status, output: r.output }) },
+        output: { type: 'text', value: JSON.stringify({ status: r.status, output: outputs.get(`${index}:${resultIndex}`) }) },
       }));
       out.push({ role: 'tool', content: parts });
     }
@@ -67,14 +75,22 @@ function toAiSdkTools(specs: ToolSpec[]): ToolSet {
 export class AiSdkModel implements Model {
   readonly id: string;
   private readonly lm: LanguageModel;
+  private readonly timeoutMs: number;
 
   constructor(opts: AiSdkModelOptions) {
     this.id = opts.id;
     this.lm = opts.languageModel;
+    this.timeoutMs = opts.timeoutMs ?? 180000;
+    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs <= 0) throw new Error('timeoutMs must be a positive integer');
   }
 
   async *stream(req: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent> {
     let aborted = false;
+    let timedOut = false;
+    const deadline = new AbortController();
+    const timer = setTimeout(() => { timedOut = true; deadline.abort(); }, this.timeoutMs);
+    const requestSignal = AbortSignal.any([signal, deadline.signal]);
+    let activity: 'reasoning' | 'tool-input' | undefined;
     let errorMessage: string | undefined;
     let sawToolCall = false;
     let finishReason: 'stop' | 'tool-calls' | undefined;
@@ -84,11 +100,18 @@ export class AiSdkModel implements Model {
         messages: toCoreMessages(req),
         system: req.system,
         tools: toAiSdkTools(req.tools),
-        abortSignal: signal,
+        abortSignal: requestSignal,
+        // fullStream below owns errors; the SDK default logs entire request bodies to stderr.
+        onError: () => {},
         maxRetries: 0, // A transport failure does not establish that the request was unsent.
       });
       for await (const part of result.fullStream) {
-        if (part.type === 'text-delta') {
+        if (part.type === 'reasoning-start' || part.type === 'reasoning-delta') {
+          if (activity !== 'reasoning') { activity = 'reasoning'; yield { type: 'activity', stage: activity }; }
+        } else if (part.type === 'tool-input-start') {
+          if (activity !== 'tool-input') { activity = 'tool-input'; yield { type: 'activity', stage: activity }; }
+        } else if (part.type === 'text-delta') {
+          activity = undefined;
           yield { type: 'text-delta', text: part.text };
         } else if (part.type === 'tool-call') {
           sawToolCall = true;
@@ -114,7 +137,8 @@ export class AiSdkModel implements Model {
     } catch (e) {
       aborted = signal.aborted;
       if (!aborted) errorMessage = (e as Error).message;
-    }
+    } finally { clearTimeout(timer); }
+    if (timedOut && !signal.aborted) errorMessage = `モデル応答が制限時間（${this.timeoutMs}ms）を超えました。自動再送はしません。`;
     if (aborted) {
       yield { type: 'finish', stopReason: 'aborted' };
     } else if (errorMessage !== undefined || finishReason === undefined || (finishReason === 'tool-calls') !== sawToolCall) {

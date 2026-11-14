@@ -1,5 +1,8 @@
 import type { AgentMessage, Model, ModelEvent, ModelRequest } from '../../agent/types.ts';
 
+import { toolContext } from '../context.ts';
+import { parseImages, imageDataUrl } from '../../agent/images.ts';
+
 export const DEFAULT_RESPONSES_BASE_URL = 'https://chatgpt.com/backend-api/codex';
 
 export interface ResponsesModelOptions {
@@ -24,9 +27,13 @@ interface ResponsesInputItem {
 /** 会話履歴(CLI 保持)を Responses API の input へ変換する。 */
 export function toResponsesInput(messages: AgentMessage[]): ResponsesInputItem[] {
   const out: ResponsesInputItem[] = [];
-  for (const m of messages) {
+  const outputs = toolContext(messages);
+  for (const [index, m] of messages.entries()) {
     if (m.role === 'user') {
-      out.push({ role: 'user', content: [{ type: 'input_text', text: m.content }] });
+      out.push({ role: 'user', content: [
+        ...(m.content ? [{ type: 'input_text', text: m.content }] : []),
+        ...parseImages(m.images).map(image => ({ type: 'input_image', image_url: imageDataUrl(image), detail: 'auto' })),
+      ] });
     } else if (m.role === 'assistant') {
       if (m.content.length > 0) {
         out.push({ role: 'assistant', content: [{ type: 'output_text', text: m.content }] });
@@ -40,11 +47,11 @@ export function toResponsesInput(messages: AgentMessage[]): ResponsesInputItem[]
         });
       }
     } else {
-      for (const r of m.results) {
+      for (const [resultIndex, r] of m.results.entries()) {
         out.push({
           type: 'function_call_output',
           call_id: r.callId,
-          output: JSON.stringify({ status: r.status, output: r.output }),
+          output: JSON.stringify({ status: r.status, output: outputs.get(`${index}:${resultIndex}`) }),
         });
       }
     }

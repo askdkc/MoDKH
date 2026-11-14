@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { parseImages } from '../agent/images.ts';
 import type { AgentMessage, ToolCall, ToolResult } from '../agent/types.ts';
 import type { DelegationRecord } from '../subagents/types.ts';
 import { parseDelegation, delegationDigest } from '../subagents/request.ts';
@@ -33,7 +34,7 @@ type SessionEvent =
   | { type: 'format'; version: 2 }
   | { type: 'delegation'; record: DelegationRecord }
   | (MemoryObservation & { type: 'memory'; at: string })
-  | { type: 'status'; status: SessionStatus; at: string }
+  | { type: 'status'; status: SessionStatus; at: string; diagnostic?: string }
   | { type: 'message'; message: AgentMessage };
 
 export interface SessionSummary {
@@ -116,6 +117,7 @@ export class SessionStore {
 export class Session {
   messages: AgentMessage[] = [];
   status: SessionStatus = 'active';
+  lastError?: string;
   id: string;
   cwd: string;
   model: string;
@@ -160,8 +162,14 @@ export class Session {
         if (ev.version !== 2) throw new Error('Unsupported session format');
         session.version = 2;
       } else if (ev.type === 'delegation') session.acceptDelegation(ev.record);
-      else if (ev.type === 'status') session.status = ev.status;
-      else if (ev.type === 'message') session.messages.push(ev.message);
+      else if (ev.type === 'status') {
+        session.status = ev.status;
+        session.lastError = typeof ev.diagnostic === 'string' ? ev.diagnostic.slice(0, 2048) : undefined;
+      }
+      else if (ev.type === 'message') {
+        if (ev.message.role === 'user' && ev.message.images !== undefined) ev.message.images = parseImages(ev.message.images);
+        session.messages.push(ev.message);
+      }
     });
     if (header === undefined) throw new Error(`ヘッダが先頭にない: ${id}`);
     session.persistedCount = session.messages.length;
@@ -199,6 +207,7 @@ export class Session {
   }
 
   append(msg: AgentMessage): void {
+    if (msg.role === 'user' && msg.images !== undefined) msg = { ...msg, images: parseImages(msg.images) };
     this.messages.push(msg);
     this.persistFrom(0);
   }
@@ -218,10 +227,11 @@ export class Session {
     this.write({ ...observation, type: 'memory', at: new Date().toISOString() });
   }
 
-  setStatus(status: SessionStatus): void {
+  setStatus(status: SessionStatus, diagnostic?: string): void {
     this.persistFrom(0);
-    this.write({ type: 'status', status, at: new Date().toISOString() });
-    this.status = status;
+    const detail = diagnostic?.slice(0, 2048);
+    this.write({ type: 'status', status, at: new Date().toISOString(), ...(detail ? { diagnostic: detail } : {}) });
+    this.status = status; this.lastError = detail;
   }
 
   delegations(): DelegationRecord[] { return [...this.delegationLog.values()].map(record => structuredClone(record)); }

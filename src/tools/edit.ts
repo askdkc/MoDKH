@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { ToolError, type Tool } from '../agent/types.ts';
 import { resolveInRoot, assertRealInRoot } from './guard.ts';
 import { renderDiff } from './diff.ts';
+import { safeAnalysis } from './files.ts';
 
 function requireString(v: unknown, name: string): string {
   if (typeof v !== 'string') {
@@ -75,7 +76,8 @@ export const createFileTool: Tool = {
       }
       throw new ToolError('NOT_EXECUTED', '同名ファイルが作成されたため書き込んでいない');
     }
-    return `${rel} を作成した(${Buffer.byteLength(content, 'utf8')}バイト)`;
+    const notice = ctx.analyze ? await safeAnalysis(() => ctx.analyze!(abs, 'write')) : '';
+    return `${rel} を作成した(${Buffer.byteLength(content, 'utf8')}バイト)${notice ? `\n\n${notice}` : ''}`;
   },
 };
 
@@ -134,6 +136,7 @@ export const editFileTool: Tool = {
       throw new ToolError('NOT_EXECUTED', `承認後の対象を確認できないため書き込まない: ${(e as Error).message}`);
     }
     fs.writeFileSync(abs, updated, { encoding: 'utf8' });
-    return `${rel} を編集した`;
+    const notice = ctx.analyze ? await safeAnalysis(() => ctx.analyze!(abs, 'write')) : '';
+    return `${rel} を編集した${notice ? `\n\n${notice}` : ''}`;
   },
 };

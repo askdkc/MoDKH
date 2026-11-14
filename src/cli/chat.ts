@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import type { ImageAttachment } from '../agent/images.ts';
 import type { Model } from '../agent/types.ts';
 import { buildModelFromRef } from '../model/connection.ts';
 export { buildModelFromRef } from '../model/connection.ts';
@@ -17,7 +18,10 @@ import { loginChatGpt, type LoginOptions } from '../model/chatgpt/login.ts';
 import { loadChatGptTokens } from '../model/chatgpt/tokens.ts';
 import { SessionStore, type Session, type MemoryObservation } from '../session/store.ts';
 import { openKiokukoMemory } from '../memory/kiokuko.ts';
-import { createTerminal } from './terminal.ts';
+import { createTerminal, type ChatTerminal } from './terminal.ts';
+import { LanguageService, formatDiagnostics } from '../language/lsp/service.ts';
+import { languageTools } from '../tools/language.ts';
+import { parseLanguageSettings, DEFAULT_LANGUAGE_SETTINGS } from '../language/detect.ts';
 import { chooseProvider, chooseProviderModel, confirmRemoteAgent, CONNECT_PROVIDERS } from './providers.ts';
 import { TerminalApprovalGate } from './approval.ts';
 import { loadConfig, type LiteConfig } from './config.ts';
@@ -25,6 +29,8 @@ import { loadConfig, type LiteConfig } from './config.ts';
 export interface ChatOptions {
   args: Record<string, string | undefined>;
   loginOptions?: LoginOptions;
+  /** Optional terminal owner for embedding; CLI defaults to the native terminal. */
+  terminal?: ChatTerminal;
 }
 
 const SYSTEM_PROMPT =
@@ -33,7 +39,10 @@ const SYSTEM_PROMPT =
   + 'コマンドはOSユーザー権限で動くため、承認内容と作業対象を守る。'
   + '元の依頼を保ち、実行終了・テスト成功・目標達成を区別する。'
   + '結果不明の操作を再送せず、状態を調べる。未確認の事項は未確認と報告する。'
-  + '必要なときは list_subagents で有効な役割を調べ、run_subagent で限定した仕事を委譲できる。子の報告は検証済みの証拠ではない。';
+  + '必要なときは list_subagents で有効な役割を調べ、run_subagent で限定した仕事を委譲できる。子の報告は検証済みの証拠ではない。'
+  + 'シンボル探索では文字列検索より code_outline / code_definition / code_references / code_hover を優先する。'
+  + 'read_file と編集成功後の結果には構文構造やLSP診断が付く。解析は失敗し得る補助情報であり、編集の成否や副作用の有無を変えない。'
+  + '診断0件・未通知・古い版は別の状態として扱い、未取得を成功とみなさない。';
 
 /** `/connect` の引数を解析する。失敗(引数なし/空)は null。 */
 export function parseConnectArgs(rest: string): { ref: string; baseUrl?: string } | null {
@@ -63,7 +72,7 @@ function summarizeArgs(args: Record<string, unknown>): string {
 export async function runChat(opts: ChatOptions): Promise<void> {
   const args = opts.args;
   const cwd = path.resolve(args['cwd'] ?? process.cwd());
-  const ui = createTerminal(cwd);
+  const ui = opts.terminal ?? createTerminal(cwd);
   try {
   const config: LiteConfig = loadConfig();
   const sessionKeys = new Map<string, string>();
@@ -76,6 +85,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       throw new Error(`セッションの作業ルートが異なる: ${session.cwd} → ${cwd}。元のルートで再開するか新規セッションを使う`);
     }
     ui.write(`セッション ${session.id} を再開します(${session.messages.length}メッセージ)\n`);
+    if (session.lastError) ui.write(`前回のエラー: ${session.lastError}\n`);
     const unknown = session.unknownToolResults();
     if (unknown.length > 0) {
       ui.write(
@@ -123,7 +133,20 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     },
     progress: message => ui.write(`${message}\n`),
   });
-  const registry = new ToolRegistry([...tools, ...subagentTools(subagents)]);
+  // Language analysis is optional: a missing server or grammar never blocks editing or conversation.
+  const languageSettings = parseLanguageSettings((config as { language?: unknown }).language ?? DEFAULT_LANGUAGE_SETTINGS);
+  const language = new LanguageService({
+    root: cwd,
+    settings: languageSettings,
+    progress: message => ui.write(`${message}\n`),
+  });
+  const analyze = async (file: string, kind: 'read' | 'write'): Promise<string | null> => {
+    const text = fs.readFileSync(file, 'utf8');
+    const result = await language.analyze(file, text);
+    if (result.status === 'unavailable' && kind === 'read') return null;
+    return formatDiagnostics(result);
+  };
+  const registry = new ToolRegistry([...tools, ...languageTools(language), ...subagentTools(subagents)]);
 
   // 任意メモリ(既定無効)。接続不能でも会話は続く。
   const memory = openKiokukoMemory(config.memory.enabled, {
@@ -138,10 +161,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   };
 
   let aborted = false;
-  const runTurn = async (input: string, activeModel: Model | null, direct?: DelegationRequest): Promise<void> => {
-    ui.write(`\n▶ You: ${input}\n`);
+  const runTurn = async (input: string, activeModel: Model | null, direct?: DelegationRequest, images: ImageAttachment[] = []): Promise<void> => {
+    ui.write(`\n▶ You: ${input}${images.length ? ` [画像${images.length}枚]` : ''}\n`);
     session.setStatus('active');
-    session.append({ role: 'user', content: input });
+    session.append({ role: 'user', content: input, ...(images.length ? { images } : {}) });
     const checkpoint = () => session.persistFrom(0);
     const ac = new AbortController();
     const onSigint = () => {
@@ -153,7 +176,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     process.on('SIGINT', onSigint);
     try {
       let memoryText: string | null = null;
-      if (config.memory.enabled && !direct) {
+      if (config.memory.enabled && !direct && input.trim()) {
         const started = Date.now();
         memoryText = await memory.recall(input, undefined, AbortSignal.any([ac.signal, AbortSignal.timeout(1500)]));
         auditMemory({ stage: memoryText === null ? 'unavailable' : 'retrieved',
@@ -161,14 +184,17 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         if (memoryText === null && !ac.signal.aborted) ui.write('(メモリ取得不可 — 本作業は継続)\n');
       }
       let supplied = false;
+      let requests = 0;
       const hooks = {
         onModelRequest: () => {
+          ui.setActivity?.(`モデル応答を待機中（${++requests}回目）… Ctrl+Cで中止`);
           if (memoryText !== null && !supplied) {
             auditMemory({ stage: 'supplied' });
             supplied = true;
           }
         },
-        onText: (d: string) => ui.write(d),
+        onModelActivity: (stage: 'reasoning' | 'tool-input') => ui.setActivity?.(stage === 'reasoning' ? 'モデルが推論中… Ctrl+Cで中止' : 'ツール要求を受信中… Ctrl+Cで中止'),
+        onText: (d: string) => { ui.setActivity?.('モデル応答を受信中… Ctrl+Cで中止'); ui.write(d); },
         onToolCall: (call: { name: string; args: Record<string, unknown> }) => {
           ui.write(`\n▶ ${call.name} ${summarizeArgs(call.args)}\n`);
         },
@@ -187,10 +213,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         approval,
         hooks,
         checkpoint,
+        analyze,
       });
       // 本作業の証拠と状態を先に確定する。メモリ保存はこれを変更しない。
       checkpoint();
-      session.setStatus(outcome.outcome);
+      session.setStatus(outcome.outcome, outcome.errorMessage);
       if (outcome.outcome === 'complete') {
         ui.write('\n\n(応答終了 — 目標達成の検証は未確認。実行結果と成果物を確認してください)\n');
         // 会話完了後、メモリ保存の提案(有効かつ書き込み可のときだけ)
@@ -213,6 +240,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       }
 
     } finally {
+      ui.setActivity?.(null);
       process.removeListener('SIGINT', onSigint);
       // 中断・エラー時も、その時点までの応答をセッションに残す
       checkpoint();
@@ -248,11 +276,12 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     for (;;) {
       const input = await lines.next();
       if (input === null) break;
-      const line = input.trim();
-      if (line.length === 0) continue;
+      // Multiline pasted code is a prompt, not an executable slash command.
+      const line = input.includes('\n') ? '' : input.trim();
+      if (!input.trim() && !ui.imageCount) continue;
       if (line === '/exit' || line === '/quit') break;
       if (line === '/help') {
-        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止  PgUp/PgDn: 履歴\nDKH_PLAIN=1 dkh: スクリーンリーダー・行入力モード\n');
+        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止  PgUp/PgDn: 履歴\n入力: Enter 送信 / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 dkh: スクリーンリーダー・行入力モード\n');
         continue;
       }
       if (line === '/agents' || line.startsWith('/agents ')) {
@@ -336,7 +365,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ui.write('(モデル未接続: /connect <provider>/<model> [--base-url <url>] で接続してから送信する)\n');
         continue;
       }
-      await runTurn(input, model);
+      await runTurn(input, model, undefined, ui.takeImages?.() ?? []);
       if (aborted) {
         // 中断後もプロンプトに戻る。2回目の Ctrl+C は入力待ちで終了する
         aborted = false;
@@ -345,6 +374,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   } finally {
     // 主処理・永続化が失敗しても補助プロセスを回収する。
     await memory.close().catch(e => process.stderr.write(`メモリ切断失敗: ${String(e)}\n`));
+    await language.close().catch(e => process.stderr.write(`言語サーバー終了失敗: ${String(e)}\n`));
   }
   // EOF は目標達成の証拠ではない。直近の状態を維持する。
   ui.close();

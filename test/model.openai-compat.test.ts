@@ -180,3 +180,17 @@ test('model 参照の解釈と対応プロバイダー', () => {
 test('compatible に --base-url がない場合は明示エラー', () => {
   assert.throws(() => resolveModel({ provider: 'compatible', model: 'x' }, {}), /--base-url/);
 });
+
+test('image input reaches the OpenAI-compatible API as an image, not a text placeholder', async () => {
+  const fake = await startFakeServer();
+  const data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==';
+  try {
+    const model = resolveModel({ provider: 'compatible', model: 'vision', baseUrl: fake.url });
+    for await (const _event of model.stream({ messages: [{ role: 'user', content: '画像\n説明して', images: [{ mediaType: 'image/png', data }] }], tools: [] }, new AbortController().signal)) { /* consume the stream */ }
+    const messages = fake.requests[0].body.messages as { role: string; content: unknown }[];
+    assert.deepEqual(messages.find(m => m.role === 'user')?.content, [
+      { type: 'text', text: '画像\n説明して' },
+      { type: 'image_url', image_url: { url: `data:image/png;base64,${data}` } },
+    ]);
+  } finally { await fake.close(); }
+});

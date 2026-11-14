@@ -7,6 +7,7 @@ import json
 import os
 import pathlib
 import pty
+import re
 import select
 import signal
 import struct
@@ -61,6 +62,7 @@ with tempfile.TemporaryDirectory(prefix='dkh-pty-') as home:
     env = dict(os.environ, DKH_HOME=home, TERM='xterm-256color',
                OLLAMA_BASE_URL=f'http://127.0.0.1:{server.server_port}/v1')
     env.pop('DKH_PLAIN', None)
+    env.pop('NO_COLOR', None)  # This isolated run verifies blue; unit tests cover NO_COLOR.
     child = subprocess.Popen([NODE, str(ENTRY)], stdin=slave, stdout=slave, stderr=slave, env=env)
     output = b''
     checkpoint = 0
@@ -92,6 +94,14 @@ with tempfile.TemporaryDirectory(prefix='dkh-pty-') as home:
     try:
         wait_for('何を調べますか')
         assert '██████'.encode() in output and b'DKH' in output
+        wait_for('\x1b[?25h')
+        welcome = output.rsplit(b'\x1b[H', 1)[-1].decode()
+        lines = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', welcome).split('\r\n')
+        editor_row = next(i for i, line in enumerate(lines) if '何を調べますか' in line)
+        logo_row = next(i for i, line in enumerate(lines) if '██████' in line)
+        assert 14 <= editor_row <= 23, f'editor is not near the center: {editor_row}'
+        assert 0 < editor_row - logo_row <= 12, 'logo and input are disconnected'
+        assert '\x1b[34m' in welcome and '\x1b[35m' not in welcome, 'expected blue accents'
         send('/conn')
         wait_for('Commands')
         send('\r')
@@ -129,7 +139,7 @@ with tempfile.TemporaryDirectory(prefix='dkh-pty-') as home:
         journal = sessions[0].read_text()
         assert journal.count('こんにちは') == 1, journal
         assert len(requests) == 2, requests
-        print('PTY_ACCEPTANCE_OK: logo, completion, seven providers, search, connect, streamed response, Stop, Esc, resize, cleanup')
+        print('PTY_ACCEPTANCE_OK: centered blue welcome, completion, seven providers, search, connect, streamed response, Stop, Esc, resize, cleanup')
     finally:
         release.set()
         if child.poll() is None:

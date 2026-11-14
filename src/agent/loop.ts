@@ -5,6 +5,7 @@ import { ToolRegistry } from '../tools/registry.ts';
 export interface LoopHooks {
   /** Input passed to the adapter, not proof of provider receipt or memory application. */
   onModelRequest?(): void;
+  onModelActivity?(stage: 'reasoning' | 'tool-input'): void;
   onText?(delta: string): void;
   onToolCall?(call: ToolCall): void;
   onToolResult?(r: ToolResult): void;
@@ -21,6 +22,8 @@ export interface AgentLoopOptions {
   maxTurns?: number;
   /** Persist newly appended messages synchronously; failure prevents further effects. */
   checkpoint?(): void;
+  /** Optional post-effect analysis; its failure never changes the tool result or replays an effect. */
+  analyze?(file: string, kind: 'read' | 'write'): Promise<string | null>;
 }
 
 /** complete means response finished, not verified achievement of the user's goal. */
@@ -65,7 +68,9 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
       opts.hooks?.onModelRequest?.();
       for await (const ev of opts.model.stream({ messages, tools: toolSpecs, system: opts.system }, opts.signal)) {
         if (opts.signal.aborted) break;
-        if (ev.type === 'text-delta') {
+        if (ev.type === 'activity') {
+          opts.hooks?.onModelActivity?.(ev.stage);
+        } else if (ev.type === 'text-delta') {
           text += ev.text;
           opts.hooks?.onText?.(ev.text);
         } else if (ev.type === 'tool-call') {
@@ -116,7 +121,10 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
           output: `前回要求(${unresolved.call.id})が結果不明で、同一操作または別操作と確認できない。新しいIDでも再送せず状態を確認する` };
       } else {
         ledger.set(call.id, { call });
-        result = await opts.registry.executeOne(call, { root: opts.root, approval: opts.approval, signal: opts.signal });
+        result = await opts.registry.executeOne(call, {
+          root: opts.root, approval: opts.approval, signal: opts.signal,
+          ...(opts.analyze ? { analyze: opts.analyze } : {}),
+        });
         ledger.set(call.id, { call, result });
       }
       append({ role: 'tool', results: [result] });

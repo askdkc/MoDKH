@@ -1,3 +1,5 @@
+import type { ImageAttachment } from './images.ts';
+
 // ツール・モデル・セッションの共通契約。
 // このファイルは node --test で型除去のまま実行されるため、
 // erasable な TypeScript 構文のみを使う(enum / namespace は不使用)。
@@ -45,6 +47,11 @@ export interface ToolContext {
   signal?: AbortSignal;
   /** Assigned by the registry, never a model-controlled argument. */
   callId?: string;
+  /**
+   * Post-effect analysis (structure, diagnostics). It runs after a successful read/write and its
+   * failure must never change the tool's own result or cause a second edit.
+   */
+  analyze?(file: string, kind: 'read' | 'write'): Promise<string | null>;
 }
 
 /** ツール内部の期待される失敗。モデルへ status:'error' として返す。 */
@@ -72,6 +79,7 @@ export interface Tool {
 
 /** モデルストリームのイベント。 */
 export type ModelEvent =
+  | { type: 'activity'; stage: 'reasoning' | 'tool-input' }
   | { type: 'text-delta'; text: string }
   | { type: 'tool-call'; call: ToolCall }
   | {
@@ -82,7 +90,7 @@ export type ModelEvent =
 
 /** 会話メッセージ。tool メッセージは1つのアシスタント応答に対する結果群を保持する。 */
 export type AgentMessage =
-  | { role: 'user'; content: string }
+  | { role: 'user'; content: string; images?: ImageAttachment[] }
   | { role: 'assistant'; content: string; toolCalls?: ToolCall[]; origin?: 'manual' }
   | { role: 'tool'; results: ToolResult[] };
 

@@ -12,6 +12,8 @@ export interface LiteConfig {
   memory: MemoryConfig;
   /** Validated per plugin by the subagent boundary; malformed entries fail closed. */
   subagents?: unknown;
+  /** Validated by parseLanguageSettings; malformed values fall back to defaults. */
+  language?: unknown;
   diagnostics?: string[];
 }
 
@@ -40,6 +42,7 @@ export function loadConfig(): LiteConfig {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('設定はJSONオブジェクトで指定してください');
     return {
       subagents: parsed.subagents,
+      language: parsed.language,
       memory: {
         enabled: parsed.memory?.enabled === true,
         command: parsed.memory?.command ?? DEFAULT_CONFIG.memory.command,

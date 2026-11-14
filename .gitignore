@@ -2,3 +2,6 @@
 node_modules/
 dist/
 *.tgz
+.kiokuko.json
+.dkh-feasibility/
+.dkh-cache-probe/

@@ -15,6 +15,7 @@ const HELP = `dkh ${VERSION} — 単独で動く最小コーディングハー�
   dkh auth login chatgpt
   dkh session list
   dkh plugin list | add <directory> | enable <id> | disable <id> | remove <id>
+  dkh language status | install [--detected] | retry <id> | update
 
 対話中のコマンド:
   /connect                                     検索できるプロバイダー一覧
@@ -99,6 +100,11 @@ async function dispatch(cmd: string, args: Record<string, string | undefined>): 
     if (cmd === 'chat') {
       const { runChat } = await import('./cli/chat.ts');
       await runChat({ args });
+      return;
+    }
+    if (cmd === 'language') {
+      const { runLanguageCommand } = await import('./cli/language.ts');
+      await runLanguageCommand(args['@positional'] ?? '', process.cwd());
       return;
     }
     if (cmd === 'plugin') {
