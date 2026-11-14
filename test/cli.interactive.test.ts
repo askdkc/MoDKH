@@ -57,6 +57,14 @@ test('/connect lists all seven providers and can return without sending a messag
   assert.doesNotMatch(session, /"role":"user"/);
 });
 
+test('未接続のまま送信すると警告だけでなく接続フローが開く', async () => {
+  // 入力→Enter でモデル選択が開き、選択をやめると入力は送信待ちに戻る(失われない)。
+  const { stdout, session } = await chat('hello\n/exit\n');
+  assert.match(stdout, /モデル未接続: 接続先を選びます/);
+  assert.match(stdout, /OpenAI/, 'the provider picker opens');
+  assert.doesNotMatch(session, /"role":"user"/, 'the message is not sent to a model that does not exist');
+});
+
 test('cloud and local pickers select separate models; cloud failure preserves the existing connection', async () => {
   // Row 1 is the pinned keyword search, so the first model is row 2.
   const { stdout, session } = await chat('/connect\nollama-cloud\n2\n/connect\n\n/connect ollama\n2\n/connect\n\n/exit\n', '{}', { OLLAMA_API_KEY: 'test-cloud-key' });

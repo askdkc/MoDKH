@@ -94,7 +94,8 @@ echo "$OUTNOMODEL" | grep -q '(応答終了' || { echo "FAIL: 復元したモデ
 FRESH_HOME="$WORK/fresh-home"
 mkdir -p "$FRESH_HOME"
 OUTUNCONNECTED=$(printf 'hello\n/exit\n' | DKH_HOME="$FRESH_HOME" "$CLI" --cwd "$PROJ3" 2>&1 || true)
-echo "$OUTUNCONNECTED" | grep -q 'モデル未接続: /connect' || { echo "FAIL: 未接続時の案内がない"; echo "$OUTUNCONNECTED"; exit 1; }
+echo "$OUTUNCONNECTED" | grep -q 'モデル未接続' || { echo "FAIL: 未接続時の案内がない"; echo "$OUTUNCONNECTED"; exit 1; }
+echo "$OUTUNCONNECTED" | grep -q 'Connect an integration' || { echo "FAIL: 未接続時の接続選択が始まらない"; echo "$OUTUNCONNECTED"; exit 1; }
 
 # 9) 配布済み CLI で検索・番号選択。認証経路も配布物で回帰検証する。
 OUTMODELS=$(printf '/models ScRiPt\n1\n/connect\n\n/exit\n' | "$CLI" --cwd "$PROJ3")

@@ -378,6 +378,60 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     }
   };
 
+  /** `/connect` と未接続時の自動案内から呼ばれる接続先の選択処理。 */
+  const handleConnect = async (rest0: string): Promise<void> => {
+    let rest = rest0.trim();
+    if (rest === 'hermes agent' || rest === 'hermes-agent') rest = 'hermes';
+    const provider = CONNECT_PROVIDERS.find(p => p.value === rest);
+    if (provider) {
+      let target: string = provider.value;
+      if (target === 'openai') {
+        const method = await ui.choose('OpenAI — 認証方法', [
+          { value: 'chatgpt', label: 'ChatGPT', detail: 'ブラウザでOAuth認証' },
+          { value: 'openai', label: 'API key', detail: 'OPENAI_API_KEY' },
+        ]);
+        if (!method) return;
+        target = method;
+      }
+      if (target === 'chatgpt') {
+        try {
+          ui.write('ChatGPT の認証を開始します。\n');
+          await loginChatGpt({ ...opts.loginOptions, write: text => ui.write(text) });
+          ui.write('認証しました: chatgpt。モデルを選んでください。\n');
+        } catch (e) { ui.write(`(認証できません: ${(e as Error).message})\n`); return; }
+      } else if (provider.key && !process.env[provider.key] && !sessionKeys.has(target)) {
+        if (!ui.interactive) { ui.write(`${provider.key} を環境変数に設定して再接続してください。行入力モードではキーを表示させないため入力を受け付けません。\n`); return; }
+        const key = (await ui.ask(`${provider.key} を入力（保存先: ${keysHint()} / 空行で戻る）`, undefined, true))?.trim();
+        if (!key || key === '/cancel') return;
+        if (key.startsWith('/')) { ui.unread(key); return; }
+        sessionKeys.set(target, key);
+        // Persist immediately so the next launch does not ask again. Failure to save does not
+        // block this connection, but it is reported instead of silently forgetting the key.
+        try { saveKey(target, key); ui.write(`(${provider.key} を保存しました)\n`); }
+        catch (e) { ui.write(`(キーを保存できません: ${(e as Error).message} — このセッションでは使用します)\n`); }
+      }
+      const selected = await chooseProviderModel(ui, target);
+      if (selected) await connectModel(selected);
+      return;
+    }
+    if (rest === 'chatgpt') {
+      try {
+        ui.write('ChatGPT の認証を開始します。\n');
+        await loginChatGpt({ ...opts.loginOptions, write: text => ui.write(text) });
+        ui.write('認証しました: chatgpt。/models chatgpt でモデルを選んでください。\n');
+      } catch (e) {
+        ui.write(`(認証できません: ${(e as Error).message})\n`);
+      }
+      return;
+    }
+    const parsed = parseConnectArgs(rest);
+    if (!parsed) {
+      ui.write('使い方: /connect chatgpt または /connect <provider>/<model> [--base-url <url>]\n');
+      return;
+    }
+    await connectModel(parsed.ref, parsed.baseUrl);
+  };
+
   ui.write('/connect で認証、/models [検索語] でモデル選択、/agents で子の一覧、/exit で終了\n');
   ui.write(model === null
     ? '入力してください (/connect <provider>/<model> で接続、/exit で終了):\n'
@@ -480,59 +534,22 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           rest = await chooseProvider(ui, modelId) ?? '';
           if (!rest) continue;
         }
-        if (rest === 'hermes agent' || rest === 'hermes-agent') rest = 'hermes';
-        const provider = CONNECT_PROVIDERS.find(p => p.value === rest);
-        if (provider) {
-          let target: string = provider.value;
-          if (target === 'openai') {
-            const method = await ui.choose('OpenAI — 認証方法', [
-              { value: 'chatgpt', label: 'ChatGPT', detail: 'ブラウザでOAuth認証' },
-              { value: 'openai', label: 'API key', detail: 'OPENAI_API_KEY' },
-            ]);
-            if (!method) continue;
-            target = method;
-          }
-          if (target === 'chatgpt') {
-            try {
-              ui.write('ChatGPT の認証を開始します。\n');
-              await loginChatGpt({ ...opts.loginOptions, write: text => ui.write(text) });
-              ui.write('認証しました: chatgpt。モデルを選んでください。\n');
-            } catch (e) { ui.write(`(認証できません: ${(e as Error).message})\n`); continue; }
-          } else if (provider.key && !process.env[provider.key] && !sessionKeys.has(target)) {
-            if (!ui.interactive) { ui.write(`${provider.key} を環境変数に設定して再接続してください。行入力モードではキーを表示させないため入力を受け付けません。\n`); continue; }
-            const key = (await ui.ask(`${provider.key} を入力（保存先: ${keysHint()} / 空行で戻る）`, undefined, true))?.trim();
-            if (!key || key === '/cancel') continue;
-            if (key.startsWith('/')) { ui.unread(key); continue; }
-            sessionKeys.set(target, key);
-            // Persist immediately so the next launch does not ask again. Failure to save does not
-            // block this connection, but it is reported instead of silently forgetting the key.
-            try { saveKey(target, key); ui.write(`(${provider.key} を保存しました)\n`); }
-            catch (e) { ui.write(`(キーを保存できません: ${(e as Error).message} — このセッションでは使用します)\n`); }
-          }
-          const selected = await chooseProviderModel(ui, target);
-          if (selected) await connectModel(selected);
-          continue;
-        }
-        if (rest === 'chatgpt') {
-          try {
-            ui.write('ChatGPT の認証を開始します。\n');
-            await loginChatGpt({ ...opts.loginOptions, write: text => ui.write(text) });
-            ui.write('認証しました: chatgpt。/models chatgpt でモデルを選んでください。\n');
-          } catch (e) {
-            ui.write(`(認証できません: ${(e as Error).message})\n`);
-          }
-          continue;
-        }
-        const parsed = parseConnectArgs(rest);
-        if (!parsed) {
-          ui.write('使い方: /connect chatgpt または /connect <provider>/<model> [--base-url <url>]\n');
-          continue;
-        }
-        await connectModel(parsed.ref, parsed.baseUrl);
+        await handleConnect(rest);
         continue;
       }
       if (model === null) {
-        ui.write('(モデル未接続: /connect <provider>/<model> [--base-url <url>] で接続してから送信する)\n');
+        // 画像を添付したままの場合は添付を保ったまま案内だけ(選択フローは入力待ちを奪うため)。
+        if ((ui.imageCount ?? 0) > 0) {
+          ui.write('(モデル未接続: /connect <provider>/<model> で接続してから送信する)\n');
+          continue;
+        }
+        // 未接続でメッセージを送ったら警告だけでなく、接続先選びを開く。
+        // 接続できたときだけ送ったメッセージを送信待ちに戻す(キャンセルなら破棄して無限ループを防ぐ)。
+        ui.write('(モデル未接続: 接続先を選びます)\n');
+        const rest = await chooseProvider(ui, modelId) ?? '';
+        if (rest.trim()) await handleConnect(rest);
+        if (model !== null) ui.unread(input);
+        else ui.write('(接続しなかったため送信しませんでした。もう一度送信してください)\n');
         continue;
       }
       await runTurn(input, model, undefined, ui.takeImages?.() ?? []);
