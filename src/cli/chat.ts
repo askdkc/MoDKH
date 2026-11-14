@@ -113,7 +113,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const provider = parseModelRef(savedModelRef).provider;
       restoredModel = buildModelFromRef(savedModelRef, savedModelBaseUrl, 0, resolveApiKey(provider), { timeoutMs });
       restoredRef = savedModelRef;
-      ui.write(`前回のモデルで接続します: ${savedModelRef} (変更は /models ・ /connect)\n`);
+      // 復元は静かに行う(接続中モデルはステータス行に既に出る)。失敗だけは理由を表示する。
     } catch (e) {
       ui.write(`(前回のモデル ${savedModelRef} を復元できません: ${(e as Error).message})\n`);
     }
@@ -273,7 +273,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         memoryText = await memory.recall(input, undefined, AbortSignal.any([ac.signal, AbortSignal.timeout(1500)]));
         auditMemory({ stage: memoryText === null ? 'unavailable' : 'retrieved',
           ...(memoryText !== null ? { content: memoryText } : {}), elapsedMs: Date.now() - started });
-        if (memoryText === null && !ac.signal.aborted) ui.write('(メモリ取得不可 — 本作業は継続)\n');
+        // 取得できないこと自体はエラーではない(本作業は継続)。セッション監査にだけ記録し、毎回の画面出力はしない。
       }
       let supplied = false;
       let requests = 0;
@@ -332,7 +332,9 @@ export async function runChat(opts: ChatOptions): Promise<void> {
             ac.signal,
           );
           auditMemory({ stage: 'capture', outcome: result });
-          ui.write(`\n(メモリ: ${result}${result === 'unknown' ? ' — 保存結果不明。再送せず確認してください' : ''})\n`);
+          // 保存されたときだけ画面に出し、unavailable/declined の静かな結果は監査に残す。
+          if (result === 'saved') ui.write('(メモリに保存しました)\n');
+          else if (result === 'unknown') ui.write('(メモリ保存の結果が確認できません — 再送せず確認してください)\n');
         }
       } else if (outcome.outcome === 'interrupted') {
         ui.write('\n\n(中断しました。セッションを保存済み。--resume で再開できます)\n');

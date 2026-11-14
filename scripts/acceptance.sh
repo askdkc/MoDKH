@@ -86,15 +86,16 @@ echo "$OUT5" | grep -q 'OpenAI' || { echo "FAIL: /connect 単体の使い方が�
 echo "$OUT5" | grep -q '接続しました: fixed/scripted' || { echo "FAIL: /connect での接続が観測されない"; echo "$OUT5"; exit 1; }
 echo "$OUT5" | grep -q '(応答終了' || { echo "FAIL: /connect 後の会話が完了しなかった"; echo "$OUT5"; exit 1; }
 grep -q '固定応答モデルによる追記' "$PROJ3/README.md" || { echo "FAIL: /connect 後の編集が反映されていない"; exit 1; }
-# 前回のモデルは自動復元される(同じホームで再起動)。未接続の案内は、
-# 一度も接続していないホームでのみ出る。
+# 前回のモデルは静かに自動復元される(案内は出さない)。復元はセッションヘッダの model で確認する。
 OUTNOMODEL=$(printf 'hello\n/exit\n' | "$CLI" --cwd "$PROJ3" 2>&1 || true)
-echo "$OUTNOMODEL" | grep -q '前回のモデルで接続します' || { echo "FAIL: 前回のモデルが復元されない"; echo "$OUTNOMODEL"; exit 1; }
+LASTJSON=$(ls -t "$WORK/home/sessions"/*.jsonl | head -1)
+head -1 "$LASTJSON" | grep -q '"model":"fixed/scripted"' || { echo "FAIL: 前回のモデルが復元されない"; echo "$OUTNOMODEL"; exit 1; }
 echo "$OUTNOMODEL" | grep -q '(応答終了' || { echo "FAIL: 復元したモデルでの会話が完了しなかった"; echo "$OUTNOMODEL"; exit 1; }
+
+# 未接続のホームで送信すると、接続先選びが自動で開く。
 FRESH_HOME="$WORK/fresh-home"
 mkdir -p "$FRESH_HOME"
 OUTUNCONNECTED=$(printf 'hello\n/exit\n' | DKH_HOME="$FRESH_HOME" "$CLI" --cwd "$PROJ3" 2>&1 || true)
-echo "$OUTUNCONNECTED" | grep -q 'モデル未接続' || { echo "FAIL: 未接続時の案内がない"; echo "$OUTUNCONNECTED"; exit 1; }
 echo "$OUTUNCONNECTED" | grep -q 'Connect an integration' || { echo "FAIL: 未接続時の接続選択が始まらない"; echo "$OUTUNCONNECTED"; exit 1; }
 
 # 9) 配布済み CLI で検索・番号選択。認証経路も配布物で回帰検証する。
