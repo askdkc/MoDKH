@@ -1,172 +1,49 @@
-# dkh
-
-単独で動く最小コーディングハーネス CLI
-
-- Node.js >= 24.16 / TypeScript
-- DKHロゴ・入力欄・コマンド補完を備えたターミナルUI（Web UIではない）
-- APIキーは環境変数、またはTTYの伏せ字入力で指定する。入力したキーはセッション内だけで保持し、会話履歴や設定ファイルには保存しない。失敗時に別の接続先へ自動で切り替えない
+# DKH
 
 ## インストール
 
+Node.js **24.16以上**が必要です。このリポジトリのディレクトリで実行します。
+
 ```sh
+npm install
 npm run build
 npm pack
-npm install -g ./dkh-0.1.0.tgz   # または tarball を隔離環境に導入
+npm install -g ./dkh-0.1.0.tgz
+dkh
 ```
 
-## 使い方
+## AIプロバイダーの設定
 
-モデル指定なしで起動すると、DKHのブロックロゴと入力欄を表示し、未接続で待つ。
-接続は対話中の `/connect` で行う:
+DKHを起動して `/connect` を入力し、プロバイダーとモデルを選びます。
+APIキーは環境変数で設定するか、端末の伏せ字入力で指定できます。入力したキーはそのセッション内だけで保持します。
+
+| プロバイダー | 設定方法 |
+| --- | --- |
+| OpenAI | ChatGPTのブラウザ認証、または `OPENAI_API_KEY` |
+| OpenCode | `OPENCODE_API_KEY` |
+| Ollama Local | ローカルでOllamaを起動。既定は `http://127.0.0.1:11434/v1`。キー不要 |
+| Ollama Cloud | `OLLAMA_API_KEY`。ローカルOllamaのインストールは不要 |
+| OpenRouter | `OPENROUTER_API_KEY` |
+| Infron | `INFRON_API_KEY` |
+| Hermes Agent | APIサーバーを起動し、サーバー側の `API_SERVER_KEY` と同じ値を `HERMES_API_KEY` に設定 |
+
+環境変数で設定する例：
 
 ```sh
-dkh                                           # ハーネスを開始(未接続)。/connect で接続
-dkh chat --model fixed/scripted --cwd <dir>   # 固定応答モデル(オフライン検証用)
-dkh chat --model openai/gpt-5.2 --cwd <dir>   # OPENAI_API_KEY が必要
-dkh chat --model compatible/<model> --base-url http://localhost:1234/v1 --cwd <dir>
-dkh chat --resume <session-id> --cwd <dir>    # 中断した会話を再開
-dkh auth login chatgpt                        # Sign in with ChatGPT
-dkh session list
+export OLLAMA_API_KEY="your-api-key"
+dkh
 ```
 
-対話中:
+DKH内で直接選ぶこともできます。
 
 ```text
-/connect <provider>/<model> [--base-url <url>]   # その場でモデルを接続(AI API / chatgpt / fixed)
-/connect                                      # 7プロバイダーの検索・選択画面
-/connect openai                               # ChatGPT OAuth / APIキーの選択
-/connect chatgpt                              # 起動したままブラウザで ChatGPT 認証
-/models [検索語]                              # モデル名を部分一致検索し、番号で選択
+/connect openai          # ChatGPT認証 / APIキーを選択
+/connect ollama          # ローカルのモデルを選択
+/connect ollama-cloud    # クラウドのモデルを選択
+/models                 # モデル候補を検索
 ```
 
-`/connect` は **OpenAI / OpenCode / Ollama Local / Ollama Cloud / OpenRouter / Infron / Hermes Agent** を表示します。
-文字入力で絞り込み、↑↓で選択、Enterで決定、Escで戻ります。
-OpenAI → ChatGPT を選ぶとブラウザ認証を開始し、保存後にモデル選択へ進みます。
-APIキー方式では環境変数を使い、未設定ならTTYでキーを伏せ字入力できます。
-モデル候補にないIDは「モデルIDを直接入力」から指定できます。
+Ollama Cloudのキーは[こちら](https://ollama.com/settings/keys)で作成できます。
+Hermes Agentはサーバー側でツールを実行するため、DKHの個別承認・Stopの保証対象外です。
 
-`/connect chatgpt` も引き続き使えます。ブラウザが開かない場合は表示URLを手動で開いてください。
-認証には同じマシンの `127.0.0.1:1455/auth/callback` を使います。
-ポート使用中は別のログイン処理を終了して再試行してください。他プロセスを自動終了しません。
-Ctrl+Cで認証を中止して入力画面へ戻ります。SSH・コンテナではブラウザから
-このコールバックへ到達できる必要があります。認証エラーは `/connect chatgpt` で再試行できます。
-期限切れのトークンは次の送信前に更新し、モデル要求を自動再送しません。
-
-`/models` は大文字小文字を区別しない部分一致検索です。空白区切りで複数語を指定できます。
-TTYでは↑↓・Enterで選択、Escで戻ります。行入力モードでは番号で接続、`*` で全候補、空行・`/cancel` で戻ります。
-一覧は組み込みの候補であり、利用可能なモデルの完全な一覧ではありません。
-一覧外は `/connect <provider>/<model>` で指定してください。
-接続に失敗しても以前の接続を維持し、メニュー操作は会話履歴に記録しません。
-
-モデル接続先:
-
-| 参照 | アダプター | 必要なもの |
-| --- | --- | --- |
-| `fixed/scripted` | 固定応答(スクリプト) | なし |
-| `openai/`・`anthropic/`・`google/`・`deepseek/<model>` | AI SDK | 各社の API キー(環境変数) |
-| `openrouter/`・`groq/`・`xai/`・`ollama/`・`lmstudio/<model>` | OpenAI互換 | API キーまたはローカルサーバ |
-| `ollama-cloud/<model>` | Ollama Cloud（ローカル版とは別） | `OLLAMA_API_KEY`、任意で `OLLAMA_CLOUD_BASE_URL` |
-| `compatible/<model> --base-url <url>` | OpenAI互換 | 任意の OpenAI 互換 URL |
-| `chatgpt/<model>` | ChatGPT Codex Responses（APIキー用APIとは別） | `/connect chatgpt` または `auth login chatgpt` |
-| `opencode/<model>` | OpenCode Console互換API | `OPENCODE_API_KEY`、任意で `OPENCODE_BASE_URL` |
-| `infron/<model>` | Infron互換API | `INFRON_API_KEY`、任意で `INFRON_BASE_URL` |
-| `hermes/hermes-agent` | Hermes Agent API server | `HERMES_API_KEY`、任意で `HERMES_BASE_URL` |
-
-既定の接続先はOpenCodeが `https://opencode.ai/inference/openai/v1`、
-Infronが `https://llm.onerouter.pro/v1`、Ollamaが `http://127.0.0.1:11434/v1`、
-Hermesが `http://127.0.0.1:8642/v1` です。Ollamaは `OLLAMA_BASE_URL` で変更できます。
-Ollama Cloudは `https://ollama.com/v1` に直接接続し、Ollamaのローカルインストールは不要です。
-[OllamaのAPIキー](https://ollama.com/settings/keys)を `OLLAMA_API_KEY` に設定するか、TTYのキー入力を使います。
-`/connect ollama-cloud` でクラウド専用のモデル候補、`/connect ollama` でローカル候補を選べます。
-例: `/connect ollama-cloud/gemma4:31b`。`/models ollama-cloud/` でも検索できます。
-直接クラウドへ送るIDには `:cloud` を付けず、[クラウドAPIのモデル名](https://docs.ollama.com/cloud/models)を使います。
-ローカル用の `OLLAMA_BASE_URL` とクラウド用の `OLLAMA_CLOUD_BASE_URL` は独立し、キーもローカルへ転送しません。
-Hermes側の `API_SERVER_KEY` と同じ値をDKHの `HERMES_API_KEY` に指定します。
-Hermesはサーバー側でツールを実行する別エージェントです。DKHの個別承認やStopだけで
-リモートの副作用を制御・停止できる保証はありません。接続時にこの違いを確認します。
-「接続しました」はモデルと認証情報の選択を示し、API到達・モデル利用可否は送信時に確認します。
-
-端末での操作:
-
-- 入力欄の `/` でコマンド補完。↑↓・Tab・Enterで選択し、`/exit` で終了する
-- Ctrl+Uで入力を消去、左右キーで編集、PageUp/PageDownで画面履歴を確認する
-- `NO_COLOR=1 dkh` で色を無効化。`DKH_PLAIN=1 dkh` はスクリーンリーダー向けの行入力モード
-- パイプ入力・`TERM=dumb` は自動的に行入力へ切り替える。行入力モードのAPIキーは環境変数で指定する
-- 未接続のままメッセージを送ると、実行せずに `/connect` の案内を出す。
-  接続はセッション内のみ有効(設定ファイルには書かない)
-- 編集・コマンド実行は 1 件ずつ差分(またはコマンド)を表示して承認を求める。`y` で実行、それ以外は拒否
-- Ctrl+C(1 回目)でモデル通信・子プロセス・以降のツールを中断し、セッションを保存する。
-  再開(`--resume`)すると、結果不明のツールは自動では再実行しない旨を表示する
-
-## 設定
-
-`$DKH_HOME/config.json`(既定: `~/.config/dkh/config.json`):
-
-```json
-{
-  "memory": {
-    "enabled": false,
-    "command": "kiokuko",
-    "args": ["mcp", "--profile", "chatgpt-memory"]
-  }
-}
-```
-
-メモリを有効にすると、各依頼の前に読み取り許可のあるグローバル記憶を検索し、
-今回のモデル入力だけに参考データとして渡す。記憶は命令や権限ではなく、現在のソースとの照合が必要。
-取得の待機予算は1.5秒(子プロセスの回収時間は別)。利用不可・タイムアウトを表示して本作業を続ける。
-元の依頼・ツール結果は残し、過去の参考記憶を会話メッセージへ積み増さない。
-
-応答終了後の「メモリ保存の提案」は任意。承認した提案そのものだけを `memory_capture` で保存する。
-本作業の履歴・状態は先に保存される。Stop後は新しい承認や保存を開始しない。
-保存送信後の切断・タイムアウトは `unknown` (結果不明)であり、未保存とは断定せず自動再送しない。
-JSONLの `memory` イベントは `retrieved`・`supplied`・`unavailable`・`capture` を区別する。
-`supplied` はアダプターへの入力を示すだけで、外部モデルの受信や判断への正しい適用を保証しない。
-
-## セッションと保存先
-
-- セッションは JSONL で `$DKH_HOME/sessions/`(既定: `~/.config/dkh/sessions/`)に保存
-- ヘッダ・状態・メッセージを 1 行 1 イベントで追記し、`--resume` で再構築する
-- 要求を副作用の前、各結果を次の副作用の前に追記・flushする。異常終了で結果が残らなければ再開時に `unknown` とする
-- `not-executed` (未実行確認済み)、`unknown` (副作用不明)、`error` (観測した失敗)、`ok` (ツール終了)を区別する
-- 同じcall IDの再提示は保存結果を返し、内容が異なれば拒否する。結果不明の操作は新IDでも同じツール名・引数なら再送しない。読み取り専用ツールは新IDで再確認できる
-- 結果不明の操作はまずファイルやプロセスの現状を確認する。同一操作の再実行が必要と判断した場合は、確認結果を残して新規セッションで明示的に依頼する。別表現のコマンドが同じ副作用かどうかまでは自動判定しない
-- 別の作業ルートへの再開は拒否する。同じセッションを複数CLIから同時に再開する運用は未対応
-- `complete` はモデル応答の終了であり、目標達成の検証結果ではない。エラー・ターン上限・中断をEOFで完了へ変えない
-- モデルの途中EOF・上限終了を成功扱いにせず、部分テキストを保存する。モデル送信の暗黙リトライは無効
-- 承認待ちのStopは当該入力待ちだけを取り消す。次の指示は保持する。編集は承認後にもStop・対象変更を確認する
-
-`run_command` はPOSIXの専用process groupを所有し、Stop時は通常の子孫も停止する。
-シェル終了後に子が残っていても成功にせず、停止・結果不明として扱う。
-これはOS sandboxではない。意図的なdaemon化や別groupへの離脱は管理対象外で、実行しないこと。
-コマンドの非zero・signal終了、出力打ち切りを明示する。
-シェル全体の終了コードはpipeline各段の成功やテスト成功の証明ではない。
-
-## 検証
-
-```sh
-npm run build    # tsc ビルド(dist/ 生成)
-npm test         # node --test によるオフライン回帰テスト
-sh scripts/acceptance.sh   # tarball を隔離環境へ導入しての受け入れ確認
-python3 scripts/terminal-acceptance.py  # POSIX PTYでの実端末検証（Python 3・PTY権限が必要）
-```
-
-CI は `.github/workflows/ci.yml` で macOS arm64 と Linux x64 の両方で同じ手順を実行する。
-配布物でもStop後の次指示、エラー状態、記憶の入力到達と障害分離を検証する。
-
-## 評価軸と確認範囲
-
-- 補助障害の待機: `memory.elapsedMs` とCLIの停止しない回帰テストで確認する
-- 指示の再入力: 元の入力を保持し、承認待ちStop後の次指示が一度だけ保存・送信されることを実CLIで確認する
-- Stop後の副作用・重複実行: 子孫停止、承認後のStop、同じID／新IDでの結果不明再送を回帰テストで確認する
-- 完了の誤認: EOF、signal、非zero、モデル上限、保存結果不明を成功としない反例をテストする
-- 記憶の到達: 偽MCP→実CLI→互換HTTPサーバの入力を検査する。誤りを防いだ割合は実タスクの独立評価が必要で、未測定
-
-回帰テストの成功は実運用の事故率ゼロを意味しない。全ユーザーの確認回数や目標達成率を自動集計する機能は追加していない。
-
-## 未検証の範囲
-
-- 実モデルAPIとChatGPTの実OAuth、実Kiokuko MCPは未検証。偽サーバを使う境界・CLIテストで代替している
-- TUIは端末ストリームの統合テストでも確認する。PTYテストにはOSの端末デバイス権限が必要で、サンドボックスによっては実行できない。スクリーンリーダーでの実機評価は未実施
-- 記憶が実際の判断で同じ誤りを防ぐ割合、長時間運用、複数CLIによる同時再開は未検証
-- 意図的にprocess groupを離脱したdaemonは停止保証の対象外。OS全体を隔離するsandboxではない
+その他の接続先やURLの変更方法は[プロバイダー設定の詳細](<docs/models.md>)を参照してください。
