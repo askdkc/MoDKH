@@ -415,6 +415,9 @@ export class TerminalUI implements ChatTerminal {
     if (this.closed) return;
     const rows = this.rows();
     const width = this.width();
+    // 画面全体に対してコンテンツを中央に寄せる(ウェルカムも会話中も同じ中央寄せ)。
+    const paintMargin = Math.max(0, Math.floor((this.columns() - width) / 2));
+    const marginPrefix = ' '.repeat(Math.min(paintMargin, Math.max(0, this.columns() - 6)));
     const stream = this.queue.splice(0, this.queue.length)
       .map(line => this.color ? this.colorizer.line(line, this.palette) : line);
     this.colorizerState = this.colorizer.state();
@@ -486,9 +489,8 @@ export class TerminalUI implements ChatTerminal {
 
     const styled = (row: { text: string; style: string }): string =>
       this.paint(fitText(row.text, width), row.style);
-    // 会話が始まる前のウェルカム: ロゴ+案内を縦中央に整え、全体を画面中央に寄せる。
-    const paintMargin = this.started ? 0 : Math.max(0, Math.floor((this.columns() - width) / 2));
-    const marginPrefix = ' '.repeat(Math.min(paintMargin, Math.max(0, this.columns() - 6)));
+    // 会話が始まる前のウェルカム: ロゴ+案内を縦中央に整える。
+    // paintMargin は両フェーズ共通(画面全体に対する中央寄せ)。
     const marginStyled = (row: { text: string; style: string }): string => marginPrefix + styled(row);
     let body: string[] = [];
     let editorStartIdx = editorStart;
@@ -518,10 +520,10 @@ export class TerminalUI implements ChatTerminal {
       editorStartIdx = welcome.length + midPad + partialCount + liveReasoning.length + optionsLines.length + 1;
     } else {
       body = [
-        ...(this.partial ? partialLines.map(line => this.color ? this.fork().line(line, this.palette) : line) : []),
-        ...liveReasoning.map(row => this.paint(fitText(row.text, width), row.style)),
+        ...(this.partial ? partialLines.map(line => marginPrefix + (this.color ? this.fork().line(line, this.palette) : line)) : []),
+        ...liveReasoning.map(row => marginPrefix + this.paint(fitText(row.text, width), row.style)),
         // lines にはコマンドメニュー(optionsLines)が含まれる。二重に展開しない。
-        ...lines.map(styled),
+        ...lines.map(marginStyled),
       ];
     }
     // 最下部ブロックは1行以上の余白を残して画面に収める。はみ出すときは上侧から落とす。
@@ -557,7 +559,7 @@ export class TerminalUI implements ChatTerminal {
         out += `\x1b[${rows};1H` + '\n'.repeat(scrolls);
         r -= scrolls;
       }
-      out += `\x1b[${r};1H\x1b[K${line}\r\n`;
+      out += `\x1b[${r};1H\x1b[K${marginPrefix}${line}\r\n`;
       r++;
     }
     this.streamRow = Math.max(1, Math.min(rows, r));
