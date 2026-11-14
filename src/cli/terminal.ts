@@ -21,6 +21,8 @@ export interface ChatTerminal {
   setModel(model: string | null): void;
   setActivity?(activity: string | null): void;
   setUsage?(usage: UsageTotals): void;
+  /** Live reasoning text; `null` flushes it into the transcript. Display only, never a message. */
+  setReasoning?(delta: string | null): void;
   close(): void;
 }
 export const COMMANDS: readonly Choice[] = [
@@ -45,10 +47,18 @@ function matching(choices: readonly Choice[], query: string): Choice[] {
 class PlainTerminal implements ChatTerminal {
   readonly interactive = false;
   private readonly lines = new LineSource();
+  private reasoning = '';
   write(text: string): void { process.stdout.write(text); }
   next(signal?: AbortSignal): Promise<string | null> { return this.lines.next(signal); }
   unread(line: string): void { this.lines.unread(line); }
   setModel(_model: string | null): void {}
+  /** Line mode cannot update a status line, so reasoning is printed once when the step moves on. */
+  setReasoning(delta: string | null): void {
+    if (delta !== null) { this.reasoning = (this.reasoning + delta).slice(-8_000); return; }
+    const text = this.reasoning.trimEnd();
+    this.reasoning = '';
+    if (text) this.write(`\n(推論)\n${text}\n`);
+  }
   /** Line mode has no footer; report the same totals once so piped runs stay observable. */
   setUsage(usage: UsageTotals): void {
     const line = usageFooter(usage, 120);
@@ -98,6 +108,8 @@ export class TerminalUI implements ChatTerminal {
   private images: ImageAttachment[] = [];
   private clipboardTask?: AbortController;
   private inputNotice = '';
+  /** Current step's reasoning text, drawn above the composer while it streams. */
+  private reasoning = '';
   private readonly clipboardReader: ClipboardReader;
   private scroll = 0;
   private hiddenCompletion = false;
@@ -124,6 +136,14 @@ export class TerminalUI implements ChatTerminal {
   setModel(model: string | null): void { this.model = model; this.render(); }
   setActivity(activity: string | null): void { if (this.activity !== activity) { this.activity = activity; this.render(); } }
   setUsage(usage: UsageTotals): void { this.usage = usage; this.render(); }
+  /** Accumulate one reasoning delta, or flush the finished block into the transcript with `null`. */
+  setReasoning(delta: string | null): void {
+    if (delta !== null) { this.reasoning = (this.reasoning + delta).slice(-20_000); this.render(); return; }
+    const text = this.reasoning.trimEnd();
+    this.reasoning = '';
+    if (text) this.transcript += `\n(推論)\n${text}\n`;
+    this.render();
+  }
   unread(line: string): void { this.queued.unshift(line); }
   get imageCount(): number { return this.images.length; }
   takeImages(): ImageAttachment[] { const images = this.images; this.images = []; this.render(); return images; }
@@ -256,7 +276,15 @@ export class TerminalUI implements ChatTerminal {
   private render = (): void => {
     if (this.closed) return;
     const columns = Math.max(12, this.output.columns || 80), rows = Math.max(6, this.output.rows || 24);
-    const width = Math.max(8, Math.min(columns - 4, 80));
+    // Reasoning streams above the composer and then flushes into the transcript.
+    const reasoning = this.reasoning.trimEnd();
+    const live = reasoning ? `${this.transcript}\n(推論)\n${reasoning}` : this.transcript;
+    // A conversation uses the screen: up to 85% of the width, never narrower than the old 80-cell
+    // cap. The welcome block stays compact so its logo and editor remain one centered group.
+    const started = live.includes('▶') || live.includes('https://') || this.scroll > 0;
+    const width = started
+      ? Math.max(8, Math.min(columns - 4, Math.max(80, Math.floor(columns * 0.85))))
+      : Math.max(8, Math.min(columns - 4, 80));
     const left = Math.max(0, Math.floor((columns - width) / 2));
     const screen = Array<string>(rows).fill('');
     const place = (row: number, text: string, style = '') => {
@@ -271,7 +299,7 @@ export class TerminalUI implements ChatTerminal {
     if (cursor.row >= this.editorScroll + inputRows) this.editorScroll = cursor.row - inputRows + 1;
     this.editorScroll = Math.min(this.editorScroll, Math.max(0, editor.lines.length - inputRows));
     const extraRows = inputRows - 1;
-    const logs = wrap(this.transcript.trimEnd(), width);
+    const logs = wrap(live.trimEnd(), width);
     const history = this.transcript.includes('▶') || this.transcript.includes('https://') || this.scroll > 0 || logs.length > 8;
     const showLogo = !history && rows >= 20 + extraRows && width >= 28;
     const bottomPanel = Math.max(1, rows - 6 - extraRows);

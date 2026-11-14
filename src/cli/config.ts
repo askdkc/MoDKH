@@ -16,6 +16,8 @@ export interface LiteConfig {
   language?: unknown;
   /** all | workspace | none. Validated by parsePermissionPolicy; malformed values fall back. */
   permissions?: unknown;
+  /** Tool round-trip limit for one turn. Validated by parseMaxTurns; malformed values fall back. */
+  maxTurns?: unknown;
   diagnostics?: string[];
 }
 
@@ -46,6 +48,7 @@ export function loadConfig(): LiteConfig {
       subagents: parsed.subagents,
       language: parsed.language,
       permissions: parsed.permissions,
+      maxTurns: parsed.maxTurns,
       memory: {
         enabled: parsed.memory?.enabled === true,
         command: parsed.memory?.command ?? DEFAULT_CONFIG.memory.command,

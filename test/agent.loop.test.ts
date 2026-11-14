@@ -244,6 +244,28 @@ test('ツール往復が上限に達したら打ち切る', async () => {
     });
     assert.equal(r.outcome, 'turn-limit');
     assert.match(r.errorMessage ?? '', /上限/);
+    // The work done before the cap is still in the transcript, so the user can continue.
+    assert.ok(messages.length > 1);
+    assert.match(r.errorMessage ?? '', /保存済み/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('既定の上限は通常の長い作業を通し、暴走だけを止める', async () => {
+  const root = tmpRoot();
+  try {
+    // 30 round trips is an ordinary long task; it must not be truncated by the default.
+    const step = (): FixedStep => [
+      { type: 'tool-call', call: { id: 'loop', name: 'list_files', args: {} } },
+      { type: 'finish', stopReason: 'tool-calls' },
+    ];
+    const model = new FixedModel([...Array.from({ length: 30 }, step), [{ type: 'finish', stopReason: 'stop' }]]);
+    const r = await runAgentLoop([{ role: 'user', content: '長い作業' }], {
+      model, registry: new ToolRegistry(defaultTools()), root,
+      signal: new AbortController().signal, approval: new RecordingGate([]),
+    });
+    assert.equal(r.outcome, 'complete');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

@@ -149,7 +149,7 @@ test('run_command はルート外の作業場所を拒否し、承認後ルー�
     const gate = new FakeGate(true);
     const r = await run(root, gate, 'run_command', { command: 'pwd' });
     assert.equal(r.status, 'ok');
-    assert.match(r.output, /終了コード 0/);
+    assert.match(r.output, /\[exit code: 0\]/);
     assert.match(r.output, new RegExp(root.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.equal(gate.requests[0].kind, 'command');
     assert.match(gate.requests[0].detail, /pwd/);

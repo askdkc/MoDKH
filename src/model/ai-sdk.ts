@@ -109,6 +109,7 @@ export class AiSdkModel implements Model {
       for await (const part of result.fullStream) {
         if (part.type === 'reasoning-start' || part.type === 'reasoning-delta') {
           if (activity !== 'reasoning') { activity = 'reasoning'; yield { type: 'activity', stage: activity }; }
+          if (part.type === 'reasoning-delta' && part.text.length > 0) yield { type: 'reasoning-delta', text: part.text };
         } else if (part.type === 'tool-input-start') {
           if (activity !== 'tool-input') { activity = 'tool-input'; yield { type: 'activity', stage: activity }; }
         } else if (part.type === 'text-delta') {

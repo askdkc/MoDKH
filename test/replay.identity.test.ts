@@ -33,7 +33,7 @@ for (const cwd of ['.', './', 'unused/..', process.cwd()]) {
     assert.equal(outcome.outcome, 'interrupted');
     assert.equal(result.status, 'unknown');
     assert.equal(approvals, 0);
-    assert.doesNotMatch(result.output, /終了コード/);
+    assert.doesNotMatch(result.output, /exit code/);
   });
 }
 

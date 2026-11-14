@@ -26,6 +26,7 @@ import { parseLanguageSettings, DEFAULT_LANGUAGE_SETTINGS } from '../language/de
 import { chooseProvider, chooseProviderModel, confirmRemoteAgent, CONNECT_PROVIDERS } from './providers.ts';
 import { TerminalApprovalGate } from './approval.ts';
 import { DEFAULT_POLICY, describePolicy, parsePermissionPolicy, POLICY_LEVELS, type PermissionPolicy } from './permissions.ts';
+import { DEFAULT_MAX_TURNS, MAX_TURNS_CEILING, parseMaxTurns } from './limits.ts';
 import { loadConfig, saveConfig, type LiteConfig } from './config.ts';
 import { keysPath, loadSavedKeys, saveKey, removeKey, savedKeyProviders, resolveApiKey } from './keys.ts';
 
@@ -42,6 +43,10 @@ export interface ChatOptions {
 const SYSTEM_PROMPT =
   'あなたは端末で動くコーディング支援です。作業ルート内のファイルを読み、'
   + '変更は edit_file / create_file、確認は run_command を使う。ファイルツールは作業ルート内に制限される。'
+  + 'run_command は1回ごとに新しいシェルで動く。cd は次の呼び出しに残らないので cwd を指定し、'
+  + 'bash/zsh 固有の構文が必要なときだけ shell を指定する。'
+  + 'run_command の終了コードが0以外でも、それは実行結果であり失敗の報告ではない。'
+  + 'grep の不一致、テストの失敗、差分の有無は終了コードで判断し、内容を読んで次を決める。'
   + 'コマンドはOSユーザー権限で動くため、承認内容と作業対象を守る。'
   + '元の依頼を保ち、実行終了・テスト成功・目標達成を区別する。'
   + '結果不明の操作を再送せず、状態を調べる。未確認の事項は未確認と報告する。'
@@ -127,6 +132,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   }, savedPolicy);
   if (config.permissions !== undefined && parsePermissionPolicy(String(config.permissions)) === null)
     ui.write(`(設定の permissions が不正なため ${DEFAULT_POLICY} を使用します)\n`);
+  // A long task legitimately needs hundreds of round trips; the limit only stops a runaway loop.
+  const maxTurns = config.maxTurns === undefined ? DEFAULT_MAX_TURNS : parseMaxTurns(config.maxTurns) ?? DEFAULT_MAX_TURNS;
+  if (config.maxTurns !== undefined && parseMaxTurns(config.maxTurns) === null)
+    ui.write(`(設定の maxTurns が不正なため ${DEFAULT_MAX_TURNS} を使用します。1〜${MAX_TURNS_CEILING} の整数)\n`);
 
   const manager = new PluginManager();
   const agentSettings = parseAgentSettings(config.subagents);
@@ -228,8 +237,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           ui.setUsage?.(usageTotals);
         },
         onModelActivity: (stage: 'reasoning' | 'tool-input') => ui.setActivity?.(stage === 'reasoning' ? 'モデルが推論中… Ctrl+Cで中止' : 'ツール要求を受信中… Ctrl+Cで中止'),
-        onText: (d: string) => { ui.setActivity?.('モデル応答を受信中… Ctrl+Cで中止'); ui.write(d); },
+        // Reasoning is display-only: it never joins assistant content or the persisted messages.
+        onReasoning: (delta: string) => ui.setReasoning?.(delta),
+        onText: (d: string) => { ui.setReasoning?.(null); ui.setActivity?.('モデル応答を受信中… Ctrl+Cで中止'); ui.write(d); },
         onToolCall: (call: { name: string; args: Record<string, unknown> }) => {
+          ui.setReasoning?.(null);
           ui.write(`\n▶ ${call.name} ${summarizeArgs(call.args)}\n`);
         },
         onToolResult: (r: { status: string; output: string }) => {
@@ -248,8 +260,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         hooks,
         checkpoint,
         analyze,
+        maxTurns,
       });
       // 本作業の証拠と状態を先に確定する。メモリ保存はこれを変更しない。
+      ui.setReasoning?.(null);
       checkpoint();
       session.setStatus(outcome.outcome, outcome.errorMessage);
       if (outcome.outcome === 'complete') {
@@ -268,7 +282,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       } else if (outcome.outcome === 'interrupted') {
         ui.write('\n\n(中断しました。セッションを保存済み。--resume で再開できます)\n');
       } else if (outcome.outcome === 'turn-limit') {
-        ui.write(`\n\n(打ち切り: ${outcome.errorMessage})\n`);
+        // Not a dead end: the transcript is intact, so another message continues the work.
+        ui.write(`\n\n(打ち切り: ${outcome.errorMessage}。続きは同じセッションで指示してください。上限は config.json の maxTurns で変更できます)\n`);
       } else {
         ui.write(`\n\n(エラー: ${outcome.errorMessage})\n`);
       }

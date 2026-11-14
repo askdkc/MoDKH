@@ -6,6 +6,8 @@ export interface LoopHooks {
   /** Input passed to the adapter, not proof of provider receipt or memory application. */
   onModelRequest?(): void;
   onModelActivity?(stage: 'reasoning' | 'tool-input'): void;
+  /** Provider-reported reasoning text, for display only; it never enters the transcript messages. */
+  onReasoning?(delta: string): void;
   /** Provider-reported token usage for one completed step; never an estimate. */
   onUsage?(usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }): void;
   onText?(delta: string): void;
@@ -31,7 +33,13 @@ export interface AgentLoopOptions {
 /** complete means response finished, not verified achievement of the user's goal. */
 export type TurnOutcome = 'complete' | 'interrupted' | 'error' | 'turn-limit';
 export interface TurnResult { outcome: TurnOutcome; errorMessage?: string }
-const DEFAULT_MAX_TURNS = 25;
+
+/**
+ * Safety valve, not a work budget. Real tasks legitimately need hundreds of tool round trips,
+ * so the default is high enough that ordinary work never reaches it; the cap exists only to stop
+ * a model that loops forever. Reaching it preserves the session and can be continued.
+ */
+export const DEFAULT_MAX_TURNS = 500;
 
 /** Call IDs belong to this conversation, not a global registry or another repository. */
 function previousCalls(messages: AgentMessage[]): Map<string, { call: ToolCall; result?: ToolResult }> {
@@ -77,6 +85,8 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
         } else if (ev.type === 'text-delta') {
           text += ev.text;
           opts.hooks?.onText?.(ev.text);
+        } else if (ev.type === 'reasoning-delta') {
+          opts.hooks?.onReasoning?.(ev.text);
         } else if (ev.type === 'tool-call') {
           calls.push(ev.call);
           opts.hooks?.onToolCall?.(ev.call);
@@ -137,5 +147,5 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
     }
     if (opts.signal.aborted || uncertain) return { outcome: 'interrupted' };
   }
-  return { outcome: 'turn-limit', errorMessage: `ツール往復が上限(${maxTurns}回)に達した` };
+  return { outcome: 'turn-limit', errorMessage: `ツール往復が上限(${maxTurns}回)に達した。ここまでの実行と結果は保存済み` };
 }

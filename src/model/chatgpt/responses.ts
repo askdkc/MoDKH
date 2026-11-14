@@ -139,6 +139,12 @@ export class ResponsesApiModel implements Model {
               if (typeof text === 'string' && text.length > 0) {
                 yield { type: 'text-delta', text };
               }
+            } else if (ev['type'] === 'response.reasoning_summary_text.delta' || ev['type'] === 'response.reasoning_text.delta') {
+              const text = ev['delta'];
+              if (typeof text === 'string' && text.length > 0) {
+                yield { type: 'activity', stage: 'reasoning' };
+                yield { type: 'reasoning-delta', text };
+              }
             } else if (ev['type'] === 'response.output_item.done') {
               const item = ev['item'] as { type?: string; call_id?: string; name?: string; arguments?: string } | undefined;
               if (item?.type === 'function_call' && item.call_id && item.name) {

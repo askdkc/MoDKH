@@ -87,6 +87,8 @@ export type ModelEvent =
   | { type: 'activity'; stage: 'reasoning' | 'tool-input' }
   | { type: 'usage'; input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
   | { type: 'text-delta'; text: string }
+  /** Provider-reported reasoning. Shown to the human, never merged into assistant content. */
+  | { type: 'reasoning-delta'; text: string }
   | { type: 'tool-call'; call: ToolCall }
   | {
       type: 'finish';

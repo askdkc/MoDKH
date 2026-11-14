@@ -81,26 +81,29 @@ test('shell exit cannot abandon its background children and report success', asy
   assert.doesNotMatch(result.output, /CHILD_SURVIVED/);
 });
 
-test('signal exit and nonzero exit are failures, never exit zero', async () => {
+test('a nonzero exit is a reported result, while a signalled shell stays a failure', async () => {
+  // A failing command is ordinary evidence: grep with no match, a red test. It must reach the
+  // model as a result so the agent can read the output and decide, not as a tool error.
+  const failed = await run('printf FAILURE; exit 7');
+  assert.equal(failed.status, 'ok');
+  assert.match(failed.output, /\[exit code: 7\]/);
+  assert.match(failed.output, /FAILURE/);
+  // A shell killed by a signal is an infrastructure stop, not a result to interpret.
   const signalled = await run('kill -TERM $$');
   assert.equal(signalled.status, 'error');
   assert.match(signalled.output, /SIGTERM/);
-  assert.doesNotMatch(signalled.output, /終了コード 0/);
-  const failed = await run('printf FAILURE; exit 7');
-  assert.equal(failed.status, 'error');
-  assert.match(failed.output, /7/);
-  assert.match(failed.output, /FAILURE/);
-  assert.equal((await run('true')).status, 'ok');
+  assert.doesNotMatch(signalled.output, /\[exit code: 0\]/);
+  const ok = await run('true');
+  assert.equal(ok.status, 'ok');
+  assert.match(ok.output, /\[exit code: 0\]/);
 });
 
-test('captured output is bounded in bytes and exact capacity is not truncated', async () => {
-  const large = await run(nodeCommand('process.stdout.write("x".repeat(100000))'));
-  const output = large.output.split('--- 出力 ---\n')[1];
-  assert.ok(output);
-  assert.ok(Buffer.byteLength(output) <= 32 * 1024 + 100);
-  assert.match(output, /出力を打ち切り/);
-  const exact = await run(nodeCommand('process.stdout.write("x".repeat(32768))'));
-  assert.doesNotMatch(exact.output, /出力を打ち切り/);
+test('captured output keeps both ends when it exceeds the cap', async () => {
+  const large = await run(nodeCommand('process.stdout.write("HEAD" + "x".repeat(100000) + "TAIL")'));
+  assert.match(large.output, /HEAD/, 'the start of the output survives');
+  assert.match(large.output, /TAIL/, 'the end survives, where failures usually appear');
+  assert.match(large.output, /バイト省略/);
+  assert.ok(Buffer.byteLength(large.output) <= 32 * 1024 + 400, 'the whole result stays bounded');
 });
 
 test('interrupting approval removes its input waiter and preserves next instruction', async () => {

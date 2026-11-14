@@ -32,7 +32,12 @@ for (const cancelled of [false, true]) {
         if (cancelled && event.type === 'activity') ac.abort();
       }
       assert.ok(events.some(e => e.type === 'activity' && e.stage === 'reasoning'));
-      assert.equal(JSON.stringify(events).includes('PRIVATE_REASONING_FIXTURE'), false);
+      // Reasoning is displayed, so it travels as its own event. It must never be merged into the
+      // answer text, because that text is persisted and sent back to the provider.
+      const answer = events.filter(e => e.type === 'text-delta').map(e => e.type === 'text-delta' ? e.text : '').join('');
+      assert.doesNotMatch(answer, /PRIVATE_REASONING_FIXTURE/);
+      const shown = events.filter(e => e.type === 'reasoning-delta').map(e => e.type === 'reasoning-delta' ? e.text : '').join('');
+      assert.match(shown, /PRIVATE_REASONING_FIXTURE/, 'reasoning reaches the display hook');
       const finish = events.at(-1);
       assert.equal(finish?.type, 'finish');
       if (finish?.type === 'finish') {
