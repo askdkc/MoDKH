@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import type { ReadStream, WriteStream } from 'node:tty';
-import { stripVTControlCharacters } from 'node:util';
 import { TerminalUI, textWidth } from '../src/cli/terminal.ts';
+import { screenFrom } from './tui.screen.ts';
 
 const image = { mediaType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==' };
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -17,9 +17,9 @@ function fixture(readClipboardImage = async (_signal: AbortSignal) => image) {
   output.on('data', chunk => { raw += chunk.toString(); });
   const ui = new TerminalUI('/workspace', input, output, { readClipboardImage });
   const frame = () => {
-    const latest = raw.slice(raw.lastIndexOf('\x1b[H') + 3);
-    const cursor = /\x1b\[(\d+);(\d+)H/.exec(latest)!;
-    return { lines: stripVTControlCharacters(latest).split('\r\n'), cursorRow: Number(cursor[1]), cursorCol: Number(cursor[2]) };
+    const lines = screenFrom(raw, 40);
+    const cursor = [...raw.matchAll(/\x1b\[(\d+);(\d+)H/g)].at(-1)!;
+    return { lines, cursorRow: Number(cursor[1]), cursorCol: Number(cursor[2]) };
   };
   return { ui, input, output, frame, key: (name: string, value = '', ctrl = false) => input.emit('keypress', value, { name, ctrl }) };
 }
@@ -37,8 +37,9 @@ test('composer starts with three input rows, grows in both directions, and wraps
     const grownTop = grown.lines.findIndex(s => s.includes('│ one'));
     const grownStatus = grown.lines.findIndex(s => s.includes('│ DKH'));
     assert.equal(grownStatus - grownTop, 7);
-    assert.ok(grownTop < top, 'home input must expand upward too');
-    assert.ok(grownStatus > status, 'home input must expand downward too');
+    assert.ok(grownTop < top, 'the input expands upward as lines are added');
+    // 最下部のブロックは下端固定。伸びた分は上向きに消費される。
+    assert.ok(grownStatus >= status, 'the status line stays bottom anchored');
     f.key('u', '', true);
     f.input.emit('keypress', '日'.repeat(100), {});
     assert.ok(f.frame().lines.filter(s => s.includes('│ 日')).length >= 3);
@@ -69,7 +70,11 @@ test('large drafts scroll inside the viewport and vertical movement keeps the cu
     f.input.emit('keypress', text, {});
     f.output.columns = 24; f.output.rows = 12; f.output.emit('resize');
     const bottom = f.frame();
-    assert.ok(bottom.lines.every(s => textWidth(s) <= 24));
+    // 自分が管理するライブブロック(状態行とその下)は縮小後の幅に収まる。既に出力済みの
+    // 履歴行はスクロールバック確定済みで、リフローはしない。
+    const statusIdx = bottom.lines.map(s => s.includes('│ DKH')).lastIndexOf(true);
+    assert.ok(statusIdx >= 0, 'the status line is on screen');
+    assert.ok(bottom.lines.slice(Math.max(0, statusIdx - 1)).every(s => textWidth(s) <= 24));
     assert.match(bottom.lines[bottom.cursorRow - 1], /line-39/);
     f.key('up');
     const previous = f.frame();

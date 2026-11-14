@@ -119,6 +119,8 @@ export class Session {
   status: SessionStatus = 'active';
   lastError?: string;
   id: string;
+  /** ヘッダの作成時刻(ワークスペース記録に使う)。古いファイルは作成時刻がない。 */
+  createdAt = '';
   cwd: string;
   model: string;
   private file: string;
@@ -156,6 +158,7 @@ export class Session {
         session.rootSessionId = ev.rootSessionId;
         session.cwd = ev.cwd;
         session.model = ev.model;
+        session.createdAt = typeof ev.createdAt === 'string' ? ev.createdAt : '';
         return;
       }
       if (ev.type === 'format') {

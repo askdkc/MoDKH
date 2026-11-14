@@ -26,6 +26,7 @@ const HELP = `dkh ${VERSION} — 単独で動く最小コーディングハー�
   /agents                                      子エージェント一覧
   /agents run [ID] [依頼]                       子を選んで限定した仕事を委譲
   /models [検索語]                             名前の部分一致検索・番号でモデル選択
+  /reasoning [レベル] [--save]                  推論レベル off/minimal/low/medium/high(既定は前回保存値)
   /connect <provider>/<model> [--base-url <url>]   モデルをその場で接続(AI API / chatgpt / fixed)
 
 接続先:
@@ -42,6 +43,9 @@ GOOGLE_GENERATIVE_AI_API_KEY, DEEPSEEK_API_KEY, OPENCODE_API_KEY, OPENROUTER_API
 INFRON_API_KEY, HERMES_API_KEY, OLLAMA_API_KEY, GROQ_API_KEY, XAI_API_KEY)。
 
 TTYではDKHロゴ・コマンド補完・検索メニューを表示。↑↓/Enterで選択、Escで戻る。
+出力は通常のスクリーンバッファに流れるので、端末のスクロール(マウスホイール等)で履歴を辿れる。
+各セッションの記録はワークスペースの .dkh/sessions/<id>.md にも保存される(.gitignoreに .dkh/ を追加している)。
+timeoutMs(既定600000=10分)は応答の無通信時間の上限。config.json で 5000〜1800000 ms に変更できる。
 DKH_PLAIN=1 dkh で行入力モード(スクリーンリーダー向け)。NO_COLORで色を無効化。
 `;
 

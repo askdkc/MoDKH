@@ -1,6 +1,7 @@
 import type { AgentMessage, Model, ModelEvent, ModelRequest } from '../../agent/types.ts';
 
 import { toolContext } from '../context.ts';
+import { responsesReasoningEffort } from '../reasoning.ts';
 import { parseImages, imageDataUrl } from '../../agent/images.ts';
 
 export const DEFAULT_RESPONSES_BASE_URL = 'https://chatgpt.com/backend-api/codex';
@@ -84,6 +85,8 @@ export class ResponsesApiModel implements Model {
   }
 
   async *stream(req: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent> {
+    // /reasoning で指定した effort を付与する。off と未知のレベルはキー自体を送らない。
+    const effort = responsesReasoningEffort(req.reasoning);
     const body = {
       model: this.model,
       instructions: req.system,
@@ -97,6 +100,7 @@ export class ResponsesApiModel implements Model {
       })),
       stream: true,
       store: false,
+      ...(effort !== undefined ? { reasoning: { effort } } : {}),
     };
     let aborted = false;
     let errorMessage: string | undefined;

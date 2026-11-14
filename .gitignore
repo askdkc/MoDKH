@@ -5,3 +5,5 @@ dist/
 .kiokuko.json
 .dkh-feasibility/
 .dkh-cache-probe/
+.dkh/
+

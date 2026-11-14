@@ -13,7 +13,7 @@ async function chat(input: string, options = '{}', env: NodeJS.ProcessEnv = {}) 
   try {
     const child = spawn(process.execPath, ['--input-type=module', '-e',
       `import { runChat } from ${JSON.stringify(entry)}; await runChat({args: {}, ...${options}});`],
-    { env: { ...process.env, DKH_HOME: home, OPENAI_API_KEY: '', OLLAMA_API_KEY: '', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    { cwd: home, env: { ...process.env, DKH_HOME: home, OPENAI_API_KEY: '', OLLAMA_API_KEY: '', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     child.stdout.on('data', (data) => { stdout += data; });
     child.stderr.on('data', (data) => { stderr += data; });

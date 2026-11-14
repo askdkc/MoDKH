@@ -5,6 +5,7 @@ import type { ReadStream, WriteStream } from 'node:tty';
 import { TerminalUI, type Choice } from '../src/cli/terminal.ts';
 import { chooseProviderModel } from '../src/cli/providers.ts';
 import { SEARCH_ROW_VALUE, suggestionsFor } from '../src/cli/catalog.ts';
+import { screenFrom } from './tui.screen.ts';
 
 function terminal(columns = 110, rows = 30) {
   const input = new PassThrough() as unknown as ReadStream;
@@ -17,7 +18,7 @@ function terminal(columns = 110, rows = 30) {
   const ui = new TerminalUI('/tmp', input, output);
   return {
     ui, input,
-    screen: () => raw.slice(raw.lastIndexOf('\x1b[H') + 3).replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, ''),
+    screen: () => screenFrom(raw, rows).join('\n'),
   };
 }
 
@@ -35,12 +36,12 @@ test('the keyword search row is pinned to the top even while filtering', async (
       ...MODELS,
     ]);
     await new Promise(resolve => setImmediate(resolve));
-    const before = t.screen().split('\r\n').filter(line => line.includes('🔍') || line.includes('gemma4'));
+    const before = t.screen().split('\n').filter(line => line.includes('🔍') || line.includes('gemma4'));
     assert.match(before[0] ?? '', /🔍/, 'the search row is the first row');
     // Typing a keyword keeps the search row on top while narrowing the models.
     for (const ch of 'seek deep') t.input.emit('keypress', ch, {});
     await new Promise(resolve => setImmediate(resolve));
-    const after = t.screen().split('\r\n').map(line => line.trimEnd()).filter(line => line.includes('🔍') || line.includes('ollama-cloud/'));
+    const after = t.screen().split('\n').map(line => line.trimEnd()).filter(line => line.includes('🔍') || line.includes('ollama-cloud/'));
     assert.match(after[0] ?? '', /🔍/, 'the search row stays first after filtering');
     assert.equal(after.some(line => line.includes('gemma4:31b')), false, 'unrelated models are filtered out');
     assert.equal(after.some(line => line.includes('deepseek-v4.1-flash')), true, 'orderless match survives');
@@ -80,7 +81,7 @@ test('choosing the search row asks for a keyword and reopens the list filtered',
     t.input.emit('keypress', '', { name: 'return' });
     await new Promise(resolve => setImmediate(resolve));
     // The reopened list is filtered and still keeps the search row on top.
-    const rows = t.screen().split('\r\n').map(line => line.trimEnd()).filter(line => line.includes('🔍') || line.includes('ollama-cloud/'));
+    const rows = t.screen().split('\n').map(line => line.trimEnd()).filter(line => line.includes('🔍') || line.includes('ollama-cloud/'));
     assert.match(rows[0] ?? '', /🔍/);
     assert.equal(rows.some(line => line.includes('deepseek-v4.1-flash')), true);
     assert.equal(rows.some(line => line.includes('gemma4:31b')), false);

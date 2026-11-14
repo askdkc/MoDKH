@@ -20,6 +20,8 @@ export interface AgentLoopOptions {
   registry: ToolRegistry;
   root: string;
   system?: string;
+  /** このターンでの推論レベル(/reasoning で指定)。省略はプロバイダーの初期値。 */
+  reasoning?: import('./types.ts').ReasoningLevel;
   signal: AbortSignal;
   approval: import('./types.ts').ApprovalGate;
   hooks?: LoopHooks;
@@ -82,7 +84,10 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
     let errorMessage: string | undefined;
     try {
       opts.hooks?.onModelRequest?.();
-      for await (const ev of opts.model.stream({ messages, tools: toolSpecs, system: opts.system }, opts.signal)) {
+      for await (const ev of opts.model.stream({
+        messages, tools: toolSpecs, system: opts.system,
+        ...(opts.reasoning ? { reasoning: opts.reasoning } : {}),
+      }, opts.signal)) {
         if (opts.signal.aborted) break;
         if (ev.type === 'usage') {
           opts.hooks?.onUsage?.(ev);

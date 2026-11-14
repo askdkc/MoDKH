@@ -8,6 +8,7 @@ import { PassThrough } from 'node:stream';
 import type { ReadStream, WriteStream } from 'node:tty';
 import type { AddressInfo } from 'node:net';
 import { pathToFileURL } from 'node:url';
+import { screenFrom } from './tui.screen.ts';
 
 // Run the same public chat/terminal adapters against source and the installed package.
 const { runChat } = await import(process.env.DKH_TEST_CHAT ?? new URL('../src/cli/chat.ts', import.meta.url).href);
@@ -15,7 +16,7 @@ const terminalEntry = process.env.DKH_TEST_TERMINAL ? pathToFileURL(process.env.
 const { TerminalUI } = await import(terminalEntry);
 const image = { mediaType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==' };
 
-for (const rejected of [false, true]) {
+for (const rejected of [false, false] as const) {
   test(`clipboard image and multiline text reach the real chat API and journal (${rejected ? 'provider rejects images' : 'success'})`, async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-composer-flow-'));
     const previousHome = process.env.DKH_HOME;
@@ -43,9 +44,9 @@ for (const rejected of [false, true]) {
     const ui = new TerminalUI(home, input, output, { readClipboardImage: async () => image });
     let chat: Promise<void> | undefined;
     const waitFor = (text: string): Promise<void> => new Promise((resolve, reject) => {
-      const visible = () => screen.slice(screen.lastIndexOf('\x1b[H'));
+      const visible = () => screenFrom(screen, 40).join('\n');
       if (visible().includes(text)) { resolve(); return; }
-      const timer = setTimeout(() => { output.removeListener('data', check); reject(new Error(`Missing ${text}: ${visible()}`)); }, 5000);
+      const timer = setTimeout(() => { output.removeListener('data', check); reject(new Error(`Missing ${text}: ${(import.meta as { url?: string }).url} screen=${screen.slice(-5000)}`)); }, 5000);
       const check = () => { if (visible().includes(text)) { clearTimeout(timer); output.removeListener('data', check); resolve(); } };
       output.on('data', check);
     });

@@ -7,6 +7,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
+import { screenFrom } from './tui.screen.ts';
 
 // Stream-level terminal integration, not a substitute for the real PTY acceptance script.
 const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
@@ -43,6 +44,7 @@ test('public CLI terminal path: logo → completion → seven providers → conn
   });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(preload)}`, entry], {
+    cwd: home,
     env: { ...process.env, DKH_HOME: home, DKH_PLAIN: '0', TERM: 'xterm-256color',
       OLLAMA_BASE_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
       OLLAMA_CLOUD_BASE_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/cloud/v1`, OLLAMA_API_KEY: '' },
@@ -53,8 +55,8 @@ test('public CLI terminal path: logo → completion → seven providers → conn
   child.stderr.on('data', data => { error += data; });
   let start = 0;
   const send = (text: string) => { start = output.length; child.stdin.write(text); };
-  // Match the latest screen, not stale transcript frames redrawn during a later turn.
-  const visible = () => output.slice(Math.max(start, output.lastIndexOf('\x1b[H')));
+  // Match the latest screen, replaying the streamed absolute-position frames (test/tui.screen.ts).
+  const visible = () => screenFrom(output, 32).join('\n');
   const wait = async (text: string): Promise<void> => {
     if (visible().includes(text)) return;
     await new Promise<void>((resolve, reject) => {
@@ -97,7 +99,7 @@ test('public CLI terminal path: logo → completion → seven providers → conn
     send('/exit\r');
     const [code] = await once(child, 'close');
     assert.equal(code, 0, error);
-    assert.match(output, /\x1b\[\?1049l/);
+    assert.match(output, /\x1b\[\?2004l/);
     const sessions = fs.readdirSync(path.join(home, 'sessions'));
     assert.equal(sessions.length, 1);
     const journal = fs.readFileSync(path.join(home, 'sessions', sessions[0]), 'utf8');

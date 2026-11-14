@@ -28,8 +28,10 @@ import { chooseProvider, chooseProviderModel, confirmRemoteAgent, CONNECT_PROVID
 import { TerminalApprovalGate } from './approval.ts';
 import { DEFAULT_POLICY, describePolicy, parsePermissionPolicy, POLICY_LEVELS, type PermissionPolicy } from './permissions.ts';
 import { DEFAULT_MAX_TURNS, MAX_TURNS_CEILING, parseMaxTurns } from './limits.ts';
-import { loadConfig, saveConfig, type LiteConfig } from './config.ts';
+import { loadConfig, saveConfig, updateConfig, parseTimeoutMs, type LiteConfig } from './config.ts';
 import { keysPath, loadSavedKeys, saveKey, removeKey, savedKeyProviders, resolveApiKey } from './keys.ts';
+import { parseReasoningLevel, REASONING_LEVELS, type ReasoningLevel } from '../model/reasoning.ts';
+import { recordSessionRecord } from '../session/workspace.ts';
 
 /** Shown before a secret is typed; the file itself is never printed. */
 const keysHint = (): string => keysPath();
@@ -90,10 +92,32 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   const ui = opts.terminal ?? createTerminal(cwd);
   try {
   const config: LiteConfig = loadConfig();
+  // 応答の無通信タイムアウトと推論レベルは前回の設定から復元する(不正値は既定に戻す)。
+  const timeoutMs = parseTimeoutMs(config.timeoutMs) ?? undefined;
+  if (config.timeoutMs !== undefined && timeoutMs === undefined)
+    ui.write(`(設定の timeoutMs が不正のため規定値を使います。${5}秒〜30分の整数ミリ秒)\n`);
+  let reasoningLevel: ReasoningLevel | null = parseReasoningLevel(config.reasoning);
+  if (config.reasoning !== undefined && reasoningLevel === null)
+    ui.write(`(設定の reasoning が不正のため規定値を使います。/reasoning ${REASONING_LEVELS.join('|')})\n`);
   // Keys saved by an earlier /connect are available immediately; this session's entries win.
   const sessionKeys = new Map<string, string>(Object.entries(loadSavedKeys()));
 
   const store = new SessionStore();
+  // 前回使ったモデルを --model 未指定のとき復元する(config は /connect で更新済み)。
+  const savedModelRef = typeof config.model === 'string' ? config.model : undefined;
+  const savedModelBaseUrl = typeof config.modelBaseUrl === 'string' && config.modelBaseUrl.length > 0 ? config.modelBaseUrl : undefined;
+  let restoredRef: string | null = null;
+  let restoredModel: Model | null = null;
+  if (!args['model'] && savedModelRef) {
+    try {
+      const provider = parseModelRef(savedModelRef).provider;
+      restoredModel = buildModelFromRef(savedModelRef, savedModelBaseUrl, 0, resolveApiKey(provider), { timeoutMs });
+      restoredRef = savedModelRef;
+      ui.write(`前回のモデルで接続します: ${savedModelRef} (変更は /models ・ /connect)\n`);
+    } catch (e) {
+      ui.write(`(前回のモデル ${savedModelRef} を復元できません: ${(e as Error).message})\n`);
+    }
+  }
   let session: Session;
   if (args['resume']) {
     session = store.load(args['resume']);
@@ -109,21 +133,30 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       );
     }
   } else {
-    session = store.create(cwd, args['model'] ?? 'unconnected');
-    const hint = args['model'] ? `モデル: ${args['model']}` : '未接続 — /connect <provider>/<model> で接続';
+    session = store.create(cwd, restoredRef ?? args['model'] ?? 'unconnected');
+    const hint = session.model === 'unconnected' ? '未接続 — /connect <provider>/<model> で接続' : `モデル: ${session.model}`;
     ui.write(`セッション ${session.id} を開始します(${hint})\n`);
   }
 
   // モデルは再開のたびに組み立てる(NamiDSH 方式: 起動時にモデル・ツール・セッションを1つのループに渡す)。
-  // --model がない場合は未接続で開き、/connect で後から接続する(opencode 方式)。
-  let modelId: string | null = args['model'] ?? null;
-  let model: Model | null = args['model']
-    ? buildModelFromRef(args['model'], args['base-url'], session.messages.filter(m => m.role === 'assistant' && m.origin !== 'manual').length,
-        resolveApiKey(parseModelRef(args['model']).provider))
-    : null;
+  // --model がない場合は前回のモデル(あれば)で接続し、なければ未接続で開く(opencode 方式の拡張)。
+  let modelId: string | null = args['model'] ?? restoredRef;
+  let model: Model | null = restoredModel;
+  const initialRef = args['model'] ?? restoredRef;
+  if (initialRef && initialRef !== restoredRef) {
+    model = buildModelFromRef(initialRef, args['base-url'],
+      session.messages.filter(m => m.role === 'assistant' && m.origin !== 'manual').length,
+      resolveApiKey(parseModelRef(initialRef).provider), { timeoutMs });
+  }
 
   if (modelId?.startsWith('hermes/') && !await confirmRemoteAgent(ui)) { model = null; modelId = null; }
   let connectionBaseUrl = args['base-url'];
+  // --model で起動した接続も「前回のモデル」として次回起動に残す(失敗しても会話は続く)。
+  if (modelId !== null && model !== null) {
+    try {
+      updateConfig((c) => { c.model = modelId; c.modelBaseUrl = connectionBaseUrl; });
+    } catch (e) { ui.write(`(前回のモデル保存に失敗: ${(e as Error).message})\n`); }
+  }
 
   // 1つの行キューを入力ループと承認プロンプトで共有する
   const lines = ui;
@@ -156,7 +189,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const provider = parseModelRef(ref).provider;
       const baseUrl = ref === modelId ? connectionBaseUrl : undefined;
       const key = sessionKeys.get(provider);
-      return { ref, create: () => buildModelFromRef(ref, baseUrl, 0, key) };
+      return { ref, create: () => buildModelFromRef(ref, baseUrl, 0, key, { timeoutMs }) };
     },
     progress: message => ui.write(`${message}\n`),
   });
@@ -206,6 +239,20 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   // Session-wide totals: only provider-reported numbers are added, never estimates.
   let usageTotals: UsageTotals = EMPTY_USAGE;
   let aborted = false;
+  // ワークスペースの .dkh/sessions/<id>.md に人間が読める実行記録を残す。
+  // 失敗(書き込み不可など)は一度だけ報告し、会話とセッション保存は止めない。
+  let workspaceRecordFailed = false;
+  const saveWorkspaceRecord = (): void => {
+    if (workspaceRecordFailed) return;
+    try {
+      const unknown = [...session.unknownToolResults().map(r => r.name)];
+      recordSessionRecord(cwd, session, unknown);
+    } catch (e) {
+      workspaceRecordFailed = true;
+      ui.write(`(ワークスペース記録を保存できません: ${cwd}/.dkh — ${(e as Error).message})\n`);
+    }
+  };
+  saveWorkspaceRecord();
   const runTurn = async (input: string, activeModel: Model | null, direct?: DelegationRequest, images: ImageAttachment[] = []): Promise<void> => {
     ui.write(`\n▶ You: ${input}${images.length ? ` [画像${images.length}枚]` : ''}\n`);
     session.setStatus('active');
@@ -268,6 +315,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         analyze,
         maxTurns,
         jobs,
+        ...(reasoningLevel ? { reasoning: reasoningLevel } : {}),
       });
       // 本作業の証拠と状態を先に確定する。メモリ保存はこれを変更しない。
       ui.setReasoning?.(null);
@@ -300,6 +348,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       process.removeListener('SIGINT', onSigint);
       // 中断・エラー時も、その時点までの応答をセッションに残す
       checkpoint();
+      saveWorkspaceRecord();
     }
   };
 
@@ -314,12 +363,16 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const fixedSkip = ref.startsWith('fixed/')
         ? session.messages.filter((m) => m.role === 'assistant' && m.origin !== 'manual').length : 0;
       const provider = parseModelRef(ref).provider;
-      const nextModel = buildModelFromRef(ref, baseUrl, fixedSkip, resolveApiKey(provider, process.env) ?? sessionKeys.get(provider));
+      const nextModel = buildModelFromRef(ref, baseUrl, fixedSkip, resolveApiKey(provider, process.env) ?? sessionKeys.get(provider), { timeoutMs });
       model = nextModel;
       modelId = ref;
       connectionBaseUrl = baseUrl;
       ui.setModel(ref);
       ui.write(`接続しました: ${ref} (API到達は送信時に確認)\n`);
+      // 次回起動時に同じ接続で開けるよう保存する(workspace外の設定ディレクトリに書く)。
+      try {
+        updateConfig((c) => { c.model = ref; c.modelBaseUrl = baseUrl; });
+      } catch (e) { ui.write(`(前回のモデル保存に失敗: ${(e as Error).message} — このセッションでは使用します)\n`); }
     } catch (e) {
       ui.write(`(接続できません: ${(e as Error).message})\n`);
     }
@@ -371,7 +424,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         continue;
       }
       if (line === '/help') {
-        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /keys: 保存済みキー  /allow: 承認ポリシー  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止  PgUp/PgDn: 履歴\n入力: Enter 送信 / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 dkh: スクリーンリーダー・行入力モード\n');
+        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /allow: 承認ポリシー  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n'
+          + '/reasoning off|minimal|low|medium|high [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信 / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 dkh: スクリーンリーダー・行入力モード\n');
         continue;
       }
       if (line === '/agents' || line.startsWith('/agents ')) {
@@ -396,6 +450,28 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       if (line === '/models' || line.startsWith('/models ')) {
         const selected = await selectModel(lines, line.slice('/models'.length).trim(), modelId);
         if (selected) await connectModel(selected);
+        continue;
+      }
+      if (line === '/reasoning' || line.startsWith('/reasoning ')) {
+        const rest = line.slice('/reasoning'.length).trim();
+        if (!rest) {
+          ui.write(`推論レベル: ${reasoningLevel ?? '(プロバイダーの既定値)'}\n`
+            + `変更: /reasoning ${REASONING_LEVELS.join(' | ')}  末尾 --save で次回以降も維持\n`
+            + 'openai系・互換: reasoningEffort / anthropic: thinkingバジェット / google: thinkingBudget /\n'
+            + 'chatgpt: reasoning.effort として送る。対応しないレベル・プロバイダーでは送らない。\n');
+          continue;
+        }
+        const [argument, flag] = rest.split(/\s+/);
+        const next = parseReasoningLevel(argument);
+        if (!next) { ui.write(`使い方: /reasoning ${REASONING_LEVELS.join(' | ')} [--save]\n`); continue; }
+        reasoningLevel = next;
+        ui.write(`(推論レベルを ${next} にしました。次の送信から適用)\n`);
+        if (flag === '--save') {
+          try {
+            updateConfig((c) => { c.reasoning = next; });
+            ui.write('(設定に保存しました: 次回起動時も反映)\n');
+          } catch (e) { ui.write(`(設定を保存できません: ${(e as Error).message} — このセッションでは有効です)\n`); }
+        }
         continue;
       }
       if (line === '/connect' || line.startsWith('/connect ')) {
@@ -472,6 +548,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     await language.close().catch(e => process.stderr.write(`言語サーバー終了失敗: ${String(e)}\n`));
   }
   // EOF は目標達成の証拠ではない。直近の状態を維持する。
+  saveWorkspaceRecord();
   ui.close();
   process.stdout.write(`セッション ${session.id} を終了しました(状態: ${session.status})\n`);
   } finally { ui.close(); }

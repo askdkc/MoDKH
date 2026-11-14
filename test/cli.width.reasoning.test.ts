@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import { stripVTControlCharacters } from 'node:util';
+import { screenFrom } from './tui.screen.ts';
 
 const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
@@ -46,16 +47,16 @@ test('a real TUI conversation uses 85% of the width and shows provider reasoning
   let child: ChildProcess | undefined;
   try {
     child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(fixture(200, 40))}`, entry], {
+      cwd: home,
       env: { ...process.env, DKH_HOME: home, DKH_PLAIN: '0', TERM: 'xterm-256color' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let output = '';
     child.stdout!.on('data', data => { output += data; });
-    // Lines are centered, so measure the drawn content after the leading padding.
+    // Lines are streamed at full width; measure the widest visible row on the current screen.
     const widest = (): number => {
-      const frame = output.slice(output.lastIndexOf('\x1b[H'));
-      const lines = stripVTControlCharacters(frame).split('\r\n');
-      return Math.max(...lines.map(line => [...line.replace(/^ +/, '').trimEnd()].length));
+      const lines = screenFrom(output, 40);
+      return Math.max(...lines.map(line => [...line].length));
     };
     const wait = async (text: string): Promise<void> => {
       const deadline = Date.now() + 8000;

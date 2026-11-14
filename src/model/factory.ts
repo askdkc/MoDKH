@@ -12,6 +12,8 @@ export interface ModelSpec {
   /** compatible プロバイダーやプリセット上書き用の OpenAI互換 URL。 */
   baseUrl?: string;
   apiKey?: string;
+  /** 無通信タイムアウト(ms)。未指定は AiSdkModel に任せる。 */
+  timeoutMs?: number;
 }
 
 export class MissingKeyError extends Error {}
@@ -72,6 +74,7 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
   const key = spec.apiKey ?? (preset.env ? env[preset.env] : undefined);
 
   const id = `${spec.provider}/${spec.model}`;
+  const sdkOptions = { id, provider: spec.provider, ...(spec.timeoutMs ? { timeoutMs: spec.timeoutMs } : {}) };
   if (preset.env && !key) {
     throw new MissingKeyError(
       `環境変数 ${preset.env} が設定されていない(--model ${id} には必要。` +
@@ -80,20 +83,20 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
   }
   switch (spec.provider) {
     case 'openai':
-      return new AiSdkModel({ id, languageModel: createOpenAI({ apiKey: key!, baseURL: baseUrl })(spec.model) });
+      return new AiSdkModel({ ...sdkOptions, languageModel: createOpenAI({ apiKey: key!, baseURL: baseUrl })(spec.model) });
     case 'anthropic':
-      return new AiSdkModel({ id, languageModel: createAnthropic({ apiKey: key! })(spec.model) });
+      return new AiSdkModel({ ...sdkOptions, languageModel: createAnthropic({ apiKey: key! })(spec.model) });
     case 'google':
       return new AiSdkModel({
-        id,
+        ...sdkOptions,
         languageModel: createGoogleGenerativeAI({ apiKey: key! })(spec.model),
       });
     case 'deepseek':
-      return new AiSdkModel({ id, languageModel: createDeepSeek({ apiKey: key! })(spec.model) });
+      return new AiSdkModel({ ...sdkOptions, languageModel: createDeepSeek({ apiKey: key! })(spec.model) });
     default:
       // OpenAI互換プリセット（Ollama Local / Cloud はURLと認証情報を分離）。
       return new AiSdkModel({
-        id,
+        ...sdkOptions,
         languageModel: createOpenAICompatible({
           name: spec.provider,
           baseURL: baseUrl!,

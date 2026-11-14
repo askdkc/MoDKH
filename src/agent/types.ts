@@ -107,10 +107,17 @@ export type AgentMessage =
   | { role: 'assistant'; content: string; toolCalls?: ToolCall[]; origin?: 'manual' }
   | { role: 'tool'; results: ToolResult[] };
 
+/**
+ * 推論レベル。off は「明示的に止めたい」意志であり、その対応はプロバイダーごとに置く。
+ */
+export type ReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high';
+
 export interface ModelRequest {
   messages: AgentMessage[];
   tools: ToolSpec[];
   system?: string;
+  /** この要求での推論レベル。省略はプロバイダーの初期値。 */
+  reasoning?: ReasoningLevel;
 }
 
 /**

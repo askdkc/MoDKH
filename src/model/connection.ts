@@ -46,7 +46,12 @@ function defaultFixedSteps(): FixedStep[] {
   ];
 }
 
-export function buildModelFromRef(ref: string, baseUrl?: string, fixedSkip?: number, apiKey?: string): Model {
+export interface BuildModelOptions {
+  /** 無通信タイムアウト(ms)。config の timeoutMs を渡して調整できる。 */
+  timeoutMs?: number;
+}
+
+export function buildModelFromRef(ref: string, baseUrl?: string, fixedSkip?: number, apiKey?: string, opts?: BuildModelOptions): Model {
   if (ref.startsWith('fixed/')) {
     return new FixedModel(defaultFixedSteps(), { skip: fixedSkip ?? 0 });
   }
@@ -63,7 +68,7 @@ export function buildModelFromRef(ref: string, baseUrl?: string, fixedSkip?: num
       baseUrl,
     });
   }
-  const spec: ModelSpec = { ...parseModelRef(ref), baseUrl, apiKey };
+  const spec: ModelSpec = { ...parseModelRef(ref), baseUrl, apiKey, ...(opts ? { timeoutMs: opts.timeoutMs } : {}) };
   return resolveModel(spec);
 }
 

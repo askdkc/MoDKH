@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import type { ReadStream, WriteStream } from 'node:tty';
-import { stripVTControlCharacters } from 'node:util';
 import { TerminalUI, textWidth, fitText } from '../src/cli/terminal.ts';
 import { CONNECT_PROVIDERS } from '../src/cli/providers.ts';
+import { screenFrom, screenText } from './tui.screen.ts';
 
 function terminal(columns = 100, rows = 30, options?: { readClipboardImage?: (signal: AbortSignal) => Promise<{ mediaType: 'image/png'; data: string }> }) {
   const input = new PassThrough() as unknown as ReadStream;
@@ -16,18 +16,21 @@ function terminal(columns = 100, rows = 30, options?: { readClipboardImage?: (si
   output.on('data', chunk => { screen += chunk.toString(); });
   const ui = new TerminalUI('/workspace/日本語', input, output, options);
   return { ui, input, output, screen: () => screen, clear: () => { screen = ''; },
+    text: () => screenText(screenFrom(screen, Math.max(6, output.rows || 24))),
     key: (name: string, value = '', ctrl = false) => input.emit('keypress', value, { name, ctrl }) };
 }
-test('TUI shows DKH, completes /conn, searches and selects all seven providers by keyboard', async () => {
+
+test('TUI shows DKH once, completes /conn, searches and selects providers by keyboard', async () => {
   const t = terminal();
   try {
     const command = t.ui.next();
     t.input.emit('keypress', '/conn', {});
-    assert.match(stripVTControlCharacters(t.screen()), /DKH/);
-    assert.match(stripVTControlCharacters(t.screen()), /\/connect/);
+    assert.match(t.text(), /DKH  ·  Coding Harness/);
+    assert.match(t.text(), /\/connect/);
     t.key('return'); assert.equal(await command, '/connect');
     const select = t.ui.choose('Connect an integration', CONNECT_PROVIDERS);
-    for (const p of CONNECT_PROVIDERS) assert.ok(stripVTControlCharacters(t.screen()).includes(p.label), p.label);
+    const menu = t.text();
+    for (const p of CONNECT_PROVIDERS) assert.ok(menu.includes(p.label), p.label);
     t.input.emit('keypress', 'open', {});
     t.key('down'); t.key('return');
     assert.equal(await select, 'opencode');
@@ -36,9 +39,79 @@ test('TUI shows DKH, completes /conn, searches and selects all seven providers b
     const next = t.ui.next(); t.input.emit('keypress', '続き', {}); t.key('return'); assert.equal(await next, '続き');
   } finally { t.ui.close(); }
   assert.equal(t.input.isRaw, false);
-  assert.match(t.screen(), /\x1b\[\?1049l/);
+  assert.match(t.screen(), /\x1b\[\?2004l/);
+  assert.doesNotMatch(t.screen(), /\x1b\[\?1049/);
   assert.equal(t.input.listenerCount('keypress'), 0);
 });
+
+test('the DKH banner is streamed exactly once and never erased', () => {
+  const t = terminal();
+  try {
+    const input = t.ui.next();
+    t.ui.write('▶ You: 最初の会話\n');
+    const full = strip(t.screen());
+    assert.equal(full.split('██████╗').length - 1, 1, 'the banner is painted once');
+    assert.match(strip(t.screen()), /█/, 'banner survives later frames');
+    t.key('return'); void input;
+  } finally { t.ui.close(); }
+});
+
+test('startup clears the screen and centers the banner at the top', () => {
+  const t = terminal(120, 30);
+  try {
+    assert.match(t.screen(), /\x1b\[2J/, 'the startup view starts from a clean screen');
+    const rows = t.text().split('\n');
+    assert.match(rows[0] ?? '', /DKH  ·  Coding Harness/, `banner is on the first row: ${JSON.stringify(rows.slice(0, 8))}`);
+    const logo = rows.find(line => line.includes('██████╗'));
+    assert.ok(logo !== undefined);
+    const pad = logo.length - logo.trimStart().length;
+    // 幅120・80列のロゴ領域なら両側におおむね均等な余りが出る
+    assert.ok(pad > 5, `the banner is centered, left pad=${pad}`);
+  } finally { t.ui.close(); }
+});
+
+/** isTTY 指定の入力でOSC返信を実際に流し、打ち込まれないことを確認する。 */
+function ttyTerminal(columns = 100, rows = 30) {
+  const savedNoColor = process.env.NO_COLOR;
+  delete process.env.NO_COLOR; // 背景検出を有効にする
+  const input = new PassThrough() as unknown as ReadStream & { isTTY?: boolean };
+  input.isRaw = false;
+  input.isTTY = true;
+  input.setRawMode = (raw) => { input.isRaw = raw; return input; };
+  const output = new PassThrough() as unknown as WriteStream;
+  output.columns = columns; output.rows = rows;
+  let screen = '';
+  output.on('data', chunk => { screen += chunk.toString(); });
+  const ui = new TerminalUI('/workspace', input, output);
+  const finish = (): void => {
+    if (savedNoColor === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = savedNoColor;
+  };
+  return { ui, input, output, screen: () => screen, finish,
+    text: () => screenText(screenFrom(screen, Math.max(6, output.rows || 24))),
+    key: (name: string, value = '', ctrl = false) => input.emit('keypress', value, { name, ctrl }) };
+}
+
+test('the OSC background reply never lands in the input box', async () => {
+  const t = ttyTerminal();
+  try {
+    const line = t.ui.next();
+    t.input.write('garbage'); // プローブ応答待ちの間の文字は握りつぶす
+    await new Promise(resolve => setImmediate(resolve));
+    assert.doesNotMatch(t.text(), /garbage/, 'input during the probe is dropped');
+    t.input.write('\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.doesNotMatch(t.text(), /11;rgb/, 'the reply is not typed into the composer');
+    t.key('x'); // プローブ済みなら通常入力は生きる(応答を取りこぼしても250msで抑制解除になる)
+    const outcome = await Promise.race([
+      line.then(value => ({ value })),
+      new Promise<'timeout'>(resolve => setTimeout(() => resolve('timeout'), 3000)),
+    ]);
+    assert.ok(outcome !== 'timeout', 'the composer must accept input after the probe settles');
+  } finally { t.finish(); t.ui.close(); }
+});
+
+function strip(raw: string): string { return raw; }
+
 test('secret prompt masks pasted credentials and does not retain them on screen', async () => {
   const t = terminal();
   try {
@@ -50,6 +123,7 @@ test('secret prompt masks pasted credentials and does not retain them on screen'
     assert.doesNotMatch(t.screen(), /sk-secret/);
   } finally { t.ui.close(); }
 });
+
 test('Unicode editing, paste safety, empty search and resize retain focus', async () => {
   const t = terminal(40, 14);
   try {
@@ -59,11 +133,12 @@ test('Unicode editing, paste safety, empty search and resize retain focus', asyn
     t.output.columns = 24; t.output.rows = 10; t.output.emit('resize');
     t.key('return'); assert.equal(await line, '日本\n/exit'); // Pasted newlines are preserved, never executed.
     const empty = t.ui.choose('Providers', CONNECT_PROVIDERS, 'not-a-provider');
-    assert.match(stripVTControlCharacters(t.screen()), /該当なし/);
+    assert.match(t.text(), /該当なし/);
     t.key('return'); t.key('escape'); assert.equal(await empty, null);
     assert.equal(textWidth('日本🙂'), 6); assert.equal(fitText('日本🙂', 5), '日本');
   } finally { t.ui.close(); }
 });
+
 test('aborting an approval resolves once and permits the next input', async () => {
   const t = terminal();
   try {
@@ -75,32 +150,20 @@ test('aborting an approval resolves once and permits the next input', async () =
   } finally { t.ui.close(); }
 });
 
-function latestFrame(output: string): { raw: string; lines: string[]; cursorRow: number; cursorColumn: number } {
-  const raw = output.slice(output.lastIndexOf('\x1b[H') + 3);
-  const cursor = /\x1b\[(\d+);(\d+)H/.exec(raw);
-  assert.ok(cursor, 'frame must position the input cursor');
-  return { raw, lines: stripVTControlCharacters(raw).split('\r\n'), cursorRow: Number(cursor[1]), cursorColumn: Number(cursor[2]) };
-}
-
-test('welcome logo and editor form one compact centered block on a large terminal', async () => {
-  const t = terminal(160, 50);
+/** Transcripts are streamed once and then left to the terminal's own scrollback. */
+test('written transcript lines stay on screen and are never repainted', async () => {
+  const t = terminal(120, 30);
   try {
-    const input = t.ui.next();
-    const frame = latestFrame(t.screen());
-    const logoTop = frame.lines.findIndex(line => line.includes('██████'));
-    const editor = frame.lines.findIndex(line => line.includes('何を調べますか'));
-    const footer = frame.lines.findIndex(line => line.includes('/workspace/日本語'));
-    assert.ok(logoTop >= 12 && logoTop <= 21, `logo row: ${logoTop}`);
-    assert.ok(editor >= 23 && editor <= 32, `editor row: ${editor}`);
-    assert.ok(editor - logoTop <= 12, 'logo must remain near the editor');
-    assert.ok(footer < 38, 'welcome editor must not remain anchored to the bottom');
-    assert.equal(frame.cursorRow, editor + 1);
-    const border = frame.lines.find(line => line.trim().startsWith('──'))!;
-    assert.ok(textWidth(border.trim()) <= 80, 'welcome content should stay compact');
-    const margin = border.length - border.trimStart().length;
-    assert.ok(Math.abs((margin + textWidth(border.trim()) / 2) - 80) <= 1);
-    t.input.emit('keypress', '中央の入力', {}); t.key('return');
-    assert.equal(await input, '中央の入力');
+    const line = t.ui.next();
+    t.ui.write('▶ You: 一行目の依頼\n');
+    t.ui.write('回答の本文です\n');
+    const view = t.text();
+    assert.match(view, /一行目の依頼/);
+    assert.match(view, /回答の本文です/);
+    // 非同期の処理が終わっても同じフレームで入力編集が生きる
+    t.input.emit('keypress', 'x', {});
+    assert.match(t.text(), /│ x/, 'the live input block keeps updating');
+    t.key('return'); assert.equal(await line, 'x');
   } finally { t.ui.close(); }
 });
 
@@ -110,8 +173,8 @@ test('accent uses blue and NO_COLOR disables its styling', () => {
     delete process.env.NO_COLOR;
     const colored = terminal();
     try {
-      assert.match(latestFrame(colored.screen()).raw, /\x1b\[34m/);
-      assert.doesNotMatch(latestFrame(colored.screen()).raw, /\x1b\[35m/);
+      assert.match(colored.screen(), /\x1b\[34m/);
+      assert.doesNotMatch(colored.screen(), /\x1b\[35m/);
     } finally { colored.ui.close(); }
     process.env.NO_COLOR = '1';
     const plain = terminal();
@@ -120,26 +183,21 @@ test('accent uses blue and NO_COLOR disables its styling', () => {
   } finally { if (previous === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = previous; }
 });
 
-test('centered welcome resize preserves editing and history keeps its bottom editor', async () => {
-  const t = terminal(160, 50);
+test('resize keeps the live block within its width and history remains streamed', async () => {
+  const t = terminal(160, 30);
   try {
     const input = t.ui.next();
     t.input.emit('keypress', '日本🙂', {});
     t.output.columns = 24; t.output.rows = 10; t.output.emit('resize');
-    const narrow = latestFrame(t.screen());
-    assert.ok(narrow.lines.every(line => textWidth(line) <= 24));
-    assert.match(narrow.lines[narrow.cursorRow - 1], /日本🙂/);
-    t.output.columns = 160; t.output.rows = 50; t.output.emit('resize');
-    const restored = latestFrame(t.screen());
-    assert.ok(restored.cursorRow < 38);
-    assert.equal(restored.cursorColumn, narrow.cursorColumn - 2 + (160 - 80) / 2);
-    t.key('return'); assert.equal(await input, '日本🙂');
+    const narrow = t.text().split('\n');
+    const divider = narrow.findIndex(line => line.includes('──'));
+    assert.ok(divider >= 0, 'the composer block is on screen');
+    assert.ok(narrow.slice(divider).every(line => textWidth(line) <= 24), `live block respects the new width: ${JSON.stringify(narrow)}`);
+    t.output.columns = 160; t.output.rows = 30; t.output.emit('resize');
     t.ui.write('▶ You: a real conversation\n回答を表示します\n');
-    const next = t.ui.next();
-    const conversation = latestFrame(t.screen());
-    assert.ok(conversation.cursorRow >= 44, 'conversation history retains the bottom editor');
-    assert.match(conversation.lines.join('\n'), /回答を表示します/);
-    t.key('return'); assert.equal(await next, '');
+    const view = t.text();
+    assert.match(view, /回答を表示します/);
+    t.key('return'); assert.equal(await input, '日本🙂');
   } finally { t.ui.close(); }
 });
 
@@ -147,9 +205,9 @@ test('busy terminal distinguishes model reasoning from completion without showin
   const t = terminal();
   try {
     t.ui.setActivity('モデルが推論中… Ctrl+Cで中止');
-    assert.match(latestFrame(t.screen()).lines.join('\n'), /モデルが推論中/);
-    assert.doesNotMatch(latestFrame(t.screen()).lines.join('\n'), /Enter 送信/);
+    assert.match(t.text(), /モデルが推論中/);
+    assert.doesNotMatch(t.text(), /Enter 送信/);
     t.ui.setActivity(null);
-    assert.match(latestFrame(t.screen()).lines.join('\n'), /処理中/);
+    assert.match(t.text(), /処理中/);
   } finally { t.ui.close(); }
 });

@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { stripVTControlCharacters } from 'node:util';
 import { PassThrough } from 'node:stream';
 import type { ReadStream, WriteStream } from 'node:tty';
-import { stripVTControlCharacters } from 'node:util';
 import { TerminalUI, textWidth } from '../src/cli/terminal.ts';
+import { screenFrom, screenText } from './tui.screen.ts';
 
 function terminal(columns = 100, rows = 30) {
   const input = new PassThrough() as unknown as ReadStream;
@@ -14,29 +15,23 @@ function terminal(columns = 100, rows = 30) {
   let raw = '';
   output.on('data', chunk => { raw += chunk.toString(); });
   const ui = new TerminalUI('/workspace', input, output);
-  const frame = () => {
-    const latest = raw.slice(raw.lastIndexOf('\x1b[H') + 3);
-    return { raw: latest, lines: stripVTControlCharacters(latest).split('\r\n') };
-  };
-  return { ui, input, output, frame, key: (name: string, value = '', ctrl = false) => input.emit('keypress', value, { name, ctrl }) };
+  return { ui, input, output, raw: () => raw, text: () => screenText(screenFrom(raw, rows)),
+    key: (name: string, value = '', ctrl = false) => input.emit('keypress', value, { name, ctrl }) };
 }
 
-test('the welcome block stays compact, and a conversation widens to 85% of the screen', async () => {
+test('the welcome block stays compact, and a conversation widens to ~85% of the screen', async () => {
   const t = terminal(200, 40);
   try {
-    const welcome = t.frame();
-    const welcomeBorder = welcome.lines.find(line => line.trim().startsWith('──'))!;
-    assert.ok(textWidth(welcomeBorder.trim()) <= 80, 'welcome stays a compact centered group');
-
     const input = t.ui.next();
+    const welcome = t.text();
+    const wide = Math.max(...welcome.split('\n').map(line => textWidth(line)));
+    assert.ok(wide <= 80, `welcome stays compact: ${wide}`);
+
     t.ui.write('▶ You: 作業を始めます\n');
-    const conversation = t.frame();
-    const used = Math.max(...conversation.lines.map(line => textWidth(line)));
-    // 85% of 200 columns is 170; the editor and transcript must actually occupy it.
+    const used = Math.max(...screenFrom(t.raw(), 40).map(line => textWidth(line)));
+    // 85% of 200 columns is 170; streamed conversation lines must actually use it.
     assert.ok(used >= 160, `conversation should use the width: ${used}`);
     assert.ok(used <= 200, 'never exceeds the terminal');
-    const border = conversation.lines.find(line => line.trim().startsWith('──'))!;
-    assert.ok(textWidth(border.trim()) >= 160, `panel border spans the wider area: ${textWidth(border.trim())}`);
 
     t.input.emit('keypress', 'x', {});
     t.key('return');
@@ -49,8 +44,7 @@ test('a narrow terminal never widens past its own width', async () => {
   try {
     const input = t.ui.next();
     t.ui.write('▶ You: 狭い画面\n');
-    const frame = t.frame();
-    assert.ok(frame.lines.every(line => textWidth(line) <= 40), 'no line may exceed the terminal');
+    assert.ok(t.text().split('\n').every(line => textWidth(line) <= 40), 'no line may exceed the terminal');
     t.key('return');
     assert.equal(await input, '');
   } finally { t.ui.close(); }
@@ -61,17 +55,16 @@ test('reasoning is displayed while it streams and then kept in the transcript', 
   try {
     const input = t.ui.next();
     t.ui.setReasoning('まずファイルを読みます。');
-    const live = t.frame().lines.join('\n');
-    assert.match(live, /\(推論\)/, 'live reasoning is labelled');
-    assert.match(live, /まずファイルを読みます/, 'reasoning text is visible');
+    assert.match(t.text(), /\(推論\)/, 'live reasoning is labelled');
+    assert.match(t.text(), /まずファイルを読みます/, 'reasoning text is visible');
 
     t.ui.setReasoning('続けて確認します。');
-    assert.match(t.frame().lines.join('\n'), /続けて確認します/, 'deltas accumulate');
+    assert.match(t.text(), /続けて確認します/, 'deltas accumulate');
 
-    // Flushing keeps the finished block in the scrollback and clears the live area.
+    // Flushing prints the finished block once and clears the live area.
     t.ui.setReasoning(null);
     t.ui.write('▶ read_file\n');
-    const after = t.frame().lines.join('\n');
+    const after = t.text();
     assert.match(after, /まずファイルを読みます/, 'flushed reasoning stays in the transcript');
     assert.match(after, /▶ read_file/);
     assert.equal((after.match(/\(推論\)/g) ?? []).length, 1, 'one block, not a duplicate');
@@ -90,9 +83,24 @@ test('reasoning never enters the request messages', async () => {
     t.ui.write('▶ You: 依頼\n');
     // The transcript is display state; the agent loop owns `messages` and only receives text-delta
     // through onText. Reasoning reaching the screen must not be mistaken for assistant content.
-    const frame = stripVTControlCharacters(t.frame().raw);
-    assert.match(frame, /SECRET_CHAIN_OF_THOUGHT/);
+    assert.match(t.text(), /SECRET_CHAIN_OF_THOUGHT/);
     t.key('return');
     assert.equal(await input, '');
+  } finally { t.ui.close(); }
+});
+
+test('reasoning and transcript stream into the scrollback instead of being erased', () => {
+  const t = terminal(120, 20);
+  try {
+    t.ui.setReasoning('短い推論');
+    t.ui.setReasoning(null);
+    for (let i = 0; i < 30; i++) t.ui.write(`▶ ツール実行 ${i} (結果: ok)\n`);
+    // 画面を超える出力は1度だけ描かれ、消去されずにスクロールバックへ流れる。
+    const full = stripVTControlCharacters(t.raw());
+    for (const i of [0, 5, 29]) assert.ok(full.includes(`▶ ツール実行 ${i} (結果: ok)`), `line ${i} is final`);
+    // 現在の画面の最下部にはライブブロック(入力欄)が残る。
+    t.ui.write('▶ You: 続き\n');
+    const view = t.text();
+    assert.match(view, /│ DKH/, 'the live status block stays on screen');
   } finally { t.ui.close(); }
 });

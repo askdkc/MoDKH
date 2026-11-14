@@ -10,13 +10,20 @@ import {
   type ToolSet,
 } from 'ai';
 import { toolContext } from './context.ts';
+import { reasoningProviderOptions } from './reasoning.ts';
 import { parseImages } from '../agent/images.ts';
 import type { Model, ModelEvent, ModelRequest, ToolSpec } from '../agent/types.ts';
 
 export interface AiSdkModelOptions {
   id: string;
   languageModel: LanguageModel;
+  /** 無通信タイムアウト: 受信が続く限り延びる。既定600秒。 */
   timeoutMs?: number;
+  /**
+   * providerOptions のキー確定用プロバイダー名。未指定なら推論オプションを送らない
+   * (既存の呼び出し元の挙動を変えない)。
+   */
+  provider?: string;
 }
 
 function toCoreMessages(req: ModelRequest): ModelMessage[] {
@@ -76,25 +83,34 @@ export class AiSdkModel implements Model {
   readonly id: string;
   private readonly lm: LanguageModel;
   private readonly timeoutMs: number;
+  private readonly provider?: string;
 
   constructor(opts: AiSdkModelOptions) {
     this.id = opts.id;
     this.lm = opts.languageModel;
-    this.timeoutMs = opts.timeoutMs ?? 180000;
+    this.provider = opts.provider;
+    this.timeoutMs = opts.timeoutMs ?? 600000;
     if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs <= 0) throw new Error('timeoutMs must be a positive integer');
   }
 
+  /** 無通信タイムアウト。受信が続く限り延期され、何も来なければ締め切る。 */
   async *stream(req: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent> {
     let aborted = false;
     let timedOut = false;
     const deadline = new AbortController();
-    const timer = setTimeout(() => { timedOut = true; deadline.abort(); }, this.timeoutMs);
+    let timer: NodeJS.Timeout | undefined;
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => { timedOut = true; deadline.abort(); }, this.timeoutMs); };
+    arm();
     const requestSignal = AbortSignal.any([signal, deadline.signal]);
     let activity: 'reasoning' | 'tool-input' | undefined;
     let usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined;
     let errorMessage: string | undefined;
     let sawToolCall = false;
     let finishReason: 'stop' | 'tool-calls' | undefined;
+    const reasoning = reasoningProviderOptions(this.provider ?? '', req.reasoning);
+    const thinking = this.provider === 'anthropic' && reasoning?.anthropic !== undefined;
+    const thinkingBudget = thinking
+      ? (reasoning!.anthropic as { thinking: { budgetTokens?: number } }).thinking.budgetTokens : undefined;
     try {
       const result = streamText({
         model: this.lm,
@@ -105,8 +121,12 @@ export class AiSdkModel implements Model {
         // fullStream below owns errors; the SDK default logs entire request bodies to stderr.
         onError: () => {},
         maxRetries: 0, // A transport failure does not establish that the request was unsent.
+        // providerOptions の実値はすべて JSON オブジェクト。SDK型は index signature が緩いため型の詰め替え。
+        ...(reasoning ? { providerOptions: reasoning as never } : {}),
+        ...(thinking ? { maxOutputTokens: (thinkingBudget ?? 0) + 8192 } : {}),
       });
       for await (const part of result.fullStream) {
+        arm(); // 受信が継続している間は制限時間を延ばす
         if (part.type === 'reasoning-start' || part.type === 'reasoning-delta') {
           if (activity !== 'reasoning') { activity = 'reasoning'; yield { type: 'activity', stage: activity }; }
           if (part.type === 'reasoning-delta' && part.text.length > 0) yield { type: 'reasoning-delta', text: part.text };
@@ -149,7 +169,7 @@ export class AiSdkModel implements Model {
       aborted = signal.aborted;
       if (!aborted) errorMessage = (e as Error).message;
     } finally { clearTimeout(timer); }
-    if (timedOut && !signal.aborted) errorMessage = `モデル応答が制限時間（${this.timeoutMs}ms）を超えました。自動再送はしません。`;
+    if (timedOut && !signal.aborted) errorMessage = `モデル応答が制限時間（${this.timeoutMs}ms）を超えるまで何も受信しませんでした。自動再送はしません。`;
     if (usage && (usage.input !== undefined || usage.output !== undefined)) yield { type: 'usage', ...usage };
     if (aborted) {
       yield { type: 'finish', stopReason: 'aborted' };
