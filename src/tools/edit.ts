@@ -55,6 +55,8 @@ export const createFileTool: Tool = {
       kind: 'edit',
       title: `新規作成 ${rel}`,
       detail: diff,
+      // The target was resolved and proven inside the root above.
+      outsideWorkspace: false,
     });
     if (!ok) throw new ToolError('DENIED', `承認されなかったため書き込まない: ${rel}`);
     if (ctx.signal?.aborted) throw new ToolError('NOT_EXECUTED', '中断済みのため書き込まない');
@@ -125,6 +127,7 @@ export const editFileTool: Tool = {
       kind: 'edit',
       title: `編集 ${rel}`,
       detail: diff,
+      outsideWorkspace: false,
     });
     if (!ok) throw new ToolError('DENIED', `承認されなかったため書き込まない: ${rel}`);
     if (ctx.signal?.aborted) throw new ToolError('NOT_EXECUTED', '中断済みのため書き込まない');

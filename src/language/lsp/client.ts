@@ -55,6 +55,9 @@ function severityName(value: unknown): ServerDiagnostic['severity'] {
 }
 
 /** One LSP process and connection. Every failure is reported, never silently swallowed. */
+/** Upper bound on waiting for push diagnostics after an edit; a slower server reports waiting. */
+const DIAGNOSTIC_WAIT_MS = 1200;
+
 export class LspServer {
   readonly id: string;
   private readonly options: LspServerOptions;
@@ -221,21 +224,35 @@ export class LspServer {
 
   /** Waits for a diagnostic result that belongs to the current version, or reports absence. */
   async synchronize(file: string, text: string): Promise<{ status: 'observed' | 'waiting' | 'unsupported'; diagnostics: ServerDiagnostic[]; version: number }> {
+    const before = this.open.get(file)?.text;
     const state = await this.openDocument(file, text);
+    // Nothing changed, so the earlier answer is still the answer: polling again only delays the caller.
+    if (state.notified && (state.diagnosticVersion === undefined || state.diagnosticVersion >= state.version)) {
+      return { status: 'observed', diagnostics: state.diagnostics, version: state.version };
+    }
+    if (before === text) return { status: 'waiting', diagnostics: state.diagnostics, version: state.version };
     if (this.pullDiagnostics) {
       try {
         const report = await this.withTimeout(this.requireConnection().sendRequest('textDocument/diagnostic', {
           textDocument: { uri: pathToFileURL(file).href },
-        }), '診断') as { items?: unknown[] };
-        this.acceptPushDiagnostics({ uri: pathToFileURL(file).href, diagnostics: report?.items ?? [], version: state.version });
+        }), '診断') as { items?: unknown[] } | null;
+        // A null report means the server had nothing for this document; keep the push state.
+        if (report) {
+          this.acceptPushDiagnostics({ uri: pathToFileURL(file).href, diagnostics: report.items ?? [], version: state.version });
+        }
       } catch { /* fall through to the push state below */ }
+      if (state.notified && (state.diagnosticVersion === undefined || state.diagnosticVersion >= state.version)) {
+        return { status: 'observed', diagnostics: state.diagnostics, version: state.version };
+      }
     }
-    // Push diagnostics arrive asynchronously; give the server a bounded window before reporting
-    // "waiting", which stays distinct from a genuine zero-diagnostic result.
-    const deadline = Date.now() + Math.min(this.options.requestTimeoutMs, 5000);
+    // Push diagnostics arrive asynchronously. The wait is a user-visible delay on every read and
+    // edit, so it stays short: a slower server reports "waiting", which is distinct from a clean
+    // zero-diagnostic result and never claims the file is fine.
+    const budget = Math.min(this.options.requestTimeoutMs, DIAGNOSTIC_WAIT_MS);
+    const deadline = Date.now() + budget;
     while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 15));
       if (state.notified && (state.diagnosticVersion === undefined || state.diagnosticVersion >= state.version)) break;
-      await new Promise(resolve => setTimeout(resolve, 25));
     }
     const observed = state.notified && (state.diagnosticVersion === undefined || state.diagnosticVersion >= state.version);
     return { status: observed ? 'observed' : 'waiting', diagnostics: state.diagnostics, version: state.version };

@@ -1,4 +1,5 @@
 import type { ApprovalGate, ApprovalRequest } from '../agent/types.ts';
+import { DEFAULT_POLICY, describePolicy, shouldAsk, type PermissionPolicy } from './permissions.ts';
 
 export interface ApprovalIo {
   /** 同じ入力キューを共有し、中断時はこの質問の待機だけを解除する。 */
@@ -6,20 +7,46 @@ export interface ApprovalIo {
   write(text: string): void;
 }
 
+/**
+ * A caller can prove a request stays inside the workspace, which lets `workspace` skip the prompt.
+ * `outsideWorkspace` defaults to true so an unproven request still asks.
+ */
+export interface ApprovalScope extends ApprovalRequest {
+  outsideWorkspace?: boolean;
+}
+
 /** 端末承認。Stop は承認待ちと、その質問が所有する入力待ちを取り消す。 */
 export class TerminalApprovalGate implements ApprovalGate {
   private readonly io: ApprovalIo;
+  private policy: PermissionPolicy;
   private pending = new Set<AbortController>();
 
-  constructor(io: ApprovalIo) {
+  constructor(io: ApprovalIo, policy: PermissionPolicy = DEFAULT_POLICY) {
     this.io = io;
+    this.policy = policy;
+  }
+
+  /** Changing the policy affects later requests only; an open prompt is not cancelled. */
+  setPolicy(policy: PermissionPolicy): void {
+    this.policy = policy;
+    this.io.write(`(${describePolicy(policy)})\n`);
+  }
+
+  currentPolicy(): PermissionPolicy {
+    return this.policy;
   }
 
   interrupt(): void {
     for (const controller of this.pending) controller.abort();
   }
 
-  async approve(req: ApprovalRequest): Promise<boolean> {
+  async approve(request: ApprovalRequest): Promise<boolean> {
+    const req = request as ApprovalScope;
+    if (!shouldAsk({ policy: this.policy, kind: req.kind, outsideWorkspace: req.outsideWorkspace !== false })) {
+      // Say what ran without asking, so an automatic effect is still visible in the transcript.
+      this.io.write(`(自動承認: ${req.kind} — ${req.title})\n`);
+      return true;
+    }
     this.io.write(`\n--- 承認要求(${req.kind}) ---\n${req.title}\n${req.detail}\n`);
     const answer = await this.askOrInterrupt('実行しますか? [y/N] ', req.signal);
     if (answer === null) {

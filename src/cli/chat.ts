@@ -25,7 +25,8 @@ import { languageTools } from '../tools/language.ts';
 import { parseLanguageSettings, DEFAULT_LANGUAGE_SETTINGS } from '../language/detect.ts';
 import { chooseProvider, chooseProviderModel, confirmRemoteAgent, CONNECT_PROVIDERS } from './providers.ts';
 import { TerminalApprovalGate } from './approval.ts';
-import { loadConfig, type LiteConfig } from './config.ts';
+import { DEFAULT_POLICY, describePolicy, parsePermissionPolicy, POLICY_LEVELS, type PermissionPolicy } from './permissions.ts';
+import { loadConfig, saveConfig, type LiteConfig } from './config.ts';
 import { keysPath, loadSavedKeys, saveKey, removeKey, savedKeyProviders, resolveApiKey } from './keys.ts';
 
 /** Shown before a secret is typed; the file itself is never printed. */
@@ -118,10 +119,14 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   // 1つの行キューを入力ループと承認プロンプトで共有する
   const lines = ui;
   ui.setModel(modelId);
+  // The saved policy applies from the first turn; /allow changes it for this session only.
+  const savedPolicy = config.permissions === undefined ? DEFAULT_POLICY : parsePermissionPolicy(String(config.permissions)) ?? DEFAULT_POLICY;
   const approval = new TerminalApprovalGate({
     ask: async (_prompt, signal) => (await ui.ask('承認: y で実行 / それ以外は拒否', signal)) ?? '',
     write: (t) => ui.write(t),
-  });
+  }, savedPolicy);
+  if (config.permissions !== undefined && parsePermissionPolicy(String(config.permissions)) === null)
+    ui.write(`(設定の permissions が不正なため ${DEFAULT_POLICY} を使用します)\n`);
 
   const manager = new PluginManager();
   const agentSettings = parseAgentSettings(config.subagents);
@@ -147,8 +152,24 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     settings: languageSettings,
     progress: message => ui.write(`${message}\n`),
   });
+  // Analysis must never delay an edit. After a write the tool already reports success, so this
+  // runs in the background and its result is attached to the next read of the same file.
+  const pendingAnalysis = new Map<string, Promise<string | null>>();
   const analyze = async (file: string, kind: 'read' | 'write'): Promise<string | null> => {
     const text = fs.readFileSync(file, 'utf8');
+    if (kind === 'write') {
+      // Warm the server and cache the report; the edit does not wait for it.
+      if (!pendingAnalysis.has(file)) {
+        pendingAnalysis.set(file, language.analyze(file, text).then(result => formatDiagnostics(result)).catch(() => null));
+      }
+      return null;
+    }
+    const ready = pendingAnalysis.get(file);
+    if (ready) {
+      pendingAnalysis.delete(file);
+      const settled = await ready;
+      if (settled) return settled;
+    }
     const result = await language.analyze(file, text);
     if (result.status === 'unavailable' && kind === 'read') return null;
     return formatDiagnostics(result);
@@ -294,6 +315,25 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const line = input.includes('\n') ? '' : input.trim();
       if (!input.trim() && !ui.imageCount) continue;
       if (line === '/exit' || line === '/quit') break;
+      if (line === '/allow' || line.startsWith('/allow ')) {
+        const [, argument, flag] = line.split(/\s+/);
+        if (!argument) {
+          ui.write(`現在: ${describePolicy(approval.currentPolicy())}\n` +
+            `切り替え: /allow ${POLICY_LEVELS.join(' | ')}\n` +
+            '保存: 末尾に --save を付けると次回以降も同じ設定を使います\n');
+          continue;
+        }
+        const next = parsePermissionPolicy(argument);
+        if (!next) { ui.write(`使い方: /allow ${POLICY_LEVELS.join(' | ')} [--save]\n`); continue; }
+        approval.setPolicy(next);
+        if (flag === '--save') {
+          try {
+            saveConfig({ ...config, permissions: next });
+            ui.write(`(設定に保存しました: permissions=${next})\n`);
+          } catch (e) { ui.write(`(設定を保存できません: ${(e as Error).message} — このセッションでは有効です)\n`); }
+        }
+        continue;
+      }
       if (line === '/keys' || line.startsWith('/keys ')) {
         const [, action, provider] = line.split(/\s+/);
         try {
@@ -309,7 +349,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         continue;
       }
       if (line === '/help') {
-        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /keys: 保存済みキー  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止  PgUp/PgDn: 履歴\n入力: Enter 送信 / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 dkh: スクリーンリーダー・行入力モード\n');
+        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /keys: 保存済みキー  /allow: 承認ポリシー  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止  PgUp/PgDn: 履歴\n入力: Enter 送信 / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 dkh: スクリーンリーダー・行入力モード\n');
         continue;
       }
       if (line === '/agents' || line.startsWith('/agents ')) {

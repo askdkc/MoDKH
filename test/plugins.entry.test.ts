@@ -106,6 +106,9 @@ test('bare startup can select a worker, approve its edits and collect its result
 
 test('Ctrl+C at child approval returns to input without applying the edit', async t => {
   const f = sandbox(t);
+  // Stop during an approval prompt is the subject here, so use the policy that always prompts.
+  fs.mkdirSync(f.home, { recursive: true });
+  fs.writeFileSync(path.join(f.home, 'config.json'), JSON.stringify({ permissions: 'none' }));
   const child = spawn(process.execPath, [entry, '--model', 'fixed/scripted'], { cwd: f.root, env: { ...process.env, DKH_HOME: f.home, DKH_PLAIN: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
   let stdout = '', stderr = '', stopped = false, returned = false;
   const exited = new Promise<number | null>((resolve, reject) => { child.on('close', resolve); child.on('error', reject); });

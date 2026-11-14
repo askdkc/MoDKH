@@ -39,6 +39,9 @@ test('CLI approval Stop preserves the next instruction through the real model ad
   try {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+    // This test is about Stop during an approval prompt, so ask for the policy that always prompts.
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ permissions: 'none' }));
     const args = { model: 'compatible/fake', 'base-url': baseUrl, cwd: home };
     const child = spawn(process.execPath, ['--input-type=module', '-e',
       `import { runChat } from ${JSON.stringify(entry)}; await runChat({args:${JSON.stringify(args)}});`],

@@ -53,6 +53,8 @@ export const runCommandTool: Tool = {
       kind: 'command',
       title: `コマンド実行 (${cwdRel})`,
       detail: `${command}\n\n作業場所: ${cwd}`,
+      // The cwd was resolved and its real path proven inside the root above.
+      outsideWorkspace: false,
     });
     if (!ok) throw new ToolError('DENIED', 'コマンドは承認されなかったため実行しない');
     if (ctx.signal?.aborted) throw new ToolError('NOT_EXECUTED', '中断済みのため実行しない');

@@ -57,7 +57,9 @@ for (const resume of [false, true]) {
     let output = ''; child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { output += data; });
     const timeout = setTimeout(() => child.kill('SIGKILL'), 20000);
     const exited = new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
-    child.stdin.end('Enable the reasoning setting in this project and verify it.\ny\ny\n/exit\n');
+    // The default policy is `workspace`: in-root edits and commands run without a prompt,
+    // so no `y` answers are supplied and any prompt would hang until the timeout.
+    child.stdin.end('Enable the reasoning setting in this project and verify it.\n/exit\n');
     try {
       assert.equal(await exited, 0, output);
       assert.equal(received.length, 5, output);
@@ -66,7 +68,10 @@ for (const resume of [false, true]) {
       assert.ok(toolOutputs.some(r => r.output.includes('src/config.ts:1:')));
       assert.ok(toolOutputs.every(r => !r.output.includes('reasoning ARCHIVE')));
       assert.equal(fs.readFileSync(path.join(root, 'src/config.ts'), 'utf8'), 'export const reasoning = "on";\n');
-      assert.equal((output.match(/\(承認\)/g) ?? []).length, 2);
+      // The default policy approves in-root effects automatically; any prompt would have hung
+      // the run because no `y` answers are supplied.
+      assert.equal((output.match(/\(自動承認: /g) ?? []).length, 2, output.slice(-2000));
+      assert.doesNotMatch(output, /承認要求/, 'the default policy must not prompt inside the workspace');
       const last = received[4].body.messages.filter(m => m.role === 'tool').map(m => JSON.parse(m.content));
       assert.ok(last.some(r => r.status === 'ok' && r.output.includes('requested setting is enabled') && r.output.includes('# pass 1')), JSON.stringify(last.at(-1)));
       const session = store.load(saved?.id ?? store.list()[0].id);

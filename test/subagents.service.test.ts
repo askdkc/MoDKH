@@ -92,7 +92,8 @@ test('child cancellation releases only its approval waiter and returns to the pa
   const f = fixture(t);
   let requested!: () => void;
   const reached = new Promise<void>(resolve => { requested = resolve; });
-  const gate = new TerminalApprovalGate({ write: () => {}, ask: (_prompt, signal) => new Promise<string>(resolve => { requested(); signal?.addEventListener('abort', () => resolve(''), { once: true }); }) });
+  // The subject is an approval waiter, so use the policy that always prompts.
+  const gate = new TerminalApprovalGate({ write: () => {}, ask: (_prompt, signal) => new Promise<string>(resolve => { requested(); signal?.addEventListener('abort', () => resolve(''), { once: true }); }) }, 'none');
   const model = new FixedModel([[{ type: 'tool-call', call: { id: 'write', name: 'create_file', args: { path: 'cancelled', content: 'bad' } } }, { type: 'finish', stopReason: 'tool-calls' }], done]);
   const service = new SubagentService({ ...f.opts, approval: gate, connection: () => ({ ref: 'fixed/scripted', create: () => model }) });
   const handle = await service.start({ ...request, pluginId: 'dkh-worker' }, owner('call-1', AbortSignal.timeout(3000)));

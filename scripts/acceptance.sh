@@ -30,10 +30,11 @@ PROJ="$WORK/project"
 mkdir -p "$PROJ"
 printf '# dkh サンプル\n' > "$PROJ/README.md"
 
-# 3) 新規セッション: 読む → 承認して編集 → コマンド実行 → 完了
-OUT1=$(printf '作業を開始して\ny\ny\ny\n/exit\n' | "$CLI" chat --model fixed/scripted --cwd "$PROJ")
+# 3) 新規セッション: 読む → ワークスペース内は自動承認で編集 → コマンド実行 → 完了
+OUT1=$(printf '作業を開始して\n/exit\n' | "$CLI" chat --model fixed/scripted --cwd "$PROJ")
 echo "$OUT1" | grep -q '(応答終了' || { echo "FAIL: 最初のセッションが完了しなかった"; echo "$OUT1"; exit 1; }
 echo "$OUT1" | grep -q 'OUT_OF_ROOT' || { echo "FAIL: ルート外参照の拒否が観測されない"; echo "$OUT1"; exit 1; }
+echo "$OUT1" | grep -q '(自動承認: ' || { echo "FAIL: 既定の workspace ポリシーが自動承認しない"; echo "$OUT1"; exit 1; }
 grep -q '固定応答モデルによる追記' "$PROJ/README.md" || { echo "FAIL: 編集が反映されていない"; exit 1; }
 MARKLINES=$(grep -c '実行マーカー' "$PROJ/marker.txt" || true)
 [ "$MARKLINES" = "1" ] || { echo "FAIL: マーカーが1行でない: $MARKLINES"; exit 1; }
@@ -44,9 +45,11 @@ SID=$(printf '%s\n' "$OUT1" | sed -n 's/^セッション \(.*\) を開始しま�
 OUTBAD=$("$CLI" chat --model incompatible-provider/xyz --cwd "$PROJ" </dev/null 2>&1 || true)
 echo "$OUTBAD" | grep -q '自動で切り替え' || { echo "FAIL: 不正引数の明示エラーがない"; echo "$OUTBAD"; exit 1; }
 
-# 5) 承認拒否: 拒否したコマンドは実行されない(EOF で拒否扱い)
+# 5) 承認拒否: 拒否したコマンドは実行されない(permissions=none で毎回確認、EOF で拒否扱い)
 rm -f "$PROJ/marker.txt"
-OUT2=$(printf '作業を開始して\ny\n/exit\n' | "$CLI" chat --model fixed/scripted --cwd "$PROJ" 2>&1 || true)
+printf '{"permissions":"none"}\n' > "$WORK/none-config.json"
+mkdir -p "$WORK/none-home" && cp "$WORK/none-config.json" "$WORK/none-home/config.json"
+OUT2=$(printf '作業を開始して\ny\n/exit\n' | DKH_HOME="$WORK/none-home" "$CLI" chat --model fixed/scripted --cwd "$PROJ" 2>&1 || true)
 echo "$OUT2" | grep -q '(拒否)' || { echo "FAIL: 承認拒否が観測されない"; echo "$OUT2"; exit 1; }
 test ! -e "$PROJ/marker.txt" || { echo "FAIL: 拒否したのにコマンドが実行された"; exit 1; }
 

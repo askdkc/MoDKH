@@ -14,6 +14,8 @@ export interface LiteConfig {
   subagents?: unknown;
   /** Validated by parseLanguageSettings; malformed values fall back to defaults. */
   language?: unknown;
+  /** all | workspace | none. Validated by parsePermissionPolicy; malformed values fall back. */
+  permissions?: unknown;
   diagnostics?: string[];
 }
 
@@ -43,6 +45,7 @@ export function loadConfig(): LiteConfig {
     return {
       subagents: parsed.subagents,
       language: parsed.language,
+      permissions: parsed.permissions,
       memory: {
         enabled: parsed.memory?.enabled === true,
         command: parsed.memory?.command ?? DEFAULT_CONFIG.memory.command,

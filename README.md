@@ -49,6 +49,22 @@ DKH内で直接選ぶこともできます。
 Ollama Cloudの候補には deepseek-v4.1-flash や glm-5.3-flash などの代表的なモデルを同梱しています（`ollama.com/v1/models` の取得結果）。一覧は目安であり、利用可否は契約に依存します。一覧にないモデルは `/connect ollama-cloud/<model>` で直接指定できます。
 
 Ollama Cloudのキーは[こちら](https://ollama.com/settings/keys)で作成できます。キーを保存したくない場合は環境変数（`OLLAMA_API_KEY` など）を使ってください。
+## 承認ポリシー
+
+既定では、ワークスペース内のコマンド実行と編集は確認なしで実行します。ワークスペースの外に出る操作だけ確認します。実行した内容は `(自動承認: command — …)` のように記録に残ります。
+
+```text
+/allow           # 現在の設定を表示
+/allow all       # すべて確認なし
+/allow workspace # ワークスペース内のみ確認なし（既定）
+/allow none      # 読み取り以外は毎回確認
+/allow all --save  # 末尾に --save で次回以降も維持
+```
+
+`~/.config/dkh/config.json` の `permissions` でも設定できます（`DKH_HOME` 指定時はその配下）。設定値が不正な場合は `workspace` に戻し、その旨を表示します。
+
+**これは承認を求めるかどうかの設定で、OSレベルの隔離ではありません。** `all` でもコマンドは通常のユーザー権限で動きます。停止（Ctrl+C）はどの設定でも有効です。
+
 Hermes Agentはサーバー側でツールを実行するため、DKHの個別承認・Stopの保証対象外です。
 
 その他の接続先やURLの変更方法は[プロバイダー設定の詳細](<docs/models.md>)を参照してください。

@@ -31,6 +31,11 @@ export interface ApprovalRequest {
   kind: 'edit' | 'command';
   title: string;
   detail: string;
+  /**
+   * True when the caller proved the target is outside the working root. Omitted means "not proven",
+   * which an approval policy must treat as outside, so a policy can never skip a wider effect.
+   */
+  outsideWorkspace?: boolean;
   /** Cancels only this approval request (e.g. a timed-out child). */
   signal?: AbortSignal;
 }
