@@ -30,7 +30,9 @@ test('the welcome block stays compact, and a conversation widens to ~85% of the 
     assert.ok(used <= 80, `welcome stays compact: ${used}`);
     const margins = welcome.filter(line => line.trim().startsWith('█'))
       .map(line => line.length - line.trimStart().length);
-    assert.ok(margins.every(pad => Math.abs(pad - 60) <= 4),
+    // 余白(画面中央寄せ) + ロゴの中央寄せ(80列幅の中) = 60 + 27
+    const expectedPad = Math.floor((200 - 80) / 2) + Math.floor((80 - 26) / 2);
+    assert.ok(margins.length > 0 && margins.every(pad => Math.abs(pad - expectedPad) <= 2),
       `welcome content is centered on the 200-column screen: ${JSON.stringify(margins)}`);
 
     t.ui.write('▶ You: 作業を始めます\n');

@@ -493,22 +493,29 @@ export class TerminalUI implements ChatTerminal {
     let body: string[] = [];
     let editorStartIdx = editorStart;
     if (!this.started) {
+      // 旧デザインと同じ: ロゴはコンテンツ幅の中央、タイトルと案内は左端から。
+      const widthCenter = (line: string): string => {
+        const pad = Math.max(0, Math.floor((width - textWidth(line)) / 2));
+        return ' '.repeat(pad) + line;
+      };
       const welcome: { text: string; style: string }[] = [
         { text: 'DKH  ·  Coding Harness', style: '1' },
-        ...LOGO.map(line => ({ text: line, style: ACCENT })),
+        ...LOGO.map(line => ({ text: widthCenter(line), style: ACCENT })),
         ...this.bootLines.slice(-8).map(line => ({ text: line, style: '' })),
       ];
+      // 縦中央寄せは「ロゴと入力欄の間」の余白で行う(ブロックは最下段固定のため、
+      // 上端の余白ではグループの位置は動かない)。
       const composerRows = partialCount + liveReasoning.length + optionsLines.length + lines.length;
-      const topPad = Math.max(0, Math.min(20, Math.floor((rows - welcome.length - composerRows) / 2) - 1));
+      const midPad = Math.max(0, Math.floor((rows - welcome.length - composerRows) / 2) - 1);
       body = [
-        ...Array.from({ length: Math.max(0, topPad) }, () => ''),
-        ...welcome.map(row => marginPrefix + styled(row)),
+        ...welcome.map(row => marginStyled(row)),
+        ...Array.from({ length: midPad }, () => marginPrefix),
         ...(this.partial ? partialLines.map(line => marginPrefix + (this.color ? this.fork().line(line, this.palette) : line)) : []),
         ...liveReasoning.map(row => marginPrefix + this.paint(fitText(row.text, width), row.style)),
         ...optionsLines.map(marginStyled),
         ...lines.map(marginStyled),
       ];
-      editorStartIdx = topPad + welcome.length + partialCount + liveReasoning.length + optionsLines.length + 1;
+      editorStartIdx = welcome.length + midPad + partialCount + liveReasoning.length + optionsLines.length + 1;
     } else {
       body = [
         ...(this.partial ? partialLines.map(line => this.color ? this.fork().line(line, this.palette) : line) : []),
