@@ -102,7 +102,7 @@ test('captured output keeps both ends when it exceeds the cap', async () => {
   const large = await run(nodeCommand('process.stdout.write("HEAD" + "x".repeat(100000) + "TAIL")'));
   assert.match(large.output, /HEAD/, 'the start of the output survives');
   assert.match(large.output, /TAIL/, 'the end survives, where failures usually appear');
-  assert.match(large.output, /バイト省略/);
+  assert.match(large.output, /文字省略/);
   assert.ok(Buffer.byteLength(large.output) <= 32 * 1024 + 400, 'the whole result stays bounded');
 });
 

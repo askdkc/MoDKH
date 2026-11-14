@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { ToolRegistry, defaultTools } from '../src/tools/registry.ts';
-import { runShellProcess, formatShellResult } from '../src/tools/run.ts';
+import { runShellProcess, describeShellResult, resolveShell } from '../src/tools/run.ts';
 import type { ApprovalGate } from '../src/agent/types.ts';
 
 const yes: ApprovalGate = { approve: async () => true };
@@ -66,11 +66,11 @@ test('oversized output keeps the head and the tail instead of only the tail', as
   const result = await runShellProcess(
     `${JSON.stringify(process.execPath)} -e "process.stdout.write('HEAD_MARKER'+'x'.repeat(200000)+'TAIL_MARKER')"`,
     process.cwd(), undefined, { maxOutputBytes: 4096 });
-  const text = formatShellResult(result);
+  const text = describeShellResult(result);
   assert.match(text, /HEAD_MARKER/, 'the beginning identifies what ran');
   assert.match(text, /TAIL_MARKER/, 'the end carries the failure');
   assert.ok(Buffer.byteLength(text) < 4096 + 800, `bounded: ${Buffer.byteLength(text)}`);
-  assert.match(text, /バイト省略/);
+  assert.match(text, /文字省略/);
 });
 
 test('timeoutMs is honoured and reported distinctly from a failure exit', async () => {
@@ -80,25 +80,26 @@ test('timeoutMs is honoured and reported distinctly from a failure exit', async 
   assert.match(outcome.message, /制限時間/);
 });
 
-test('bash and zsh are selectable, and their syntax works', async () => {
+test('bash and zsh are selectable and the chosen shell is reported', async () => {
   const dir = root();
   try {
-    // Arrays with `${#a[@]}` are a bash/zsh feature that POSIX sh does not provide.
-    // (`${v^^}` would be wrong to assert here: macOS ships bash 3.2, which lacks it.)
-    const bash = await run(dir, 'a=(x y z); printf "%s" "${#a[@]}"', { shell: 'bash' });
+    const bash = await run(dir, 'printf "%s" "$BASH_VERSION"', { shell: 'bash' });
     assert.equal(bash.status, 'ok', bash.output);
-    assert.match(bash.output, /--- stdout ---\n3/);
+    // The command only prints a version inside bash; an empty result would mean sh ran.
+    assert.match(bash.output, /--- stdout ---\n\d+\.\d+/);
 
-    const sh = await run(dir, 'a=(x y z); printf "%s" "${#a[@]}"');
+    const sh = await run(dir, 'printf "%s" "$0"', {});
     assert.equal(sh.status, 'ok');
-    // POSIX sh has no arrays; it must not silently produce the bash answer.
-    assert.doesNotMatch(sh.output, /--- stdout ---\n3\n?$/);
+    assert.match(sh.output, /--- stdout ---\n\/(bin\/)?sh/, 'the default shell is sh');
 
     if (fs.existsSync('/bin/zsh')) {
-      const zsh = await run(dir, 'a=(x y z); printf "%s" "${#a[@]}"', { shell: 'zsh' });
+      const zsh = await run(dir, 'printf "%s" "$ZSH_VERSION"', { shell: 'zsh' });
       assert.equal(zsh.status, 'ok', zsh.output);
-      assert.match(zsh.output, /--- stdout ---\n3/);
+      assert.match(zsh.output, /--- stdout ---\n\d+\.\d+/);
     }
+    // Resolution is a lookup, not a guess: an existing shell resolves to a real file.
+    assert.ok(fs.existsSync(resolveShell('bash').file));
+    assert.ok(fs.existsSync(resolveShell('sh').file));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

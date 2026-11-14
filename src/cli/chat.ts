@@ -10,7 +10,8 @@ import { SubagentService, subagentTools } from '../subagents/service.ts';
 import type { DelegationRequest } from '../subagents/types.ts';
 import { runDirectAgent } from './agents.ts';
 import { parseAgentSettings } from '../subagents/settings.ts';
-import { ToolRegistry, defaultTools } from '../tools/registry.ts';
+import { ToolRegistry, defaultTools, defaultToolsWithJobs } from '../tools/registry.ts';
+import { JobRegistry } from '../tools/jobs.ts';
 import { runAgentLoop } from '../agent/loop.ts';
 import { parseModelRef } from '../model/factory.ts';
 import { selectModel } from './models.ts';
@@ -47,6 +48,9 @@ const SYSTEM_PROMPT =
   + 'bash/zsh 固有の構文が必要なときだけ shell を指定する。'
   + 'run_command の終了コードが0以外でも、それは実行結果であり失敗の報告ではない。'
   + 'grep の不一致、テストの失敗、差分の有無は終了コードで判断し、内容を読んで次を決める。'
+  + '時間のかかる処理は run_command に run_in_background: true を付けて job_id を受け取り、'
+  + '待たずに別の作業を進める。結果は job_output で読み、止めるときは job_kill を使う。'
+  + '前景のまま制限時間に達した場合もジョブへ移り、job_id が返る。'
   + 'コマンドはOSユーザー権限で動くため、承認内容と作業対象を守る。'
   + '元の依頼を保ち、実行終了・テスト成功・目標達成を区別する。'
   + '結果不明の操作を再送せず、状態を調べる。未確認の事項は未確認と報告する。'
@@ -140,7 +144,9 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   const manager = new PluginManager();
   const agentSettings = parseAgentSettings(config.subagents);
   for (const diagnostic of [...(config.diagnostics ?? []), ...agentSettings.diagnostics, ...manager.discover().diagnostics]) ui.write(`(プラグイン: ${diagnostic})\n`);
-  const tools = defaultTools();
+  // Jobs belong to this session: closing the CLI stops them instead of orphaning children.
+  const jobs = new JobRegistry();
+  const tools = defaultToolsWithJobs(jobs);
   const subagents = new SubagentService({
     manager, store, parent: session, root: cwd, tools, approval,
     settings: agentSettings.settings, unavailable: agentSettings.unavailable,
@@ -261,6 +267,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         checkpoint,
         analyze,
         maxTurns,
+        jobs,
       });
       // 本作業の証拠と状態を先に確定する。メモリ保存はこれを変更しない。
       ui.setReasoning?.(null);
@@ -460,6 +467,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     }
   } finally {
     // 主処理・永続化が失敗しても補助プロセスを回収する。
+    await jobs.close().catch(e => process.stderr.write(`ジョブ停止失敗: ${String(e)}\n`));
     await memory.close().catch(e => process.stderr.write(`メモリ切断失敗: ${String(e)}\n`));
     await language.close().catch(e => process.stderr.write(`言語サーバー終了失敗: ${String(e)}\n`));
   }

@@ -4,6 +4,8 @@ import { ToolError } from '../agent/types.ts';
 import { listFilesTool, searchFilesTool, readFileTool } from './files.ts';
 import { createFileTool, editFileTool } from './edit.ts';
 import { runCommandTool } from './run.ts';
+import { jobTools } from './job-tools.ts';
+import type { JobRegistry } from './jobs.ts';
 
 /**
  * ツール名・引数形状・宣言外の引数を検証する。
@@ -19,7 +21,6 @@ export class ToolRegistry {
       this.tools.set(tool.name, tool);
     }
   }
-
   specs(): { name: string; description: string; parameters: Record<string, unknown> }[] {
     return [...this.tools.values()].map((t) => ({
       name: t.name,
@@ -98,4 +99,9 @@ export class ToolRegistry {
 /** 初版が提供する5区分のツール群(作成/編集は別ツール)。 */
 export function defaultTools(): Tool[] {
   return [listFilesTool, searchFilesTool, readFileTool, createFileTool, editFileTool, runCommandTool];
+}
+
+/** The same tools plus background execution, which needs a per-session job registry. */
+export function defaultToolsWithJobs(jobs: JobRegistry): Tool[] {
+  return [...defaultTools(), ...jobTools(jobs)];
 }

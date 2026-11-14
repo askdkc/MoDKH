@@ -28,6 +28,8 @@ export interface AgentLoopOptions {
   checkpoint?(): void;
   /** Optional post-effect analysis; its failure never changes the tool result or replays an effect. */
   analyze?(file: string, kind: 'read' | 'write'): Promise<string | null>;
+  /** Background-job registry owned by the caller; absent means foreground execution only. */
+  jobs?: import('../tools/jobs.ts').JobRegistry;
 }
 
 /** complete means response finished, not verified achievement of the user's goal. */
@@ -70,6 +72,10 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
   };
   for (let turn = 0; turn < maxTurns; turn++) {
     if (opts.signal.aborted) return { outcome: 'interrupted' };
+    // A background job that settled since the last step is input the model has not seen.
+    // Injecting it as a user turn keeps the notification inside the normal message contract.
+    const notices = opts.jobs?.takeNotices() ?? [];
+    if (notices.length > 0) append({ role: 'user', content: `(バックグラウンドジョブの完了通知)\n${notices.join('\n\n')}` });
     let text = '';
     const calls: ToolCall[] = [];
     let stopReason: 'stop' | 'tool-calls' | 'aborted' | 'error' | undefined;
@@ -111,6 +117,13 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
         : { outcome: 'error', errorMessage: errorMessage ?? 'モデル応答が終了イベントなしで切れた' };
     }
     if (calls.length === 0) {
+      // A job that settled while this answer was streaming still owes the model a report.
+      // Yield one more step instead of closing the turn on an unread completion.
+      const pending = opts.jobs?.takeNotices() ?? [];
+      if (pending.length > 0) {
+        append({ role: 'user', content: `(バックグラウンドジョブの完了通知)\n${pending.join('\n\n')}` });
+        continue;
+      }
       return stopReason === 'stop' ? { outcome: 'complete' }
         : { outcome: 'error', errorMessage: 'ツール終了イベントに呼び出しがない' };
     }
@@ -138,6 +151,7 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
         result = await opts.registry.executeOne(call, {
           root: opts.root, approval: opts.approval, signal: opts.signal,
           ...(opts.analyze ? { analyze: opts.analyze } : {}),
+          ...(opts.jobs ? { jobs: opts.jobs } : {}),
         });
         ledger.set(call.id, { call, result });
       }

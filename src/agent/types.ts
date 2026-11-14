@@ -57,6 +57,11 @@ export interface ToolContext {
    * failure must never change the tool's own result or cause a second edit.
    */
   analyze?(file: string, kind: 'read' | 'write'): Promise<string | null>;
+  /**
+   * Background jobs owned by this session. Absent means foreground execution only; a tool that
+   * cannot reach a registry must say so instead of silently running a long command inline.
+   */
+  jobs?: import('../tools/jobs.ts').JobRegistry;
 }
 
 /** ツール内部の期待される失敗。モデルへ status:'error' として返す。 */
