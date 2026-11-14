@@ -9,10 +9,12 @@ export const CONNECT_PROVIDERS = [
   { value: 'openrouter', label: 'OpenRouter', detail: 'OPENROUTER_API_KEY', key: 'OPENROUTER_API_KEY' },
   { value: 'infron', label: 'Infron', detail: 'INFRON_API_KEY', key: 'INFRON_API_KEY' },
   { value: 'hermes', label: 'Hermes Agent', detail: 'API server · HERMES_API_KEY', key: 'HERMES_API_KEY' },
+  // Web検索のキー登録専用。モデル接続の一覧には含めない。
+  { value: 'brave-search', label: 'Brave Search', detail: 'web_search 用のキー · BRAVE_SEARCH_API_KEY', key: 'BRAVE_SEARCH_API_KEY', keyOnly: true },
 ] as const;
 export async function chooseProvider(ui: ChatTerminal, current: string | null): Promise<string | null> {
   ui.write(current ? `接続中: ${current}\n` : '未接続です。\n');
-  return ui.choose('Connect an integration — 認証先', CONNECT_PROVIDERS.map(p => ({ ...p,
+  return ui.choose('Connect an integration — 認証先', CONNECT_PROVIDERS.filter(p => !('keyOnly' in p)).map(p => ({ ...p,
     detail: `${current?.startsWith(`${p.value}/`) || p.value === 'openai' && current?.startsWith('chatgpt/') ? '選択中 · ' : ''}${p.detail}`,
   })));
 }

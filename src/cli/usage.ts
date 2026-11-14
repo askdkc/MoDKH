@@ -1,4 +1,6 @@
 /** Token accounting for the status footer. Values are reported by the provider, never estimated. */
+import { textWidth } from './editor.ts';
+
 export interface UsageTotals {
   /** Input tokens, including cached prefixes. */
   input: number;
@@ -52,10 +54,8 @@ export function cacheHitRate(usage: UsageTotals): number | undefined {
   return Math.min(100, Math.round((usage.cacheRead / usage.input) * 100));
 }
 
-/**
- * One footer line, most useful numbers first. `width` is the usable cell width; narrower terminals
- * drop trailing fields instead of wrapping, so the composer never moves.
- */
+/** One footer line, most useful numbers first. `width` is the usable cell width; narrower terminals
+ * drop trailing fields instead of wrapping, so the composer never moves. */
 export function usageFooter(usage: UsageTotals, width: number): string {
   if (usage.responses === 0) return '';
   const rate = cacheHitRate(usage);
@@ -69,4 +69,21 @@ export function usageFooter(usage: UsageTotals, width: number): string {
   const lines = fields.map((_, index) => fields.slice(0, index + 1).join(' · '));
   for (const line of [...lines].reverse()) if (line.length <= width) return line;
   return fields[fields.length - 1];
+}
+
+/** 右下ステータス用のコンパクトな使用量表示。maxWidth を超えるときは後ろの項目から落とす。
+ * 幅は textWidth(表示幅)で測る(全角の「計」なども2セルとして数える)。 */
+export function usageBadgeLine(usage: UsageTotals, maxWidth?: number): string {
+  if (usage.responses === 0) return '';
+  const rate = cacheHitRate(usage);
+  const fields = [
+    `計 ${compactTokens(usage.input + usage.output)} tok`,
+    ...(rate === undefined ? [] : [`cache ${rate}%`]),
+    `in ${compactTokens(usage.input)}`,
+    `out ${compactTokens(usage.output)}`,
+  ];
+  const lines = fields.map((_, index) => fields.slice(0, index + 1).join(' · '));
+  if (maxWidth === undefined) return lines[lines.length - 1];
+  for (const line of [...lines].reverse()) if (textWidth(line) <= maxWidth) return line;
+  return '';
 }

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { ToolError, type Tool } from '../agent/types.ts';
 import { resolveInRoot, assertRealInRoot } from './guard.ts';
-import { describeShellResult, runShellProcess, ShellProcess, SHELLS, type ShellName } from './shell-process.ts';
+import { describeShellResult, ShellProcess, SHELLS, type ShellName } from './shell-process.ts';
 import { prepareCommand } from './job-tools.ts';
 import type { JobView } from './jobs.ts';
 

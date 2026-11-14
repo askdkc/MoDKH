@@ -10,7 +10,7 @@ import { SubagentService, subagentTools } from '../subagents/service.ts';
 import type { DelegationRequest } from '../subagents/types.ts';
 import { runDirectAgent } from './agents.ts';
 import { parseAgentSettings } from '../subagents/settings.ts';
-import { ToolRegistry, defaultTools, defaultToolsWithJobs } from '../tools/registry.ts';
+import { ToolRegistry, defaultToolsWithJobs } from '../tools/registry.ts';
 import { JobRegistry } from '../tools/jobs.ts';
 import { runAgentLoop } from '../agent/loop.ts';
 import { parseModelRef } from '../model/factory.ts';
@@ -26,7 +26,7 @@ import { languageTools } from '../tools/language.ts';
 import { parseLanguageSettings, DEFAULT_LANGUAGE_SETTINGS } from '../language/detect.ts';
 import { chooseProvider, chooseProviderModel, confirmRemoteAgent, CONNECT_PROVIDERS } from './providers.ts';
 import { TerminalApprovalGate } from './approval.ts';
-import { DEFAULT_POLICY, describePolicy, parsePermissionPolicy, POLICY_LEVELS, type PermissionPolicy } from './permissions.ts';
+import { DEFAULT_POLICY, describePolicy, parsePermissionPolicy, POLICY_LEVELS } from './permissions.ts';
 import { DEFAULT_MAX_TURNS, MAX_TURNS_CEILING, parseMaxTurns } from './limits.ts';
 import { loadConfig, saveConfig, updateConfig, parseTimeoutMs, type LiteConfig } from './config.ts';
 import { keysPath, loadSavedKeys, saveKey, removeKey, savedKeyProviders, resolveApiKey } from './keys.ts';
@@ -399,6 +399,16 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           await loginChatGpt({ ...opts.loginOptions, write: text => ui.write(text) });
           ui.write('認証しました: chatgpt。モデルを選んでください。\n');
         } catch (e) { ui.write(`(認証できません: ${(e as Error).message})\n`); return; }
+      } else if ('keyOnly' in provider) {
+        // 検索キーの登録だけを行う。モデル接続はしない。
+        if (process.env[provider.key]) { ui.write(`${provider.key} は環境変数で設定済みです(そちらが優先されます)。\n`); return; }
+        if (!ui.interactive) { ui.write(`${provider.key} を環境変数に設定してください。行入力モードではキーを表示させないため入力を受け付けません。\n`); return; }
+        const key = (await ui.ask(`${provider.key} を入力（保存先: ${keysHint()} / 空行で戻る）`, undefined, true))?.trim();
+        if (!key || key === '/cancel') return;
+        if (key.startsWith('/')) { ui.unread(key); return; }
+        try { saveKey(provider.value, key); ui.write(`(${provider.key} を保存しました。web_search で使用します)\n`); }
+        catch (e) { ui.write(`(キーを保存できません: ${(e as Error).message})\n`); }
+        return;
       } else if (provider.key && !process.env[provider.key] && !sessionKeys.has(target)) {
         if (!ui.interactive) { ui.write(`${provider.key} を環境変数に設定して再接続してください。行入力モードではキーを表示させないため入力を受け付けません。\n`); return; }
         const key = (await ui.ask(`${provider.key} を入力（保存先: ${keysHint()} / 空行で戻る）`, undefined, true))?.trim();

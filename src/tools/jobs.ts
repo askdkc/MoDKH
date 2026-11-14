@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ShellProcess, describeShellResult, type ShellName } from './shell-process.ts';
+import { ShellProcess, type ShellName } from './shell-process.ts';
 
 /**
  * Background job registry.

@@ -35,13 +35,19 @@ test('usage appears on one line at the bottom and never displaces the composer',
     // screenshot's 97% counts cache over every token, which this footer does not claim.
     assert.match(line, /cache 100%/, 'cache hit ratio is derived from the reported numbers');
     assert.match(line, /410k|410,226/);
-    // It sits on the bottom block, after the composer, and stays within the panel width.
+    // It sits on the bottom status row, right-aligned next to the working directory, and
+    // carries the breakdown inside the badge itself.
     const index = frame.lines.findIndex(entry => entry.includes('tok'));
     const composer = frame.lines.findIndex(entry => entry.includes('│'));
     assert.ok(index > composer, 'usage must follow the composer, not displace it');
-    assert.equal(frame.lines.slice(index + 1).filter(entry => entry.trim() !== '').length <= 1, true,
-      'only the working directory may follow the usage line');
-    assert.ok(textWidth(frame.lines[index]) <= 80);
+    const bottom = frame.lines.at(-1)!;
+    assert.match(bottom, /tok/, 'the usage is the bottom-right status');
+    assert.match(bottom, /workspace|\/Users|パス|ルート/, 'the working directory shares the bottom row');
+    assert.ok(bottom.indexOf('workspace') < bottom.indexOf('tok') - 0, 'the usage status is right of the cwd');
+    // 画面中央寄せ(margin=20)+本文80列=120。余白を除いた本文は80列以内。
+    const trimmed = bottom.trim();
+    assert.ok(textWidth(bottom) <= 120, `the bottom status fits the terminal: ${textWidth(bottom)}`);
+    assert.ok(textWidth(trimmed) <= 80, `the status content stays compact: ${textWidth(trimmed)}`);
     // The composer still works with the footer present.
     t.input.emit('keypress', '/exit', {});
     t.input.emit('keypress', '', { name: 'return' });

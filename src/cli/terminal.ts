@@ -1,5 +1,5 @@
 import { emitKeypressEvents, type Key } from 'node:readline';
-import { usageFooter, type UsageTotals } from './usage.ts';
+import { usageFooter, usageBadgeLine, type UsageTotals } from './usage.ts';
 import { chars, clean, fitText, textWidth, wrap, editorLayout, verticalCursor, lineEdge } from './editor.ts';
 export { textWidth, fitText } from './editor.ts';
 import { readClipboardImage, type ClipboardReader } from './clipboard.ts';
@@ -481,11 +481,14 @@ export class TerminalUI implements ChatTerminal {
     const hints = !this.pending ? 'Ctrl+C 中止（入力は応答完了後）' : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
       : composer ? 'Enter 送信  Ctrl+J 改行  Ctrl+V 画像  Cmd+V テキスト' : 'Enter 決定  Ctrl+C 中止';
     lines.push({ text: hints, style: '2' });
-    // Usage is the least important line: it takes the bottom row and yields to cwd when narrow.
-    const footer = this.usage ? usageFooter(this.usage, width) : '';
-    const showFooter = footer.length > 0 && (width >= 40 || this.cwd.length + footer.length + 3 > width);
-    if (showFooter) lines.push({ text: footer, style: '2' });
-    lines.push({ text: this.cwd, style: '2' });
+    // 最下段: 作業ルート(左)とトークン使用量のステータス(右)。狭い時はルートだけ。
+    const usageStatus = this.usage ? usageBadgeLine(this.usage, Math.max(0, width - textWidth(this.cwd) - 3)) : '';
+    const usageWidth = textWidth(usageStatus);
+    const cwdWidth = textWidth(this.cwd);
+    const bottom = usageStatus.length > 0 && width - cwdWidth - usageWidth >= 2
+      ? `${this.cwd}${' '.repeat(width - cwdWidth - usageWidth)}${usageStatus}`
+      : this.cwd;
+    lines.push({ text: bottom, style: '2' });
 
     const styled = (row: { text: string; style: string }): string =>
       this.paint(fitText(row.text, width), row.style);
