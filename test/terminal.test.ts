@@ -209,6 +209,20 @@ test('resize keeps the live block within its width and history remains streamed'
   } finally { t.ui.close(); }
 });
 
+test('the command menu renders once, never duplicated', async () => {
+  const t = terminal(100, 30);
+  try {
+    const line = t.ui.next();
+    t.input.emit('keypress', '/', {});
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const view = t.text();
+    assert.equal(view.split('Commands').length - 1, 1, `menu header appears once: ${view.split('\n').join(' | ')}`);
+    assert.equal(view.split('/exit').length - 1, 1, 'menu rows appear once');
+    t.key('return'); // メニュー先頭候補(/connect)で決定する
+    assert.equal(await line, '/connect');
+  } finally { t.ui.close(); }
+});
+
 test('busy terminal distinguishes model reasoning from completion without showing private reasoning', () => {
   const t = terminal();
   try {

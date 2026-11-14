@@ -512,7 +512,7 @@ export class TerminalUI implements ChatTerminal {
         ...Array.from({ length: midPad }, () => marginPrefix),
         ...(this.partial ? partialLines.map(line => marginPrefix + (this.color ? this.fork().line(line, this.palette) : line)) : []),
         ...liveReasoning.map(row => marginPrefix + this.paint(fitText(row.text, width), row.style)),
-        ...optionsLines.map(marginStyled),
+        // lines にはコマンドメニュー(optionsLines)が含まれる。二重に展開しない。
         ...lines.map(marginStyled),
       ];
       editorStartIdx = welcome.length + midPad + partialCount + liveReasoning.length + optionsLines.length + 1;
@@ -520,7 +520,7 @@ export class TerminalUI implements ChatTerminal {
       body = [
         ...(this.partial ? partialLines.map(line => this.color ? this.fork().line(line, this.palette) : line) : []),
         ...liveReasoning.map(row => this.paint(fitText(row.text, width), row.style)),
-        ...optionsLines.map(styled),
+        // lines にはコマンドメニュー(optionsLines)が含まれる。二重に展開しない。
         ...lines.map(styled),
       ];
     }
