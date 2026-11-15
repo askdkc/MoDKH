@@ -22,6 +22,7 @@ import {
 import { ResponsesApiModel } from '../src/model/chatgpt/responses.ts';
 import { ToolRegistry, defaultTools } from '../src/tools/registry.ts';
 import { runAgentLoop } from '../src/agent/loop.ts';
+import { DKH_SKILL_BINDING, readBundledSkill } from '../src/agent/bundled-skills.ts';
 import type { AgentMessage } from '../src/agent/types.ts';
 
 function withHome<T>(fn: () => T): T {
@@ -226,11 +227,17 @@ test('Responses API アダプターが偽SSEでストリーミング+関数往�
     // 要求は公式契約どおり: フラットな function ツール、store:false、会話状態はCLI保持
     const first = requests[0];
     assert.equal(first['store'], false);
-    assert.equal(first['instructions'], 'テスト用指示');
+    // 日本語の依頼ではホスト指示にルーターと日本語スキルが追加される。
+    const instructions = 'テスト用指示\n\n' + DKH_SKILL_BINDING
+      + `\n[kiokuko-soul]\n${readBundledSkill('kiokuko-soul')}\n`
+      + `\n[natural-japanese-output]\n${readBundledSkill('natural-japanese-output')}\n`;
+    assert.equal(first['instructions'], instructions);
     const tools = first['tools'] as { type: string; name: string; strict: boolean }[];
     assert.ok(tools.some((t) => t.type === 'function' && t.name === 'read_file'));
     assert.equal(tools[0].strict, false);
     const second = requests[1];
+    assert.equal(second['instructions'], instructions);
+    assert.doesNotMatch(JSON.stringify(second['input']), /DKH host binding|\[natural-japanese-output\]/);
     const input2 = second['input'] as { type?: string; output?: string }[];
     const outItem = input2.find((i) => i.type === 'function_call_output');
     assert.ok(outItem);
