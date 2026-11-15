@@ -1,0 +1,5 @@
+{
+  "source": "https://github.com/roswell/roswell/releases/download/v26.10.119/roswell-26.10.119-darwin-arm64.tar.bz2",
+  "digest": "sha256:930542668a8d2838490c107ac1eb9b80c77d31265432f08addbaca6b2ff8789a",
+  "note": "tar -tjf output captured from the user installation receipt after successful archive SHA256 verification; archive bytes are not bundled."
+}

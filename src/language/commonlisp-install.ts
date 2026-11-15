@@ -7,6 +7,17 @@ import { hostPlatform, type HostPlatform, type ReleaseAsset } from './platform.t
 import { executeBounded, privateEnvironment, sha256, type ExecutionReceipt } from '../lisp/runtime.ts';
 import { LspServer } from './lsp/client.ts';
 
+/** Official Roswell Lisp filenames include '+' (for example install+sigsegv.lisp). */
+export function validateRoswellArchivePaths(output: string): void {
+  const names = output.replace(/\n$/, '').split('\n');
+  if (names.length > 2000) throw new Error('Roswell archive exceeds 2000 entries');
+  for (const name of names) {
+    if (!/^roswell\/[A-Za-z0-9._+/-]*$/.test(name) || name.split('/').includes('..')) {
+      throw new Error(`Unsafe Roswell archive path: ${JSON.stringify(name)}`);
+    }
+  }
+}
+
 export function roswellAsset(assets: ReleaseAsset[], platform: HostPlatform, glibc?: string): ReleaseAsset {
   const arch = platform.arch === 'arm64' ? 'arm64' : platform.os === 'darwin' ? 'x86-64' : 'x86_64';
   const suffix = platform.os === 'darwin' ? new RegExp(`-darwin-${arch}\\.tar\\.bz2$`) : new RegExp(`-linux-${arch}-glibc([0-9]+\\.[0-9]+)\\.tar\\.bz2$`);
@@ -76,8 +87,8 @@ export async function installCommonLisp(target: string, signal?: AbortSignal) {
       if (bytes.length !== asset.size || `sha256:${sha256(bytes)}` !== asset.digest) throw new Error('Roswell SHA256/size mismatch');
       fs.writeFileSync(archive, bytes, { flag: 'wx', mode: 0o600 });
     });
-    const names = (await run('archive-paths', '/usr/bin/tar', ['-tjf', archive])).trim().split('\n');
-    if (names.length > 2000 || names.some(n => !/^roswell\/[A-Za-z0-9._/-]*$/.test(n) || n.split('/').includes('..'))) throw new Error('Unsafe Roswell archive paths');
+    const names = await run('archive-paths', '/usr/bin/tar', ['-tjf', archive]);
+    await stage('archive-layout', async () => validateRoswellArchivePaths(names));
     const listing = (await run('archive-types', '/usr/bin/tar', ['-tvjf', archive])).trim().split('\n');
     if (listing.some(n => !/^[-d]/.test(n))) throw new Error('Roswell links/special files unsupported');
     await run('archive-extract', '/usr/bin/tar', ['-xjf', archive, '--no-same-owner']);

@@ -21,13 +21,19 @@
 
 - npm run typecheck / npm run build / git diff --check: 成功。
 - 保存先・workspace記録・skills・plugin lifecycle・実SBCL設定: 26成功。
-- npm test: 448件、382成功、58失敗、8skip。58件の試験名/error/codeは前回記録と一致、新規失敗なし。全体成功とはしません。
+- npm test: 450件、384成功、58失敗、8skip。58件の試験名/error/codeは前回記録と一致、新規失敗なし。全体成功とはしません。
 - 実ビルドCLIをfixed/scriptedで起動し、.modkh/sessionsに記録を作成。.dkhは未作成。意図的に指定した旧DKH_HOMEのmarkerだけが残り、そこへ追加書込みなし。
 - 全体suite内のpacked artifact試験も成功。実モデル委譲・実CL-LSPの完了を示すものではありません。
 - CIは未pushのため未実行。既報のCI SBCL導入漏れは今回の名前空間修正とは別の未修正事項です。
 
-source digest: 3bbfb42d5b84b768875e16cbcb9bb1ccd56b500badeb84466ffcb380237c4641
+source digest: 46a7a5ca2ec27d543af0235eb4a1de2a4f3f626871dbd7037193f67a6fcd4103
 
-built dist digest: b16931ac24bad5cf1d779b5bf8875c7b8b3e188b44b516bc94b917fddf6896ca
+built dist digest: c0a5d7d9a01b73f0104b60340ae734f58bdbd6874c5680a313d022f6dcdf29d1
 
 既存グローバルコマンドにはまだ反映していません。READMEの手順で再pack・導入が必要です。commit/pushなし。
+
+## Roswellアーカイブ誤拒否の修正
+
+ユーザーの実失敗receiptでrelease-downloadとSHA256検証は成功。archive-pathsには公式の install+sigsegv.lisp などが含まれ、旧allowlistが + を拒否していた。+ を許可し、範囲外パス・親参照・不正文字の拒否は維持。検査をarchive-layout段階として記録し、拒否した名前をエラーに含める。
+
+実一覧と出典digestをtest/fixtures/roswell-archive-paths.*へ保存。旧条件での拒否・修正後の許可、危険パス拒否を検証。関連8試験成功、再build済み入口の同じ関数でも実一覧を受理。アーカイブ本体の展開やCL-LSP初期化を今回成功確認したものではない。
