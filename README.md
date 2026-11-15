@@ -1,4 +1,4 @@
-# MDKH(Multi DKH)
+# MoDKH(Mixture of DKH)
 
 ## インストール
 
