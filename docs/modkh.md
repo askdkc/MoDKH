@@ -4,18 +4,11 @@ MoDKH (Mixture of DKH) is distributed as `modkh`, exposing only the `modkh` comm
 
 ## Run
 
-```sh
-npm run build
-cat experiments/presets/ts.lisp experiments/presets/formal.lisp > agents.lisp
-# Read/review agents.lisp before explicitly trusting its exact bytes.
-shasum -a 256 agents.lisp
-node dist/index.js chat --cwd . --lisp-config agents.lisp \
-  --trust-lisp-sha256 REVIEWED_SHA256 --sbcl sbcl
-```
+See [Lisp presets](presets.md) for a single-preset example.
 
 SBCL must already be installed. Without `--lisp-config`, ordinary MODKH behavior remains available. With it, builtin/installed plugins are excluded for this session, the head has read/language/delegation tools only, and editing/formal checking is delegated. Hermes cannot be used as the head because its remote tools bypass this boundary. Normal input always goes through the head model unless `--routing auto` is explicitly supplied.
 
-The trusted Lisp file is **arbitrary OS code**, not sandboxed configuration. Its input bytes are snapshotted, hash checked, and evaluated with startup files disabled in a private temporary HOME/TMPDIR and a minimal environment. Additional files loaded by that trusted code are not recursively covered by the hash. Relative loads resolve in the snapshot directory: combine the presets before hashing, or explicitly review absolute dependencies. There is no implicit reload or workspace discovery.
+The trusted Lisp file is **arbitrary OS code**, not sandboxed configuration. Its input bytes are snapshotted, hash checked, and evaluated with startup files disabled in a private temporary HOME/TMPDIR and a minimal environment. Additional files loaded by that trusted code are not recursively covered by the hash. Relative loads resolve in the snapshot directory. Review any absolute dependencies separately. There is no implicit reload or workspace discovery.
 
 Limits: input 64 KiB, combined process output 256 KiB, evaluation 10 seconds, 64 simultaneous definitions, 1–32 turns per microagent. These are host ceilings, not model options. POSIX process groups are stopped on timeout/abort; processes that deliberately escape the group are outside this guarantee. Unconfirmed cleanup is reported as unknown.
 
@@ -80,7 +73,7 @@ Examples inside the chat:
 Host flags select executables; the model never selects binaries or arbitrary verifier argv:
 
 ```sh
-node dist/index.js chat --lisp-config agents.lisp --trust-lisp-sha256 REVIEWED_SHA256 \
+modkh chat --lisp-config experiments/presets/formal.lisp --trust-lisp-sha256 REVIEWED_SHA256 \
   --java /path/to/java --tla-jar /path/to/tla2tools.jar --lean /path/to/lean
 ```
 

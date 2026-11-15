@@ -19,10 +19,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 26
+      - name: Linuxの実試験依存
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sbcl build-essential
+      - name: macOSの実試験依存
+        if: runner.os == 'macOS'
+        run: brew install sbcl
+      - name: 実試験ランタイム確認
+        run: |
+          sbcl --version
+          sbcl --noinform --no-sysinit --no-userinit --non-interactive --eval '(require :asdf)' --eval '(assert (find-package :asdf))'
+          cc --version
+          make --version
       - name: 依存導入
         run: npm ci
       - name: 型検査とビルド
-        run: npm run build
+        run: |
+          npm run typecheck
+          npm run build
       - name: オフライン回帰テスト
         run: npm test
       - name: tarball 受け入れ(隔離インストール + 固定応答モデルの会話)

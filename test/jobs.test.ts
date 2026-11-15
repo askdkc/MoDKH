@@ -30,12 +30,10 @@ test('a background command returns immediately and its output is read later', as
   const dir = root();
   const { jobs, call } = registry(dir);
   try {
-    const started = Date.now();
-    const start = await call('run_command', { command: 'printf ONE; sleep 0.3; printf TWO', run_in_background: true });
-    const returned = Date.now() - started;
+    const start = await call('run_command', { command: 'printf ONE; while [ ! -f release ]; do sleep 0.02; done; printf TWO', run_in_background: true });
     assert.equal(start.status, 'ok');
-    // The whole point: the call does not wait for the command.
-    assert.ok(returned < 250, `returned after ${returned}ms`);
+    // Completion is impossible until the caller releases the child: no scheduling assumption.
+    assert.equal(fs.existsSync(path.join(dir, 'release')), false);
     const id = /\[job_id: (bash-[0-9a-f]{16})\]/.exec(start.output)?.[1];
     assert.ok(id, start.output);
 
@@ -46,12 +44,19 @@ test('a background command returns immediately and its output is read later', as
     assert.match(first.output, /ONE/);
 
     // A second read returns only what is new, not the whole log again.
-    await delay(400);
+    fs.writeFileSync(path.join(dir, 'release'), '');
     const second = await call('job_output', { job_id: id, wait: true, timeout_ms: 3000 });
     assert.match(second.output, /TWO/);
     assert.doesNotMatch(second.output, /ONE/, 'reads are incremental');
-    assert.match(second.output, /\[status: completed\]/);
-    assert.match(second.output, /\[exit code: 0\]/);
+    // Output wakes job_output before the process close event can arrive.
+    let settled = second;
+    const deadline = Date.now() + 5000;
+    while (settled.output.includes('[status: running]') && Date.now() < deadline) {
+      settled = await call('job_output', { job_id: id, wait: true, timeout_ms: Math.max(1, deadline - Date.now()) });
+      assert.doesNotMatch(settled.output, /ONE|TWO/, 'already consumed output is not repeated');
+    }
+    assert.match(settled.output, /\[status: completed\]/);
+    assert.match(settled.output, /\[exit code: 0\]/);
   } finally { await jobs.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

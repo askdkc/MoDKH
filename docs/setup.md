@@ -110,12 +110,12 @@ MoDKH側は取得したLemの `qlfile` を専用領域で `qlot install --no-dep
 Leanは[公式インストール手順](https://lean-lang.org/install/)、TLCのjarは[公式release](https://github.com/tlaplus/tlaplus/releases/latest)を使用します。取得した実行ファイルを指定します。
 
 ```sh
-node dist/index.js chat --lisp-config agents.lisp --trust-lisp-sha256 "$hash" \
+modkh chat --lisp-config experiments/presets/formal.lisp --trust-lisp-sha256 REVIEWED_SHA256 \
   --lean /absolute/path/to/lean \
   --java /absolute/path/to/java --tla-jar /absolute/path/to/tla2tools.jar
 ```
 
-`agents.lisp` の作成・確認と `$hash` の計算は[README](../README.md#lispで担当を登録する)の手順を先に実行します。現在のLean結果は成功終了でも `accepted / unverified`。TLCの成功は指定した有限モデルに限定されます。
+[プリセットの手順](presets.md)で `formal.lisp` を確認し、そのSHA-256を `REVIEWED_SHA256` に指定します。現在のLean結果は成功終了でも `accepted / unverified`。TLCの成功は指定した有限モデルに限定されます。
 
 CL/Svelteの実WASMは未同梱であり、Emscriptenを入れるだけでは有効になりません。強いOS検証隔離も未提供です。[機能ごとの検証状況](modkh-verification.md)
 

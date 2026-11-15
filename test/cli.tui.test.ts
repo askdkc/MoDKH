@@ -71,7 +71,7 @@ test('public CLI terminal path: logo → completion → seven providers → conn
     });
   };
   try {
-    await wait('何を調べますか'); assert.match(output, /██████/); assert.match(output, /MODKH/);
+    await wait('何を調べますか'); assert.match(output, /██████/); assert.match(output, /MoDKH  ·  Coding Harness/);
     send('/conn'); await wait('Commands');
     send('\r'); await wait('Hermes Agent');
     for (const label of ['OpenAI', 'OpenCode', 'Ollama Local', 'Ollama Cloud', 'OpenRouter', 'Infron', 'Hermes Agent']) assert.ok(output.slice(start).includes(label), label);

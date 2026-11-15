@@ -33,6 +33,7 @@ export function tlsConfiguration(lib: string): string {
 (cl+ssl/config:define-libcrypto-path ${JSON.stringify(fs.realpathSync(path.join(lib, 'libcrypto.dylib')))})
 (cl+ssl/config:define-libssl-path ${JSON.stringify(fs.realpathSync(path.join(lib, 'libssl.dylib')))})
 (let ((*standard-output* *error-output*) (*trace-output* *error-output*))
+  (ql:quickload "cl+ssl" :silent t)
   (asdf:load-system "cl+ssl" :force t))
 `;
 }
