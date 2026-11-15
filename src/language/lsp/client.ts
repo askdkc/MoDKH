@@ -69,6 +69,7 @@ export class LspServer {
   private readonly open = new Map<string, OpenState>();
   private starting?: Promise<void>;
   private disposed = false;
+  private disposal?: Promise<void>;
   private selectedEncoding: 'utf-16' | 'utf-8' | 'utf-32' = 'utf-16';
   /** Pull-diagnostics support, announced by the server's capabilities rather than a version string. */
   private pullDiagnostics = false;
@@ -96,6 +97,7 @@ export class LspServer {
     const child = spawn(this.options.command, [...this.options.args], {
       cwd: this.options.root,
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
       env: { ...(this.options.inheritEnv === false ? {} : process.env), NO_COLOR: '1', ...this.options.env },
     }) as ChildProcessWithoutNullStreams;
     this.child = child;
@@ -156,7 +158,7 @@ export class LspServer {
       this.pullDiagnostics = provider !== undefined && provider !== null;
       const encoding = this.capabilities['positionEncoding'];
       this.selectedEncoding = encoding === 'utf-8' || encoding === 'utf-32' ? encoding : 'utf-16';
-      connection.sendNotification('initialized', {});
+      await connection.sendNotification('initialized', {});
     } catch (e) {
       const detail = stderr.trim().split('\n').slice(-3).join(' ');
       await (stopping ?? this.dispose());
@@ -222,13 +224,13 @@ export class LspServer {
     state.notified = false;
     this.open.set(file, state);
     if (existing) {
-      connection.sendNotification('textDocument/didChange', {
+      await connection.sendNotification('textDocument/didChange', {
         textDocument: { uri: pathToFileURL(file).href, version: state.version },
         contentChanges: [{ text }],
       });
       return state;
     }
-    connection.sendNotification('textDocument/didOpen', {
+    await connection.sendNotification('textDocument/didOpen', {
       textDocument: { uri: pathToFileURL(file).href, languageId: this.id === 'tailwind' ? (languageForPath(file)?.id === 'tsx' ? 'typescriptreact' : languageForPath(file)?.id ?? 'plaintext') : this.id, version: state.version, text },
     });
     return state;
@@ -311,8 +313,9 @@ export class LspServer {
     return this.connection;
   }
 
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
+  dispose(): Promise<void> { return this.disposal ??= this.stop(); }
+
+  private async stop(): Promise<void> {
     this.disposed = true;
     const connection = this.connection, child = this.child;
     this.connection = undefined; this.child = undefined; this.open.clear();
@@ -321,25 +324,28 @@ export class LspServer {
       // The writer may still flush a queued message, so its rejection stays observed but ignored.
       try { connection.dispose(); } catch { /* already gone */ }
     }
-    if (child && child.exitCode === null) {
-      // Stop the process and wait for it: returning early lets a queued protocol write land on a
-      // destroyed stream after the caller (or a test) has finished, which is an unhandled rejection.
-      const exited = new Promise<void>(resolve => {
-        if (child.exitCode !== null || child.signalCode !== null) { resolve(); return; }
-        child.once('exit', () => resolve());
-      });
-      child.kill('SIGTERM');
-      const deadline = setTimeout(() => child.kill('SIGKILL'), 1000);
-      try {
-        await Promise.race([exited, new Promise<void>(resolve => setTimeout(resolve, 3000))]);
-      } finally {
-        clearTimeout(deadline);
+    let cleanupUnknown = false;
+    if (child?.pid && process.platform !== 'win32') {
+      const pid = child.pid;
+      const alive = () => { try { process.kill(-pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code !== 'ESRCH'; } };
+      const stop = (signal: NodeJS.Signals) => { try { process.kill(-pid, signal); } catch { /* checked below */ } };
+      stop('SIGTERM');
+      const started = Date.now();
+      while (alive() && Date.now() - started < 3000) {
+        if (Date.now() - started >= 1000) stop('SIGKILL');
+        await new Promise(resolve => setTimeout(resolve, 20));
       }
+      cleanupUnknown = alive();
+    } else if (child?.pid && child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGKILL');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      cleanupUnknown = child.exitCode === null && child.signalCode === null;
     }
     // Pipes are closed only after the process is gone; nothing can write into them afterwards.
     child?.stdin.destroy();
     child?.stdout.destroy();
     child?.stderr.destroy();
+    if (cleanupUnknown) throw new Error(`${this.id}: process-group cleanup unknown`);
   }
 }
 

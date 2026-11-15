@@ -1,10 +1,11 @@
 {
+  "baseRevision": "f3af9d9bd2308957a8a167c47f5e0f38eb3e3839",
   "before": {
     "summary": {
-      "tests": 414,
-      "pass": 353,
-      "fail": 58,
-      "skipped": 3
+      "tests": 427,
+      "pass": 360,
+      "fail": 59,
+      "skipped": 8
     },
     "failures": [
       {
@@ -213,6 +214,11 @@
         "code": "'EPERM'"
       },
       {
+        "name": "pool reuses one server per key and caps concurrent servers",
+        "error": "'write EPIPE'",
+        "code": "'EPIPE'"
+      },
+      {
         "name": "provider reasoning is forwarded as its own event, separate from the answer text",
         "error": "'listen EPERM: operation not permitted 127.0.0.1'",
         "code": "'EPERM'"
@@ -297,12 +303,46 @@
         "error": "'listen EPERM: operation not permitted 127.0.0.1'",
         "code": "'EPERM'"
       }
+    ],
+    "skips": [
+      {
+        "name": "real Lean transitive sorry remains unverified even when its consumer is accepted",
+        "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
+      },
+      {
+        "name": "real Lean sorry cannot be certified by compiler acceptance",
+        "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
+      },
+      {
+        "name": "real Lean false theorem cannot be certified by compiler acceptance",
+        "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
+      },
+      {
+        "name": "real Lean custom axiom cannot be certified by compiler acceptance",
+        "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
+      },
+      {
+        "name": "real Lean generated axiom cannot be certified by compiler acceptance",
+        "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
+      },
+      {
+        "name": "real Lean true theorem is accepted/unverified",
+        "reason": "Official Lean executable not supplied"
+      },
+      {
+        "name": "real TLC good.cfg",
+        "reason": "Java/TLC host settings not supplied"
+      },
+      {
+        "name": "real TLC bad.cfg",
+        "reason": "Java/TLC host settings not supplied"
+      }
     ]
   },
   "after": {
     "summary": {
-      "tests": 427,
-      "pass": 361,
+      "tests": 435,
+      "pass": 369,
       "fail": 58,
       "skipped": 8
     },
@@ -597,9 +637,59 @@
         "error": "'listen EPERM: operation not permitted 127.0.0.1'",
         "code": "'EPERM'"
       }
+    ],
+    "skips": [
+      {
+        "name": "real Lean transitive sorry remains unverified even when its consumer is accepted",
+        "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
+      },
+      {
+        "name": "real Lean sorry cannot be certified by compiler acceptance",
+        "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
+      },
+      {
+        "name": "real Lean false theorem cannot be certified by compiler acceptance",
+        "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
+      },
+      {
+        "name": "real Lean custom axiom cannot be certified by compiler acceptance",
+        "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
+      },
+      {
+        "name": "real Lean generated axiom cannot be certified by compiler acceptance",
+        "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
+      },
+      {
+        "name": "real Lean true theorem is accepted/unverified",
+        "reason": "Official Lean executable not supplied"
+      },
+      {
+        "name": "real TLC good.cfg",
+        "reason": "Java/TLC host settings not supplied"
+      },
+      {
+        "name": "real TLC bad.cfg",
+        "reason": "Java/TLC host settings not supplied"
+      }
     ]
   },
   "newFailures": [],
-  "removedFailures": [],
-  "changedCauses": []
+  "removedFailures": [
+    {
+      "name": "pool reuses one server per key and caps concurrent servers",
+      "error": "'write EPIPE'",
+      "code": "'EPIPE'"
+    }
+  ],
+  "changedCauses": [],
+  "appliedRepository": {
+    "path": "/Users/dkc/Sites/Src/mdkh",
+    "summary": {
+      "tests": 435,
+      "pass": 369,
+      "fail": 58,
+      "skipped": 8
+    },
+    "failureNamesAndCausesMatchIsolatedRun": true
+  }
 }

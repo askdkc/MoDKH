@@ -204,3 +204,27 @@ test('malformed/unchanged pull reports do not invent clean diagnostics; valid em
     } finally { await live.dispose(); }
   }
 });
+
+
+test('disposing an LSP stops its owned child process group and shares completion', async () => {
+  const pidFile=path.join(root,'owned-child.pid');
+  const live=new LspServer({id:'commonlisp',command:process.execPath,args:[fixture],root,requestTimeoutMs:3000,env:{FAKE_LSP_MODE:'owned-child',FAKE_LSP_CHILD_PID:pidFile}});
+  try {
+    await live.start();
+    const pid=Number(fs.readFileSync(pidFile,'utf8'));assert.ok(pid>1);assert.doesNotThrow(()=>process.kill(pid,0));
+    const first=live.dispose();assert.equal(live.dispose(),first);await first;
+    assert.throws(()=>process.kill(pid,0),/ESRCH/);
+  } finally {await live.dispose();}
+});
+
+test('pool eviction preserves unknown cleanup instead of silently claiming settlement', async () => {
+ const pool=new ServerPool({maxRunning:1,requestTimeoutMs:3000});
+ const first=await pool.acquire({root,language:languageById('typescript')!,configDigest:'first'},{command:process.execPath,args:[fixture]});
+ const stop=first.server.dispose.bind(first.server);
+ first.server.dispose=async()=>{throw new Error('fixture cleanup unknown');};
+ try {
+  await pool.acquire({root,language:languageById('typescript')!,configDigest:'second'},{command:process.execPath,args:[fixture]});
+  await assert.rejects(pool.settled(),/cleanup unknown/);
+  await assert.rejects(pool.disposeAll(),/cleanup unknown/);
+ } finally {await stop();}
+});

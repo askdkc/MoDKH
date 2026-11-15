@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { executeBounded, privateEnvironment } from '../lisp/runtime.ts';
+import { installCommonLisp, reusableCommonLisp } from './commonlisp-install.ts';
 import { installPhpantom } from './native.ts';
 import { hostPlatform } from './platform.ts';
 import { probeTypescript, recommendedTypescript } from './typescript-capability.ts';
@@ -89,8 +90,9 @@ async function withLock<T>(target: string, action: () => Promise<T>): Promise<T>
       await new Promise(resolve => setTimeout(resolve, 250));
     }
   }
+  const heartbeat = setInterval(() => { try { const now = new Date(); fs.utimesSync(lock, now, now); } catch { /* action reports its own failure */ } }, 30000);
   try { return await action(); }
-  finally { fs.rmSync(lock, { recursive: true, force: true }); }
+  finally { clearInterval(heartbeat); fs.rmSync(lock, { recursive: true, force: true }); }
 }
 
 async function run(command: string, args: readonly string[], signal?: AbortSignal): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -203,7 +205,7 @@ export function resolveServer(language: LanguageDefinition, options: { disabled?
   if (options.server) return { status: 'ready', command: options.server.command, args: [...(options.server.args ?? language.lsp?.args ?? [])] };
   const state = readState();
   const managed = state.servers[language.id];
-  if (managed && isExecutable(managed.command)) return { status: 'ready', command: managed.command, args: managed.args, installed: true };
+  if (managed && isExecutable(managed.command) && (language.id !== 'commonlisp' || reusableCommonLisp(managed.command, managed.digest))) return { status: 'ready', command: managed.command, args: managed.args, installed: true };
   const recipe = language.install;
   if (recipe?.kind === 'host') {
     for (const candidate of recipe.candidates) {
@@ -229,18 +231,20 @@ export async function ensureInstalled(language: LanguageDefinition, options: { a
   const existing = resolveServer(language, options);
   if (existing.status === 'ready') return { status: 'ready' };
   if (existing.status === 'disabled') return { status: 'unavailable', detail: existing.detail };
-  if (language.install?.kind === 'host' && language.id !== 'php') {
+  if (language.install?.kind === 'host' && !['php', 'commonlisp'].includes(language.id)) {
     return { status: 'unavailable', detail: `${language.install.requirement ?? 'サーバーがありません'}（自動取得は行いません）` };
   }
   if (!options.autoInstall) return { status: 'unavailable', detail: '自動導入は無効です' };
   const remembered = readState().failures?.[language.id];
   if (remembered && (remembered.retryable === false || Date.now() - Date.parse(remembered.at) < 60000)) return { status: 'unavailable', detail: `前回の導入失敗: ${remembered.reason}` };
   try {
-    if (language.id === 'php') {
+    if (language.id === 'php' || language.id === 'commonlisp') {
       const target = serverRoot(language);
       await withLock(target, async () => {
         if (resolveServer(language, {}).status === 'ready') return;
-        const result = await installPhpantom(target, options.signal);
+        const prior = readState().failures?.[language.id];
+        if (prior && (prior.retryable === false || Date.now() - Date.parse(prior.at) < 60000)) throw new Error(`Previous install failed: ${prior.reason}`);
+        const result = await (language.id === 'php' ? installPhpantom : installCommonLisp)(target, options.signal);
         const state = readState();
         state.servers[language.id] = { command: result.command, args: [], version: result.version, digest: result.digest, installedAt: new Date().toISOString() };
         delete state.failures?.[language.id]; writeState(state);

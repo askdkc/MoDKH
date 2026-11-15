@@ -52,7 +52,8 @@ export class ServerPool {
   private readonly options: Required<PoolOptions>;
   /** Stops started by capacity eviction; they are awaited by settled()/disposeAll(). */
   private readonly pending = new Set<Promise<void>>();
-  private disposing = false;
+  private disposal?: Promise<void>;
+  private readonly cleanupFailures: unknown[] = [];
 
   constructor(options: PoolOptions = {}) {
     this.options = {
@@ -108,7 +109,7 @@ export class ServerPool {
     if (!oldest) return;
     this.entries.delete(oldest.key);
     // Stopping is awaited later: an untracked dispose lets protocol writes outlive the caller.
-    this.pending.add(oldest.server.dispose().catch(() => undefined));
+    this.pending.add(oldest.server.dispose().catch(error => { this.cleanupFailures.push(error); }));
   }
 
   /** Resolves once every detached stop has completed; used before a caller reports closure. */
@@ -118,6 +119,7 @@ export class ServerPool {
       await Promise.all(current);
       for (const entry of current) this.pending.delete(entry);
     }
+    if (this.cleanupFailures.length) throw new AggregateError(this.cleanupFailures, 'LSP cleanup unknown');
   }
 
   /** Stop servers that nobody used recently; called opportunistically between requests. */
@@ -129,14 +131,16 @@ export class ServerPool {
     }
   }
 
-  async disposeAll(): Promise<void> {
-    if (this.disposing) { await this.settled(); return; }
-    this.disposing = true;
+  disposeAll(): Promise<void> { return this.disposal ??= this.stopAll(); }
+
+  private async stopAll(): Promise<void> {
     const entries = [...this.entries.values()];
     this.entries.clear();
-    await Promise.all(entries.map(entry => entry.server.dispose()));
+    const results = await Promise.allSettled(entries.map(entry => entry.server.dispose()));
+    for (const result of results) if (result.status === 'rejected') this.cleanupFailures.push(result.reason);
     await this.settled();
   }
+
 }
 
 export function realRoot(root: string): string {

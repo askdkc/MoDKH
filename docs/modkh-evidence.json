@@ -1,13 +1,13 @@
 {
-  "baseRevision": "0285cd0ddace3ab317b76953586e3f7c839fe0f3",
+  "baseRevision": "f3af9d9bd2308957a8a167c47f5e0f38eb3e3839",
   "identity": {
     "source": {
-      "sha256": "c4e32bc7d426a2d602f429be414a3c99d79e1cfe78e762772ca45c6d344e0810",
-      "files": 147
+      "sha256": "844d5fe0c6d919673e0d44fb492f3829be86c8bfbb6ad5c11a38000bdac72e61",
+      "files": 148
     },
     "artifact": {
-      "sha256": "75d885d0bd7e8996f46ec1f291adf889d31cd606d261bd6a32337e490fba8d54",
-      "files": 168
+      "sha256": "4b4a77c8ce94b7073b29b164d06f64317d59962c4018117f946bb61c1e21931b",
+      "files": 170
     }
   },
   "environment": {
@@ -18,23 +18,26 @@
     "sbcl": "2.6.10"
   },
   "baseline": {
-    "tests": 373,
-    "pass": 315,
-    "fail": 58,
-    "skip": 0
+    "tests": 427,
+    "pass": 360,
+    "fail": 59,
+    "skipped": 8
   },
   "finalSuite": {
-    "tests": 427,
-    "pass": 361,
+    "tests": 435,
+    "pass": 369,
     "fail": 58,
-    "skip": 8,
-    "newFailingTestNames": [],
-    "failureNamesAndCausesMatchCurrentBaseline": true,
-    "comparisonFile": "modkh-failure-comparison.json"
+    "skipped": 8
+  },
+  "relatedSuite": {
+    "tests": 94,
+    "passCount": 85,
+    "fail": 1,
+    "skipped": 8
   },
   "typecheck": "passed",
-  "build": "passed",
-  "builtChatEntry": "passed",
+  "build": "passed; 12 grammars, 17 skills",
+  "builtChatEntry": "passed; scripted model, real SBCL and Node verifier",
   "mutations": [
     {
       "name": "acceptance-reuse",
@@ -122,58 +125,7 @@
       ]
     }
   ],
-  "completion": "partial",
-  "installedToUserRuntime": false,
-  "committed": false,
-  "pushed": false,
-  "diffCheck": "passed",
-  "copiedSourceIdentityMatched": true,
-  "typecheckAfterSourceCopy": "passed",
-  "typescriptFollowup": {
-    "tests": 4,
-    "pass": 4,
-    "realTypescriptSemanticAPI": "passed",
-    "npmAndLspTransport": "fixtures",
-    "realRegistryInstall": "not run; registry DNS unavailable",
-    "command": "node --test test/language.typescript-capability.test.ts test/language.install-fallback.test.ts"
-  },
-  "previousIterationIdentity": {
-    "source": {
-      "sha256": "87d83aa376a0af9b589f9b1f7e3b7339774bf4d0639e5be6b0524bd384ab7863",
-      "files": 146
-    },
-    "artifact": {
-      "sha256": "264e5853ac412a5fa24188f528d2abbc8e61420fa6d8b6409ece57691f0e7141",
-      "files": 166
-    }
-  },
-  "currentIterationBaseline": {
-    "tests": 414,
-    "pass": 353,
-    "fail": 58,
-    "skip": 3
-  },
-  "relatedSuite": {
-    "tests": 86,
-    "pass": 77,
-    "fail": 1,
-    "skip": 8,
-    "failure": "existing language.integration HTTP listener EPERM"
-  },
-  "currentIterationChangedFiles": [
-    "scripts/modkh-language-probe.mjs",
-    "scripts/modkh-mutation-check.mjs",
-    "src/language/commonlisp-reader.ts",
-    "src/language/lsp/client.ts",
-    "src/subagents/verification.ts",
-    "src/tools/language.ts",
-    "test/fixtures/fake-lsp.mjs",
-    "test/formal.lean-real.test.ts",
-    "test/language.commonlisp-reader.test.ts",
-    "test/language.lsp.test.ts",
-    "test/lisp.edit-service.test.ts"
-  ],
-  "currentIterationRealTypeScript": {
+  "realTypeScript": {
     "platform": "darwin",
     "arch": "arm64",
     "id": "typescript",
@@ -182,7 +134,7 @@
     "sourceSha256": "4aa3fe450c06cafeebb654ff7df7a3fac2be81c334b0881798fc7a21391650ae",
     "initialized": true,
     "status": "passed",
-    "startedAt": "2026-11-15T12:33:00.349Z",
+    "startedAt": "2026-11-15T13:05:10.277Z",
     "capabilities": {
       "textDocumentSync": 2,
       "completionProvider": {
@@ -295,7 +247,7 @@
       "status": "observed",
       "diagnostics": [
         {
-          "path": "/private/var/folders/ny/r9_lhz_j37334k1vrp1f0pgm0000gn/T/modkh-real-lsp-jA8Grf/input.ts",
+          "path": "/private/var/folders/ny/r9_lhz_j37334k1vrp1f0pgm0000gn/T/modkh-real-lsp-WcHYjT/input.ts",
           "line": 1,
           "column": 7,
           "endLine": 1,
@@ -311,81 +263,132 @@
     "hover": "\n```typescript\nfunction add(a: number, b: number): number\n```\n",
     "definition": [
       {
-        "file": "/private/var/folders/ny/r9_lhz_j37334k1vrp1f0pgm0000gn/T/modkh-real-lsp-jA8Grf/input.ts",
+        "file": "/private/var/folders/ny/r9_lhz_j37334k1vrp1f0pgm0000gn/T/modkh-real-lsp-WcHYjT/input.ts",
         "line": 2,
         "character": 10
       }
     ],
     "cleanup": "settled",
-    "finishedAt": "2026-11-15T12:33:01.325Z"
+    "finishedAt": "2026-11-15T13:05:10.966Z"
   },
-  "currentIterationBlockers": {
-    "CL": "no CL-LSP/Roswell; npm registry DNS unavailable; no cold install or CL-LSP definition/diagnostic measurement",
-    "grammars": "no CL/Svelte WASM, Emscripten, tree-sitter CLI or wasm-ld; actual grammar paths remain unimplemented",
-    "isolation": "sandbox-exec rejected sandbox_apply: Operation not permitted; no strong OS isolation implemented",
-    "formal": "Lean absent; java exists but no Java Runtime; real Lean/TLC tests skipped",
-    "linux": "no Linux execution environment used",
-    "model": "scripted model only; autonomous real model delegation not run"
+  "realCommonLispInstall": {
+    "os": "darwin",
+    "arch": "arm64",
+    "outcome": {
+      "status": "error",
+      "detail": "Common Lisp release-metadata: TypeError: fetch failed (ENOTFOUND: getaddrinfo ENOTFOUND api.github.com)"
+    },
+    "receipt": {
+      "platform": {
+        "os": "darwin",
+        "arch": "arm64",
+        "target": "aarch64-apple-darwin"
+      },
+      "startedAt": "2026-11-15T12:57:04.920Z",
+      "stages": [
+        {
+          "name": "compiler-capability",
+          "state": "passed",
+          "receipt": {
+            "state": "exited",
+            "exitCode": 0,
+            "signal": null,
+            "stdout": "Apple clang version 21.0.0 (clang-2100.4.1.1)\nTarget: arm64-apple-darwin27.2.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+            "stderr": "2026-11-15 21:57:05.300 xcodebuild[59096:28074239]  DVTFilePathFSEvents: Failed to start fs event stream.\n2026-11-15 21:57:05.502 xcodebuild[59096:28074238] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 \"Input/output error\". Using NSCachesDirectory instead.\n",
+            "inputDigest": "33445ff5af165ef3a74beaecc67c5353682b1dfa7d026356db84b415b05fb823",
+            "cleanup": "settled"
+          }
+        },
+        {
+          "name": "release-metadata",
+          "state": "failed",
+          "detail": "TypeError: fetch failed (ENOTFOUND: getaddrinfo ENOTFOUND api.github.com)"
+        }
+      ],
+      "revisions": {},
+      "status": "failed",
+      "provenance": "Roswell release verified against official SHA256; Git checkouts recorded by commit. Quicklisp transitive downloads are upstream-managed, not independently authenticated by this installer.",
+      "finishedAt": "2026-11-15T12:57:06.586Z"
+    },
+    "privateRoot": "/var/folders/ny/r9_lhz_j37334k1vrp1f0pgm0000gn/T/modkh-real-cl-install-LK242y",
+    "sourceNote": "Actual cold attempt preceded the final provenance wording-only correction. No post-DNS stages executed."
   },
-  "previousFocused": {
-    "tests": 37,
-    "pass": 34,
-    "fail": 0,
-    "skip": 3
-  },
-  "previousRealServers": [
+  "skips": [
     {
-      "id": "typescript",
-      "platform": "darwin",
-      "arch": "arm64",
-      "binarySha256": "f314b7e050232a1b619f21955718e2259f685b7e8f85def3149e5b28c7737ca0",
-      "sourceSha256": "4aa3fe450c06cafeebb654ff7df7a3fac2be81c334b0881798fc7a21391650ae",
-      "status": "passed",
-      "initialized": true,
-      "startedAt": "2026-11-15T12:08:55.834Z",
-      "finishedAt": "2026-11-15T12:08:56.524Z",
-      "cleanup": "settled",
-      "packageVersion": "4.3.3"
+      "name": "real Lean transitive sorry remains unverified even when its consumer is accepted",
+      "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
     },
     {
-      "id": "tailwind",
-      "platform": "darwin",
-      "arch": "arm64",
-      "binarySha256": "7ce7728c88a5282019034f0a0f1971f653d1392bec8190cafb1e9563c8d3dc40",
-      "sourceSha256": "0026a9bbb0a5ee4363ee054929d249a83f58a908a0197db26a660e8f78515e44",
-      "status": "unverified",
-      "initialized": true,
-      "startedAt": "2026-11-15T12:08:55.829Z",
-      "finishedAt": "2026-11-15T12:08:57.296Z",
-      "cleanup": "settled",
-      "packageVersion": "0.14.29",
-      "blocker": "Bundled watcher failed: Error starting FSEvents stream; no matching Tailwind project and hover=null"
+      "name": "real Lean sorry cannot be certified by compiler acceptance",
+      "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
     },
     {
-      "id": "svelte",
-      "platform": "darwin",
-      "arch": "arm64",
-      "binarySha256": "8a443ea5f74b175785a3d3bdf45e85c4c2055e910864e0bd44ae48f9d887c402",
-      "sourceSha256": "b453c6617b0d0489f7a1d8638d5e81f6d20c1a747b7863ddd2841b9c6047eb94",
-      "status": "initialized-only",
-      "initialized": true,
-      "startedAt": "2026-11-15T12:08:55.848Z",
-      "finishedAt": "2026-11-15T12:08:57.459Z",
-      "cleanup": "settled",
-      "packageVersion": "0.16.5"
+      "name": "real Lean false theorem cannot be certified by compiler acceptance",
+      "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
     },
     {
-      "id": "php",
-      "platform": "darwin",
-      "arch": "arm64",
-      "binarySha256": "d037cdf09782404cd8becdb969d106f0689d90959e08ff5040ca4b5f33fe3bd5",
-      "sourceSha256": "5ef72d0ac218ed65e70b8ab3077c238931001d4f63f4e42d3b65d699c6c22c23",
-      "status": "initialized-only",
-      "initialized": true,
-      "startedAt": "2026-11-15T12:08:55.889Z",
-      "finishedAt": "2026-11-15T12:08:56.009Z",
-      "cleanup": "settled"
+      "name": "real Lean custom axiom cannot be certified by compiler acceptance",
+      "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
+    },
+    {
+      "name": "real Lean generated axiom cannot be certified by compiler acceptance",
+      "reason": "Official Lean executable unavailable; real kernel/counterexample tests not run"
+    },
+    {
+      "name": "real Lean true theorem is accepted/unverified",
+      "reason": "Official Lean executable not supplied"
+    },
+    {
+      "name": "real TLC good.cfg",
+      "reason": "Java/TLC host settings not supplied"
+    },
+    {
+      "name": "real TLC bad.cfg",
+      "reason": "Java/TLC host settings not supplied"
     }
   ],
-  "previousBuiltIndexRoleDiscovery": "passed"
+  "changedFiles": [
+    "src/language/commonlisp-install.ts",
+    "src/language/install.ts",
+    "src/language/native.ts",
+    "src/language/lsp/client.ts",
+    "src/language/lsp/pool.ts",
+    "test/language.commonlisp-install.test.ts",
+    "test/language.lsp.test.ts",
+    "test/fixtures/fake-lsp.mjs"
+  ],
+  "completion": "partial",
+  "originalWorkingTreeModified": true,
+  "committed": false,
+  "pushed": false,
+  "blockers": {
+    "commonlisp": "release metadata DNS ENOTFOUND; later stages not run",
+    "grammars": "CL/Svelte actual WASM absent; no Emscripten/tree-sitter CLI; registry DNS unavailable",
+    "isolation": "strong OS isolation not implemented; prior sandbox_apply denied, not retried",
+    "formal": "Lean missing; java exists without Java Runtime; TLC host settings absent",
+    "linux": "No Linux execution used; cloud environment listing failed",
+    "model": "Real autonomous model delegation not run"
+  },
+  "diffCheck": "passed: git apply --check --whitespace=error against unchanged base",
+  "appliedTo": "/Users/dkc/Sites/Src/mdkh",
+  "appliedSourceAndTestsMatchVerifiedCopy": true,
+  "appliedVerification": {
+    "typecheck": "passed",
+    "build": "passed",
+    "sourceAndArtifactIdentityMatchesIsolatedCopy": true,
+    "relatedTests": {
+      "tests": 22,
+      "pass": 22,
+      "fail": 0
+    },
+    "builtChatEntry": "passed",
+    "fullSuite": {
+      "tests": 435,
+      "pass": 369,
+      "fail": 58,
+      "skipped": 8
+    },
+    "failureNamesAndCausesMatchIsolatedRun": true,
+    "diffCheck": "passed"
+  }
 }

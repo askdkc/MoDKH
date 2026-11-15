@@ -3,6 +3,8 @@
  * silent (no diagnostics), stale versions, and a crash mid-session.
  * Mode comes from FAKE_LSP_MODE; documents come from the client over stdio JSON-RPC.
  */
+import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 import { createMessageConnection, StreamMessageReader, StreamMessageWriter } from 'vscode-jsonrpc/node';
 
 const mode = process.argv[2] ?? process.env.FAKE_LSP_MODE ?? 'clean';
@@ -11,6 +13,10 @@ const connection = createMessageConnection(
   new StreamMessageWriter(process.stdout),
 );
 let crashed = false;
+if (mode === 'owned-child') {
+  const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+  fs.writeFileSync(process.env.FAKE_LSP_CHILD_PID, String(child.pid));
+}
 
 connection.onRequest('initialize', () => ({
   capabilities: {

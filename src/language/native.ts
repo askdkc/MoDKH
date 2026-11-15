@@ -5,7 +5,7 @@ import { hostPlatform, phpAsset, type ReleaseAsset } from './platform.ts';
 import { LspServer } from './lsp/client.ts';
 
 /** Reads only official release origins, with a hard body bound and bounded redirects. */
-async function download(url: string, max: number, signal?: AbortSignal): Promise<Buffer> {
+export async function download(url: string, max: number, signal?: AbortSignal): Promise<Buffer> {
   const allowed = new Set(['api.github.com', 'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com']);
   const controller = AbortSignal.any([AbortSignal.timeout(120000), ...(signal ? [signal] : [])]);
   for (let redirects = 0; redirects < 5; redirects++) {
