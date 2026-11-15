@@ -97,6 +97,8 @@ function summarizeArgs(args: Record<string, unknown>): string {
 
 export async function runChat(opts: ChatOptions): Promise<void> {
   const args = opts.args;
+  const verificationIsolation = args['verification-isolation'] ?? 'integrity-only';
+  if (verificationIsolation !== 'required' && verificationIsolation !== 'integrity-only') throw new Error('--verification-isolation must be required or integrity-only');
   const makeModel: typeof buildModelFromRef = (ref, ...rest) => {
     if (args['lisp-config'] && ref.startsWith('hermes/')) throw new Error('MoDKH head cannot use remote server-side tools outside host authority');
     return (opts.modelFactory ?? buildModelFromRef)(ref, ...rest);
@@ -213,7 +215,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   });
   const subagents = new SubagentService({
     manager, store, parent: session, root: cwd, tools: [...tools, ...languageTools(language), ...formalTools({ lean: args.lean, java: args.java, tlaJar: args['tla-jar'] })], approval,
-    settings: agentSettings.settings, unavailable: agentSettings.unavailable,
+    settings: agentSettings.settings, unavailable: agentSettings.unavailable, verificationIsolation,
     connection: (configured) => {
       const ref = configured ?? modelId;
       if (!ref) throw new Error('/connect でモデルを接続してください');

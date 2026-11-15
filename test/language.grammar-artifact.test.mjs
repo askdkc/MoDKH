@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { buildGrammars, GRAMMARS } from '../scripts/build-grammars.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
@@ -62,6 +63,28 @@ test('packed artifact loads its own real WASM and rejects tampering without pois
       assert.equal((await verifyGrammar('svelte')).ok,false);
     `;
     run(process.execPath,['--input-type=module','-e',script]);
+    // Exercise packaged presets with real SBCL and use the packaged entry in actual child turns.
+    run(process.execPath,['--input-type=module','-e',String.raw`
+      import fs from 'node:fs';import assert from 'node:assert/strict';
+      import {loadLispConfiguration,REQUIRED_SKILLS} from './package/dist/lisp/config.js';
+      import {sha256} from './package/dist/lisp/runtime.js';
+      import {readBundledSkill} from './package/dist/agent/bundled-skills.js';
+      for(const language of ['php','common-lisp','js','ts','svelte','tailwindcss','html','css','formal']) {
+        const file='./package/experiments/presets/'+language+'.lisp';
+        const config=await loadLispConfiguration(file,sha256(fs.readFileSync(file)));
+        assert.ok(config.entries.length>0);
+        for(const role of config.entries)for(const skill of REQUIRED_SKILLS)assert.ok(role.definition.system.includes(readBundledSkill(skill,'SKILL.md',false)));
+        if(language==='formal')assert.deepEqual(config.entries.map(e=>e.descriptor.title),['前鬼','後鬼']);
+      }
+    `]);
+    const env={...process.env,TMPDIR:root,
+      MODKH_TEST_CHAT:pathToFileURL(path.join(root,'package/dist/cli/chat.js')).href,
+      MODKH_TEST_FIXED:pathToFileURL(path.join(root,'package/dist/model/fixed.js')).href,
+      MODKH_TEST_PACKAGE_ROOT:path.join(root,'package')};
+    delete env.NODE_TEST_CONTEXT;
+    const entry=spawnSync(process.execPath,['--test',path.join(repo,'test/lisp.cli.test.ts')],{cwd:root,env,encoding:'utf8',timeout:30000});
+    assert.equal(entry.status,0,entry.stdout+'\n'+entry.stderr);
+
     const wasm=path.join(root,'package/dist/language/grammars/tree-sitter-typescript.wasm');
     const bytes=fs.readFileSync(wasm);bytes[bytes.length-1]^=1;fs.writeFileSync(wasm,bytes);
     run(process.execPath,['--input-type=module','-e',String.raw`

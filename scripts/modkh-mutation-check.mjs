@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const output=process.argv[2];if(!output)throw new Error('Output JSON path required');
 const cases=[
+  ['required-os-isolation','src/subagents/verification.ts',"if (this.isolationRequirement === 'required')",'if (false)','test/lisp.edit-service.test.ts'],
   ['acceptance-reuse','src/subagents/verification.ts',"if (this.consumed) throw new ToolError('STALE', 'Acceptance receipts are single-use; create a fresh snapshot');",';','test/lisp.edit-service.test.ts'],
   ['restored-verifier','src/subagents/verification.ts','current.stat.ctimeMs === original.stat.ctimeMs && current.stat.mtimeMs === original.stat.mtimeMs &&','', 'test/lisp.edit-service.test.ts'],
   ['pull-report-shape','src/language/lsp/client.ts','if (report && Array.isArray(report.items))','if (report && (report.items ??= []))','test/language.lsp.test.ts'],

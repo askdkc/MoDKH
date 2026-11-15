@@ -28,6 +28,8 @@ export interface SubagentOptions {
   connection(model?: string): Connection;
   settings?: Record<string, AgentSetting>;
   unavailable?: boolean;
+  /** Host policy only; neither plugin definitions nor child requests may downgrade it. */
+  verificationIsolation?: 'integrity-only' | 'required';
   progress?(message: string): void;
 }
 const activeRoots = new Set<string>();
@@ -153,7 +155,7 @@ export class SubagentService {
         if (definition.requireAllTools && definition.tools.some(name => !effectiveTools.some(t => t.name === name))) throw new ToolError('NOT_EXECUTED', 'Required tools exceed host/user ceiling');
         if (definition.workflow === 'edit-verify') {
           if (!tools.some(t => t.name === 'run_command')) throw new ToolError('DENIED', 'Fixed verification requires host command authority');
-          edit = new EditVerification(this.opts.root, definition, request.targetPaths);
+          edit = new EditVerification(this.opts.root, definition, request.targetPaths, this.opts.verificationIsolation);
           effectiveTools = edit.tools();
           child.append({ role: 'user', content: `Exact editable targetPaths: ${JSON.stringify(request.targetPaths)}` });
         } else if (request.targetPaths) throw new ToolError('INVALID_ARGS', 'targetPaths applies only to edit-verify');

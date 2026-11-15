@@ -19,6 +19,12 @@ The trusted Lisp file is **arbitrary OS code**, not sandboxed configuration. Its
 
 Limits: input 64 KiB, combined process output 256 KiB, evaluation 10 seconds, 64 simultaneous definitions, 1–32 turns per microagent. These are host ceilings, not model options. POSIX process groups are stopped on timeout/abort; processes that deliberately escape the group are outside this guarantee. Unconfirmed cleanup is reported as unknown.
 
+## Verification isolation policy
+
+`--verification-isolation required` is a host-owned requirement for delegated edit acceptance. Plugins, child prompts and skill contents cannot lower it. There is currently no verified OS enforcement backend: this mode returns `not-executed`, `isolation: unavailable`, and a structured `not-started` receipt, without launching the fixed checker or applying the edited snapshot. The receipt digest includes the isolation policy. This is refusal when isolation is unavailable, not an implementation of OS isolation.
+
+The compatibility default is `--verification-isolation integrity-only`. It retains the existing snapshot/digest/freshness checks and explicitly reports `private-snapshot-not-os-sandbox`; it is suitable only for trusted checker/input code. It does not protect host secrets or prevent arbitrary OS writes. No mode currently reports `os-enforced`. This option does not sandbox evaluation of the trusted Lisp configuration itself.
+
 ## Configuration API
 
 ```lisp

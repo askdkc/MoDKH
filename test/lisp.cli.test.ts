@@ -8,7 +8,7 @@ const chat = process.env.MODKH_TEST_CHAT ?? new URL('../src/cli/chat.ts',import.
 const fixed = process.env.MODKH_TEST_FIXED ?? new URL('../src/model/fixed.ts',import.meta.url).href;
 const step=(id:string,name:string,args:Record<string,unknown>)=>[{type:'tool-call',call:{id,name,args}},{type:'finish',stopReason:'tool-calls'}];
 const done=[{type:'text-delta',text:'integrated'},{type:'finish',stopReason:'stop'}];
-test('real chat entry: trusted Lisp head delegates bounded edit and receives independent Node receipt',async()=>{
+for (const isolation of ['integrity-only', 'required']) test(isolation === 'required' ? 'real chat entry: required isolation returns not-executed receipt to head' : 'real chat entry: trusted Lisp head delegates bounded edit and receives independent Node receipt',async()=>{
   const root=fs.realpathSync(temporaryDirectory('modkh-cli-entry-')); const home=path.join(root,'home');fs.mkdirSync(home);
   fs.mkdirSync(path.join(root,'src'));fs.mkdirSync(path.join(root,'test'));
   fs.writeFileSync(path.join(root,'src/add.mjs'),'export const add=(a,b)=>a-b;');
@@ -23,13 +23,13 @@ test('real chat entry: trusted Lisp head delegates bounded edit and receives ind
   const head=[step('list','list_subagents',{}),step('outline-delegate','run_subagent',{pluginId:'micro-js-outline',task:'Inspect src/add.mjs'}),step('delegate','run_subagent',{pluginId:'micro-js-edit',task:'Fix add',targetPaths:['src/add.mjs']}),done];
   const observer=[step('outline','code_outline',{path:'src/add.mjs'}),done];
   const child=[step('read','read_file',{path:'src/add.mjs'}),step('edit','edit_file',{path:'src/add.mjs',old_string:'a-b',new_string:'a+b'}),done];
-  const harness=`import {runChat} from ${JSON.stringify(chat)};import {FixedModel} from ${JSON.stringify(fixed)};import fs from 'node:fs';const head=new FixedModel(${JSON.stringify(head)}),observer=new FixedModel(${JSON.stringify(observer)}),child=new FixedModel(${JSON.stringify(child)});let count=0;await runChat({args:${JSON.stringify({cwd:root,model:'fixed/scripted','lisp-config':'agents.lisp','trust-lisp-sha256':sha256(source)})},modelFactory:()=>[head,observer,child][count++]});fs.writeFileSync(${JSON.stringify(path.join(root,'requests.json'))},JSON.stringify({head:head.requests,child:child.requests}));`;
+  const harness=`import {runChat} from ${JSON.stringify(chat)};import {FixedModel} from ${JSON.stringify(fixed)};import fs from 'node:fs';const head=new FixedModel(${JSON.stringify(head)}),observer=new FixedModel(${JSON.stringify(observer)}),child=new FixedModel(${JSON.stringify(child)});let count=0;await runChat({args:${JSON.stringify({cwd:root,model:'fixed/scripted','verification-isolation':isolation,'lisp-config':'agents.lisp','trust-lisp-sha256':sha256(source)})},modelFactory:()=>[head,observer,child][count++]});fs.writeFileSync(${JSON.stringify(path.join(root,'requests.json'))},JSON.stringify({head:head.requests,child:child.requests}));`;
   try {
     const process_=spawn(process.execPath,['--input-type=module','-e',harness],{cwd:root,env:{...privateEnvironment(home),DKH_HOME:home,DKH_PLAIN:'1',NO_COLOR:'1'},stdio:['pipe','pipe','pipe']});
     let output='';process_.stdout.on('data',b=>output+=b);process_.stderr.on('data',b=>output+=b);
     const timer=setTimeout(()=>process_.kill('SIGKILL'),10000);process_.stdin.end('Fix addition\n/exit\n');
     const exit=await new Promise<number|null>((resolve,reject)=>{process_.on('error',reject);process_.on('close',resolve);});clearTimeout(timer);
-    assert.equal(exit,0,output);assert.match(fs.readFileSync(path.join(root,'src/add.mjs'),'utf8'),/a\+b/);
+    assert.equal(exit,0,output);assert.match(fs.readFileSync(path.join(root,'src/add.mjs'),'utf8'),isolation==='required'?/a-b/:/a\+b/);
     assert.equal(sha256(fs.readFileSync(path.join(root,'test/add.test.mjs'))),before);
     const requests=JSON.parse(fs.readFileSync(path.join(root,'requests.json'),'utf8'));
     const names=requests.head[0].tools.map((t:{name:string})=>t.name);
@@ -38,7 +38,19 @@ test('real chat entry: trusted Lisp head delegates bounded edit and receives ind
     const delegations=receipts.filter((r:{name:string})=>r.name==='run_subagent');
     assert.equal(JSON.parse(delegations[0].output).status,'completed');
     const result=JSON.parse(delegations.at(-1).output);
-    assert.equal(result.status,'completed');assert.equal(result.verification.status,'passed');assert.equal(result.verification.receipt.exitCode,0);
+    assert.equal(result.status,isolation==='required'?'error':'completed');
+    assert.equal(result.verification.status,isolation==='required'?'not-executed':'passed');
+    assert.equal(result.verification.receipt.exitCode,isolation==='required'?null:0);
+    assert.equal(result.verification.receipt.state,isolation==='required'?'not-started':'exited');
+    assert.equal(result.verification.receipt.cleanup,'settled');
+    assert.equal(result.verification.isolationRequirement,isolation);
+    assert.match(result.verification.receipt.inputDigest,/^[a-f0-9]{64}$/);
+    assert.equal(result.verification.sourceDigests['src/add.mjs'],sha256('export const add=(a,b)=>a+b;'));
+    const packageRoot=process.env.MODKH_TEST_PACKAGE_ROOT ?? new URL('..',import.meta.url).pathname;
+    for(const skill of ['kiokuko-single-purpose-functions','one-shot-software-completion']) {
+      const body=fs.readFileSync(path.join(packageRoot,'skills/kiokuko-dsh',skill,'SKILL.md'),'utf8');
+      assert.ok(requests.child[0].system.includes(body),skill+' full body reaches actual child model request');
+    }
     assert.deepEqual(requests.child[0].tools.map((t:{name:string})=>t.name),['read_file','edit_file']);
   } finally {fs.rmSync(root,{recursive:true,force:true});}
 });

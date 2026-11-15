@@ -30,10 +30,18 @@ const report={platform:process.platform,arch:process.arch,id,binary:fs.realpathS
 try {
   await server.start(); report.initialized=true; report.capabilities=server.capabilities;report.logs=logs;
   const sync=await server.synchronize(file,text);report.diagnostics=sync;
-  const position=id==='commonlisp'?offsetToPosition(text,text.lastIndexOf('value')):id==='tailwind'?{line:0,character:13}:id==='typescript'?{line:2,character:1}:{line:0,character:1};
+  const position=id==='commonlisp'?offsetToPosition(text,text.lastIndexOf('value')):id==='tailwind'?{line:0,character:13}:['typescript','php'].includes(id)?{line:2,character:1}:{line:0,character:1};
   report.hover=await server.hover(file,position);
   if (id!=='tailwind') report.definition=await server.definition(file,position);
-  if (id==='commonlisp') {
+  if (id==='php') {
+    const invalid='<?php\nfunction broken( {\n';
+    const invalidFile=path.join(root,'invalid.php');fs.writeFileSync(invalidFile,invalid);
+    report.invalidSourceSha256=hash(invalid);
+    report.invalidDiagnostics=await server.synchronize(invalidFile,invalid);
+    report.diagnosticChannels=server.diagnosticEvidence;
+    report.status=report.invalidDiagnostics.status==='observed'&&report.invalidDiagnostics.diagnostics.some(d=>d.severity==='error')?'passed':'unverified';
+    report.scope='Syntax error diagnostics only; project-wide semantics and file watching are not verified';
+  } else if (id==='commonlisp') {
     report.definitionScope='Lexical binding only; project code is never loaded/evaluated by this probe';
     const invalid='; 日本語\n(defun broken (x)\n (+ x 1)';
     const invalidFile=path.join(root,'invalid.lisp');fs.writeFileSync(invalidFile,invalid);

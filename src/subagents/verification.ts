@@ -15,7 +15,8 @@ export interface Verification {
   sourceDigests: Record<string, string>;
   change: 'changed' | 'no-change/verified' | 'no-change/unverified';
   application: 'applied' | 'not-applied' | 'stale' | 'partial';
-  isolation: 'private-snapshot-not-os-sandbox';
+  isolation: 'private-snapshot-not-os-sandbox' | 'unavailable';
+  isolationRequirement: 'integrity-only' | 'required';
 }
 interface Snapshot { bytes: Buffer; stat: fs.Stats; file: string }
 function safeSnapshot(root: string, relative: string, max = 2 * 1024 * 1024): Snapshot {
@@ -48,7 +49,10 @@ export class EditVerification {
   private command: string;
   private changed = false;
   private consumed = false;
-  constructor(root: string, definition: LocalDefinition, targets: string[] | undefined) {
+  private isolationRequirement: 'integrity-only' | 'required';
+  constructor(root: string, definition: LocalDefinition, targets: string[] | undefined, isolationRequirement: 'integrity-only' | 'required' = 'integrity-only') {
+    if (isolationRequirement !== 'integrity-only' && isolationRequirement !== 'required') throw new ToolError('INVALID_ARGS', 'Unknown host verification isolation policy');
+    this.isolationRequirement = isolationRequirement;
     if (!definition.verificationCommand || !definition.verificationManifest || !targets?.length) throw new ToolError('NOT_EXECUTED', 'Fixed check, owner manifest and explicit targetPaths required');
     if (targets.length !== 1) throw new ToolError('NOT_EXECUTED', 'Initial edit-verify supports one existing file; multi-file transaction requires a separate workflow');
     this.originalRoot = fs.realpathSync(root);
@@ -88,10 +92,19 @@ export class EditVerification {
     const sourcePaths = [...this.before.keys()].filter(p => !this.protectedPaths.includes(p));
     const sourceDigests = Object.fromEntries(sourcePaths.map(p => [p, sha256(safeSnapshot(this.root, p).bytes)]));
     const verificationSnapshots = new Map([...this.before.keys()].map(p => [p, safeSnapshot(this.root, p)]));
-    const result: Verification = { status: 'not-executed', output: '', manifest, sourceDigests, change: this.changed ? 'changed' : 'no-change/unverified', application: 'not-applied', isolation: 'private-snapshot-not-os-sandbox' };
+    const result: Verification = { status: 'not-executed', output: '', manifest, sourceDigests, change: this.changed ? 'changed' : 'no-change/unverified', application: 'not-applied', isolation: 'private-snapshot-not-os-sandbox', isolationRequirement: this.isolationRequirement };
     const pristine = () => { try { return this.protectedPaths.every(p => sha256(safeSnapshot(this.root, p).bytes) === manifest[p]); } catch { return false; } };
     if (!this.unchanged() || !pristine()) return { ...result, status: 'unknown', application: 'stale', output: 'Source or verifier changed before acceptance' };
-    const digest = sha256(JSON.stringify({ manifest, sourceDigests, command: this.command }));
+    const digest = sha256(JSON.stringify({ manifest, sourceDigests, command: this.command, isolationRequirement: this.isolationRequirement }));
+    if (this.isolationRequirement === 'required') {
+      // No reviewed OS backend currently satisfies read-only dependency closure and host secrecy.
+      // A successful capability probe alone must never authorize an unconfined fallback.
+      const reason = 'OS isolation required but no verified enforcement backend is available; acceptance command not executed';
+      return { ...result, isolation: 'unavailable', output: reason, receipt: {
+        state: 'not-started', exitCode: null, signal: null, stdout: '', stderr: reason,
+        inputDigest: digest, cleanup: 'settled',
+      } };
+    }
     const receipt = await executeAcceptance(this.command, this.root, approval, signal, digest, privateEnvironment(this.root));
     result.receipt = receipt;
     result.output = receipt.stdout + receipt.stderr;

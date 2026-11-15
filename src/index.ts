@@ -12,7 +12,7 @@ const HELP = `dkh ${VERSION} — MoDKH (Mixture of DKH)
   dkh [--model <provider>/<model>] [--cwd <dir>] [--resume <id>] [--base-url <url>]
       (サブコマンドなしで起動すると対話ハーネスを開く)
   dkh chat --model <provider>/<model> [--cwd <dir>] [--resume <id>] [--base-url <url>]
-  dkh chat --lisp-config agents.lisp --trust-lisp-sha256 SHA256 [--sbcl PATH]
+  dkh chat --lisp-config agents.lisp --trust-lisp-sha256 SHA256 [--sbcl PATH] [--verification-isolation required|integrity-only]
       [--routing auto] [--lean PATH] [--java PATH --tla-jar PATH]
   dkh auth login chatgpt
   dkh session list

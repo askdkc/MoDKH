@@ -1,12 +1,12 @@
 {
-  "baseRevision": "6b0412d60eae22092048fe756c41f066e10627f9",
+  "baseRevision": "3e2ae09e40e85d27154a4ccdcda5831ae04544d3",
   "identity": {
     "source": {
-      "sha256": "15e57a5cae07ae7602a16e961673834570485d61398c75e72ef0b8e3341477c0",
+      "sha256": "d8230213b244ca69185e310ed17add783c901f21cafabba8dffda36eed938e1b",
       "files": 148
     },
     "artifact": {
-      "sha256": "d3a83f69db115a4396d2670a9cc5623077fd32366529fef633bcd52f5f1a98c8",
+      "sha256": "af0c3d443bf99f2ca06b7c9296aad1417c0af9692e0c913a5070d9c431e7500d",
       "files": 170
     }
   },
@@ -17,31 +17,52 @@
     "branch": "main"
   },
   "baseline": {
-    "tests": 435,
-    "pass": 365,
-    "fail": 62,
-    "skipped": 8
-  },
-  "finalSuite": {
     "tests": 438,
     "pass": 372,
     "fail": 58,
     "skipped": 8
   },
+  "finalSuite": {
+    "tests": 440,
+    "pass": 374,
+    "fail": 58,
+    "skipped": 8
+  },
   "relatedSuite": {
-    "tests": 97,
-    "pass": 88,
+    "tests": 99,
+    "passCount": 90,
     "fail": 1,
     "skipped": 8
   },
-  "relatedFailure": {
-    "name": "the public CLI wires analysis into read_file without any extra flag",
-    "cause": "listen EPERM: operation not permitted 127.0.0.1",
-    "alsoInFullSuite": true
-  },
   "typecheck": "passed",
   "build": "passed",
-  "builtChatEntry": "passed; scripted model",
+  "builtChatEntry": "2 passed; scripted model, including required-isolation refusal",
+  "packedArtifact": "real SBCL evaluated all 9 presets; full skills in actual child requests; real packaged entry exercised both policies",
+  "probes": {
+    "cl": {
+      "status": "error",
+      "detail": "Common Lisp release-metadata: TypeError: fetch failed (ENOTFOUND: getaddrinfo ENOTFOUND api.github.com)"
+    },
+    "privateHome": "/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/cl-ZL2211",
+    "sandbox": {
+      "state": "exited",
+      "exitCode": 71,
+      "signal": null,
+      "stdout": "",
+      "stderr": "sandbox-exec: sandbox_apply: Operation not permitted\n",
+      "inputDigest": "capability",
+      "cleanup": "settled"
+    },
+    "watch": {
+      "state": "exited",
+      "exitCode": 1,
+      "signal": null,
+      "stdout": "",
+      "stderr": "EMFILE\n",
+      "inputDigest": "single-watcher-probe",
+      "cleanup": "settled"
+    }
+  },
   "realTypeScript": {
     "platform": "darwin",
     "arch": "arm64",
@@ -51,7 +72,7 @@
     "sourceSha256": "4aa3fe450c06cafeebb654ff7df7a3fac2be81c334b0881798fc7a21391650ae",
     "initialized": true,
     "status": "passed",
-    "startedAt": "2026-11-15T13:19:26.616Z",
+    "startedAt": "2026-11-15T13:35:14.216Z",
     "capabilities": {
       "textDocumentSync": 2,
       "completionProvider": {
@@ -164,7 +185,7 @@
       "status": "observed",
       "diagnostics": [
         {
-          "path": "/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/current-mac/tmp/modkh-real-lsp-K7P0ZH/input.ts",
+          "path": "/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-hlmCA0/input.ts",
           "line": 1,
           "column": 7,
           "endLine": 1,
@@ -180,69 +201,254 @@
     "hover": "\n```typescript\nfunction add(a: number, b: number): number\n```\n",
     "definition": [
       {
-        "file": "/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/current-mac/tmp/modkh-real-lsp-K7P0ZH/input.ts",
+        "file": "/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-hlmCA0/input.ts",
         "line": 2,
         "character": 10
       }
     ],
     "cleanup": "settled",
-    "finishedAt": "2026-11-15T13:19:27.884Z"
+    "finishedAt": "2026-11-15T13:35:15.514Z"
   },
-  "realCommonLispInstall": {
-    "home": "/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/current-mac/cl-private-VJo58L",
-    "result": {
-      "status": "error",
-      "detail": "Common Lisp release-metadata: TypeError: fetch failed (ENOTFOUND: getaddrinfo ENOTFOUND api.github.com)"
-    },
-    "receipt": {
-      "platform": {
-        "os": "darwin",
-        "arch": "arm64",
-        "target": "aarch64-apple-darwin"
-      },
-      "startedAt": "2026-11-15T13:15:46.668Z",
-      "stages": [
-        {
-          "name": "compiler-capability",
-          "state": "passed",
-          "receipt": {
-            "state": "exited",
-            "exitCode": 0,
-            "signal": null,
-            "stdout": "Apple clang version 21.0.0 (clang-2100.4.1.1)\nTarget: arm64-apple-darwin27.2.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
-            "stderr": "2026-11-15 22:15:48.387 xcodebuild[72895:28128529]  DVTFilePathFSEvents: Failed to start fs event stream.\n2026-11-15 22:15:48.761 xcodebuild[72895:28128526] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 \"Input/output error\". Using NSCachesDirectory instead.\n",
-            "inputDigest": "33445ff5af165ef3a74beaecc67c5353682b1dfa7d026356db84b415b05fb823",
-            "cleanup": "settled"
-          }
-        },
-        {
-          "name": "release-metadata",
-          "state": "failed",
-          "detail": "TypeError: fetch failed (ENOTFOUND: getaddrinfo ENOTFOUND api.github.com)"
+  "realPhp": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "id": "php",
+    "binary": "/opt/homebrew/Cellar/phpantom-lsp/0.11.1/bin/phpantom_lsp",
+    "binarySha256": "d037cdf09782404cd8becdb969d106f0689d90959e08ff5040ca4b5f33fe3bd5",
+    "sourceSha256": "5ef72d0ac218ed65e70b8ab3077c238931001d4f63f4e42d3b65d699c6c22c23",
+    "initialized": true,
+    "status": "unverified",
+    "startedAt": "2026-11-15T13:34:08.754Z",
+    "capabilities": {
+      "textDocumentSync": {
+        "openClose": true,
+        "change": 2,
+        "save": {
+          "includeText": false
         }
-      ],
-      "revisions": {},
-      "status": "failed",
-      "provenance": "Verification policy: Roswell archive must match official SHA256 metadata; completed Git checkouts record commits. Consult stage results for actual verification. Quicklisp transitive downloads are upstream-managed, not independently authenticated by this installer.",
-      "finishedAt": "2026-11-15T13:15:50.549Z"
-    }
+      },
+      "selectionRangeProvider": true,
+      "hoverProvider": true,
+      "completionProvider": {
+        "resolveProvider": true,
+        "triggerCharacters": [
+          "$",
+          ">",
+          ":",
+          "@",
+          "'",
+          "\"",
+          "[",
+          "\\",
+          "/",
+          "*"
+        ]
+      },
+      "signatureHelpProvider": {
+        "triggerCharacters": [
+          "(",
+          ","
+        ],
+        "retriggerCharacters": [
+          ",",
+          ")"
+        ]
+      },
+      "definitionProvider": true,
+      "typeDefinitionProvider": true,
+      "implementationProvider": true,
+      "referencesProvider": true,
+      "documentHighlightProvider": true,
+      "documentSymbolProvider": true,
+      "workspaceSymbolProvider": true,
+      "codeActionProvider": {
+        "codeActionKinds": [
+          "quickfix",
+          "refactor.extract",
+          "refactor.inline",
+          "source.organizeImports"
+        ],
+        "resolveProvider": true
+      },
+      "codeLensProvider": {
+        "resolveProvider": true
+      },
+      "documentFormattingProvider": true,
+      "documentOnTypeFormattingProvider": {
+        "firstTriggerCharacter": "\n"
+      },
+      "renameProvider": {
+        "prepareProvider": true
+      },
+      "documentLinkProvider": {
+        "resolveProvider": false
+      },
+      "foldingRangeProvider": true,
+      "executeCommandProvider": {
+        "commands": [
+          "phpantom.navigateToPrototype"
+        ]
+      },
+      "callHierarchyProvider": true,
+      "semanticTokensProvider": {
+        "legend": {
+          "tokenTypes": [
+            "namespace",
+            "class",
+            "interface",
+            "enum",
+            "type",
+            "typeParameter",
+            "parameter",
+            "variable",
+            "property",
+            "function",
+            "method",
+            "decorator",
+            "enumMember",
+            "keyword",
+            "comment"
+          ],
+          "tokenModifiers": [
+            "declaration",
+            "static",
+            "readonly",
+            "deprecated",
+            "abstract",
+            "definition",
+            "defaultLibrary"
+          ]
+        },
+        "range": false,
+        "full": true
+      },
+      "inlayHintProvider": true,
+      "diagnosticProvider": {
+        "identifier": "phpantom",
+        "interFileDependencies": true,
+        "workspaceDiagnostics": true
+      }
+    },
+    "logs": [
+      "PHPantom: No composer.json found. Scanning workspace for PHP classes.",
+      "PHPantom v0.11.1: PHP 8.5, 1 symbols from workspace scan, stubs master@5f68c1021b",
+      "Opened file: file:///Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-aeS5Uf/input.php",
+      "Opened file: file:///Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-aeS5Uf/invalid.php"
+    ],
+    "diagnostics": {
+      "status": "observed",
+      "diagnostics": [],
+      "version": 1
+    },
+    "hover": "```php\n<?php\nfunction add(int $a, int $b): int;\n```",
+    "definition": [
+      {
+        "file": "/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-aeS5Uf/input.php",
+        "line": 2,
+        "character": 10
+      }
+    ],
+    "invalidSourceSha256": "f9d594b4d6fd3e2200373963c47321407c9bf4bceb7d671884ad4c8d2f4145d7",
+    "invalidDiagnostics": {
+      "status": "observed",
+      "diagnostics": [],
+      "version": 1
+    },
+    "diagnosticChannels": {
+      "pushNotifications": 0,
+      "pullRequests": 2,
+      "pullReports": 2,
+      "pullSupported": true
+    },
+    "scope": "Syntax error diagnostics only; project-wide semantics and file watching are not verified",
+    "cleanup": "settled",
+    "finishedAt": "2026-11-15T13:34:08.879Z"
   },
-  "osIsolationProbe": {
-    "state": "exited",
-    "exitCode": 71,
-    "signal": null,
-    "stdout": "",
-    "stderr": "sandbox-exec: sandbox_apply: Operation not permitted\n",
-    "inputDigest": "capability-only",
-    "cleanup": "settled"
+  "realTailwind": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "id": "tailwind",
+    "binary": "/opt/homebrew/lib/node_modules/@tailwindcss/language-server/bin/tailwindcss-language-server",
+    "binarySha256": "7ce7728c88a5282019034f0a0f1971f653d1392bec8190cafb1e9563c8d3dc40",
+    "sourceSha256": "0026a9bbb0a5ee4363ee054929d249a83f58a908a0197db26a660e8f78515e44",
+    "initialized": true,
+    "status": "unverified",
+    "startedAt": "2026-11-15T13:33:39.320Z",
+    "capabilities": {
+      "textDocumentSync": 1,
+      "workspace": {
+        "workspaceFolders": {
+          "changeNotifications": true
+        }
+      },
+      "hoverProvider": true,
+      "colorProvider": true,
+      "codeActionProvider": true,
+      "codeLensProvider": {
+        "resolveProvider": false
+      },
+      "completionProvider": {
+        "resolveProvider": true,
+        "triggerCharacters": [
+          "\"",
+          "'",
+          "`",
+          " ",
+          ".",
+          "(",
+          "[",
+          "]",
+          "!",
+          "/",
+          "-",
+          ":"
+        ]
+      },
+      "documentLinkProvider": {}
+    },
+    "logs": [
+      "Setting up server…",
+      "Listening for messages…",
+      "Searching for Tailwind CSS projects in the workspace's folders.",
+      "{\"tailwind\":{\"version\":\"3.4.18\",\"features\":[\"layer:base\",\"separator:root\",\"content-list\",\"jit\",\"css-at-config-as-project\",\"relative-content-paths\",\"transpiled-configs\"],\"isDefaultVersion\":true},\"path\":\"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-I4XH2l/tailwind.config.js\"}",
+      "[Global] Creating projects: [{\"folder\":\"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-I4XH2l\",\"config\":\"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-I4XH2l/tailwind.config.js\",\"selectors\":[{\"pattern\":\"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-I4XH2l/tailwind.config.js\",\"priority\":0},{\"pattern\":\"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-I4XH2l/index.html\",\"priority\":1},{\"pattern\":\"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-I4XH2l/**\",\"priority\":3},{\"pattern\":\"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-I4XH2l/**\",\"priority\":5}],\"user\":false,\"tailwind\":{\"version\":\"3.4.18\",\"features\":[\"layer:base\",\"separator:root\",\"content-list\",\"jit\",\"css-at-config-as-project\",\"relative-content-paths\",\"transpiled-configs\"],\"isDefaultVersion\":true}}]",
+      "[Global] Your LSP client does not support watching files on behalf of the server",
+      "[Global] Using bundled file watcher: @parcel/watcher",
+      "Failed to initialize workspace folder /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-I4XH2l [Error: Error starting FSEvents stream]",
+      "[GLOBAL] No matching project for document {\n  fsPath: '/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-I4XH2l/index.html',\n  normalPath: '/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/final-plan/tmp/modkh-real-lsp-I4XH2l/index.html'\n}"
+    ],
+    "diagnostics": {
+      "status": "waiting",
+      "diagnostics": [],
+      "version": 1
+    },
+    "hover": null,
+    "cleanup": "settled",
+    "finishedAt": "2026-11-15T13:33:40.780Z"
   },
+  "modelAvailability": {
+    "configPresent": true,
+    "model": "ollama-cloud/deepseek-v4.1-flash:1017",
+    "provider": null,
+    "apiKeyEnvironmentPresent": false
+  },
+  "modelBlocker": "Configured ollama-cloud model; ollama.com DNS resolution failed. Autonomous model delegation not run; no claim about stored credential validity.",
   "mutations": [
+    {
+      "name": "required-os-isolation",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "host required OS isolation never runs an unconfined checker or applies edited source"
+      ]
+    },
     {
       "name": "acceptance-reuse",
       "status": "detected",
       "exitCode": 1,
       "failedTests": [
-        "acceptance is single-use and closes edit access even after a failed check"
+        "acceptance is single-use and closes edit access even after a failed check",
+        "host required OS isolation never runs an unconfined checker or applies edited source"
       ]
     },
     {
@@ -282,7 +488,8 @@
       "status": "detected",
       "exitCode": 1,
       "failedTests": [
-        "real chat entry: trusted Lisp head delegates bounded edit and receives independent Node receipt"
+        "real chat entry: trusted Lisp head delegates bounded edit and receives independent Node receipt",
+        "real chat entry: required isolation returns not-executed receipt to head"
       ]
     },
     {
@@ -361,21 +568,19 @@
   "originalWorkingTreeModified": true,
   "committed": false,
   "pushed": false,
-  "packedArtifact": "3 tests passed: missing/corrupt build rejection, real WASM load, tampering rejection",
-  "sourceAndArtifactNote": "Built here. CL/Svelte grammars absent. Global installed command not updated.",
   "logs": {
-    "before-full.log": "592812bea070cd78b0290ab5cc314cf08de4e7fc7cf35289ae3045035e8dbb3f",
+    "before-full.log": "15534beb998e43cbfc87f4e3ebe5554fe7d75579bdd57c58d0e3af66f6c6e115",
     "before-build.log": "67dadc3abefcc76a4e7265ae956e21759d04ad2cdac1a1cede17178836d9d6a6",
-    "grammar-test.log": "4d62871d41222ba49a418a8463a10ae55e16c319a24b1f3697485661f5ee3061",
-    "mutations.log": "836f2b99264fda3f931b95d1536f3c60e3c71c3d75ab79f905db47e57c2e41fc",
-    "final-related.log": "82a7809e9a10aa94d71352e57e6c63f32f2106b32f397c750f369421d5c47d70",
-    "final-entry.log": "d30386bcb84a666438e1f2a19494ab5a598e1ed30537a950a838bbb988242391",
+    "mutations.log": "84ffddf2992f0b26c9360b9689827b037385570b1eb0aeefffaa6982ec71796d",
+    "final-related.log": "bb0da54f59ca1a636e484b24f1b8bdcbc435a37cc9fa43ca7b2ca25565cc390b",
+    "final-entry.log": "0755fc468475e582112a91cad3bcc78cbd515da31d157e48595b8115686f189b",
     "before-typecheck.log": "dee392318606ff10f5553223c3952d2c472b8591afef084b8c222da76a1f5d89",
     "final-typecheck.log": "dee392318606ff10f5553223c3952d2c472b8591afef084b8c222da76a1f5d89",
     "final-build.log": "67dadc3abefcc76a4e7265ae956e21759d04ad2cdac1a1cede17178836d9d6a6",
+    "edit-tests.log": "51e39616cb8be04a54751728c09ff94e2f51bb3719e501a2cb6ec373c6293f86",
     "working-typecheck.log": "dee392318606ff10f5553223c3952d2c472b8591afef084b8c222da76a1f5d89",
-    "final-full.log": "653428fd6a3b7e42f181d9d5333b59f909c781f2c63fcbc1bd5083fa39de81ad",
+    "final-full.log": "38b067223b6af6114207504984ce06bec5c951663a7c805a631bcdcc581dc4b4",
     "working-build.log": "67dadc3abefcc76a4e7265ae956e21759d04ad2cdac1a1cede17178836d9d6a6",
-    "focused.log": "bb35cf01d368b17d5f372ffc3511dc47fbce8089e68020df917e88379c0c39f2"
+    "focused.log": "4a437738a4a368d21689c50adfd345ee853612e437268163af6032267cfeb261"
   }
 }

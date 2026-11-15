@@ -115,3 +115,26 @@ test('deleted snapshot inputs invalidate verification instead of escaping as an 
   try {const r=await edit.verify(approval,new AbortController().signal);assert.equal(r.status,'unknown');assert.equal(r.application,'stale');}
   finally {edit.close();f.close();}
 });
+
+
+test('host required OS isolation never runs an unconfined checker or applies edited source', async () => {
+  const f=fixture();
+  const marker=path.join(f.root,'outside-marker');
+  f.definition.verificationCommand=`'${process.execPath}' -e 'require("node:fs").writeFileSync(${JSON.stringify(marker)},"forged success")'`;
+  const edit=new EditVerification(f.root,f.definition,['src/add.mjs'],'required');
+  try {
+    const tool=edit.tools().find(t=>t.name==='edit_file')!;
+    await tool.execute({path:'src/add.mjs',old_string:'a-b',new_string:'a+b'}, {root:edit.root,approval});
+    let approvals=0;
+    const result=await edit.verify({approve:async()=>{approvals++;return true;}},new AbortController().signal);
+    assert.equal(result.status,'not-executed');assert.equal(result.isolation,'unavailable');
+    assert.equal(result.isolationRequirement,'required');assert.equal(result.application,'not-applied');
+    assert.equal(approvals,0);assert.equal(fs.existsSync(marker),false);
+    assert.match(fs.readFileSync(path.join(f.root,'src/add.mjs'),'utf8'),/a-b/);
+    const saved=JSON.parse(JSON.stringify(result));
+    assert.equal(saved.receipt.state,'not-started');assert.equal(saved.receipt.exitCode,null);
+    assert.equal(saved.receipt.cleanup,'settled');assert.match(saved.receipt.inputDigest,/^[a-f0-9]{64}$/);
+    assert.deepEqual(saved.sourceDigests,result.sourceDigests);
+    await assert.rejects(edit.verify(approval,new AbortController().signal),/single-use/);
+  } finally {edit.close();fs.rmSync(f.root,{recursive:true,force:true});}
+});
