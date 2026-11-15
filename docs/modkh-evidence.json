@@ -1,13 +1,13 @@
 {
-  "baseRevision": "3e2ae09e40e85d27154a4ccdcda5831ae04544d3",
+  "baseRevision": "a82a9d447fa8ca85a8d1b289770e22f7b211f81c",
   "identity": {
     "source": {
-      "sha256": "d8230213b244ca69185e310ed17add783c901f21cafabba8dffda36eed938e1b",
-      "files": 148
+      "sha256": "2d3deddf9b2ac80c1b8cf656b5685ba48786b16f3a67d139278bafcc32ff1c18",
+      "files": 149
     },
     "artifact": {
-      "sha256": "af0c3d443bf99f2ca06b7c9296aad1417c0af9692e0c913a5070d9c431e7500d",
-      "files": 170
+      "sha256": "2cd6950c66a886b1b47a1c4d78919b72798b0d887cdc0704439bc43115fae957",
+      "files": 172
     }
   },
   "environment": {
@@ -23,14 +23,14 @@
     "skipped": 8
   },
   "finalSuite": {
-    "tests": 440,
-    "pass": 374,
+    "tests": 442,
+    "pass": 376,
     "fail": 58,
     "skipped": 8
   },
   "relatedSuite": {
-    "tests": 99,
-    "passCount": 90,
+    "tests": 101,
+    "pass": 92,
     "fail": 1,
     "skipped": 8
   },
@@ -582,5 +582,60 @@
     "final-full.log": "38b067223b6af6114207504984ce06bec5c951663a7c805a631bcdcc581dc4b4",
     "working-build.log": "67dadc3abefcc76a4e7265ae956e21759d04ad2cdac1a1cede17178836d9d6a6",
     "focused.log": "4a437738a4a368d21689c50adfd345ee853612e437268163af6032267cfeb261"
+  },
+  "previousIterationIdentity": {
+    "source": {
+      "sha256": "d8230213b244ca69185e310ed17add783c901f21cafabba8dffda36eed938e1b",
+      "files": 148
+    },
+    "artifact": {
+      "sha256": "af0c3d443bf99f2ca06b7c9296aad1417c0af9692e0c913a5070d9c431e7500d",
+      "files": 170
+    }
+  },
+  "currentClRecovery": {
+    "asdfProbe": "ASDF=3.3.1\nBEFORE=NIL\nAFTER=#P\"/Users/dkc/.roswell/local-projects/lem-project/lem/extensions/language-server/lem-language-server.asd\"\n",
+    "directSbclInitial": {
+      "root": "/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ",
+      "result": {
+        "state": "exited",
+        "exitCode": 1,
+        "signal": null,
+        "stdout": "",
+        "stderr": "While evaluating the form starting at line 135, column 0\n  of #P\"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/setup.lisp\":\nUnhandled SB-C::INPUT-ERROR-IN-LOAD in thread #<SB-THREAD:THREAD tid=259 \"main thread\" RUNNING\n                                                 {8005360AD3}>:\n  READ error during LOAD:\n\n    Package ROSWELL does not exist.\n\n      Line: 1, Column: 16, File-Position: 15\n\n      Stream: #<SB-INT:FORM-TRACKING-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/local-init/roswell.lisp\" {8007141713}>\n\nBacktrace for: #<SB-THREAD:THREAD tid=259 \"main thread\" RUNNING {8005360AD3}>\n0: (SB-DEBUG::DEBUGGER-DISABLED-HOOK #<SB-C::INPUT-ERROR-IN-LOAD {80071425D3}> #<unused argument> :QUIT T)\n1: (SB-DEBUG::RUN-HOOK SB-EXT:*INVOKE-DEBUGGER-HOOK* #<SB-C::INPUT-ERROR-IN-LOAD {80071425D3}>)\n2: (INVOKE-DEBUGGER #<SB-C::INPUT-ERROR-IN-LOAD {80071425D3}>)\n3: (ERROR #<SB-C::INPUT-ERROR-IN-LOAD {80071425D3}>)\n4: (SB-C:COMPILER-ERROR SB-C::INPUT-ERROR-IN-LOAD :CONDITION #<SB-INT:SIMPLE-READER-PACKAGE-ERROR \"Package ~A does not exist.\" {8007142573}> :STREAM #<SB-INT:FORM-TRACKING-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/local-init/roswell.lisp\" {8007141713}>)\n5: (SB-C::%DO-FORMS-FROM-INFO #<FUNCTION (LAMBDA (SB-KERNEL:FORM &KEY :CURRENT-INDEX &ALLOW-OTHER-KEYS) :IN SB-INT:LOAD-AS-SOURCE) {1077029CB}> #<SB-C::SOURCE-INFO {800710C803}> SB-C::INPUT-ERROR-IN-LOAD)\n6: (SB-INT:LOAD-AS-SOURCE #<SB-INT:FORM-TRACKING-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/local-init/roswell.lisp\" {8007141713}> :VERBOSE NIL :PRINT NIL :CONTEXT \"loading\")\n7: ((LABELS SB-FASL::LOAD-STREAM-1 :IN LOAD) #<SB-INT:FORM-TRACKING-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/local-init/roswell.lisp\" {8007141713}> NIL)\n8: (SB-FASL::CALL-WITH-LOAD-BINDINGS #<FUNCTION (LABELS SB-FASL::LOAD-STREAM-1 :IN LOAD) {10770249B}> #<SB-INT:FORM-TRACKING-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/local-init/roswell.lisp\" {8007141713}> NIL #<SB-INT:FORM-TRACKING-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/local-init/roswell.lisp\" {8007141713}>)\n9: ((LABELS SB-FASL::LOAD-STREAM :IN LOAD) #<SB-INT:FORM-TRACKING-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/local-init/roswell.lisp\" {8007141713}> NIL)\n10: (LOAD #P\"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/local-init/roswell.lisp\" :VERBOSE NIL :PRINT NIL :IF-DOES-NOT-EXIST :ERROR :EXTERNAL-FORMAT :DEFAULT)\n11: (QUICKLISP-CLIENT:SETUP)\n12: (SB-INT:SIMPLE-EVAL-IN-LEXENV (QUICKLISP-CLIENT:SETUP) #<NULL-LEXENV>)\n13: (SB-EXT:EVAL-TLF (QUICKLISP-CLIENT:SETUP) 15 NIL)\n14: ((LABELS SB-FASL::EVAL-FORM :IN SB-INT:LOAD-AS-SOURCE) (QUICKLISP-CLIENT:SETUP) 15)\n15: ((LAMBDA (SB-KERNEL:FORM &KEY :CURRENT-INDEX &ALLOW-OTHER-KEYS) :IN SB-INT:LOAD-AS-SOURCE) (QUICKLISP-CLIENT:SETUP) :CURRENT-INDEX 15)\n16: (SB-C::%DO-FORMS-FROM-INFO #<FUNCTION (LAMBDA (SB-KERNEL:FORM &KEY :CURRENT-INDEX &ALLOW-OTHER-KEYS) :IN SB-INT:LOAD-AS-SOURCE) {107701B6B}> #<SB-C::SOURCE-INFO {8003850923}> SB-C::INPUT-ERROR-IN-LOAD)\n17: (SB-INT:LOAD-AS-SOURCE #<SB-INT:FORM-TRACKING-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/setup.lisp\" {8003850723}> :VERBOSE NIL :PRINT NIL :CONTEXT \"loading\")\n18: ((LABELS SB-FASL::LOAD-STREAM-1 :IN LOAD) #<SB-INT:FORM-TRACKING-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/setup.lisp\" {8003850723}> NIL)\n19: (SB-FASL::CALL-WITH-LOAD-BINDINGS #<FUNCTION (LABELS SB-FASL::LOAD-STREAM-1 :IN LOAD) {10770163B}> #<SB-INT:FORM-TRACKING-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/setup.lisp\" {8003850723}> NIL #<SB-INT:FORM-TRACKING-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/setup.lisp\" {8003850723}>)\n20: ((LABELS SB-FASL::LOAD-STREAM :IN LOAD) #<SB-INT:FORM-TRACKING-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/setup.lisp\" {8003850723}> NIL)\n21: (LOAD \"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/setup.lisp\" :VERBOSE NIL :PRINT NIL :IF-DOES-NOT-EXIST :ERROR :EXTERNAL-FORMAT :DEFAULT)\n22: (SB-INT:SIMPLE-EVAL-IN-LEXENV (LOAD \"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/setup.lisp\") #<NULL-LEXENV>)\n23: (SB-EXT:EVAL-TLF (LOAD \"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/setup.lisp\") 1 NIL)\n24: ((LABELS SB-FASL::EVAL-FORM :IN SB-INT:LOAD-AS-SOURCE) (LOAD \"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/setup.lisp\") 1)\n25: ((LAMBDA (SB-KERNEL:FORM &KEY :CURRENT-INDEX &ALLOW-OTHER-KEYS) :IN SB-INT:LOAD-AS-SOURCE) (LOAD \"/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/quicklisp/setup.lisp\") :CURRENT-INDEX 1)\n26: (SB-C::%DO-FORMS-FROM-INFO #<FUNCTION (LAMBDA (SB-KERNEL:FORM &KEY :CURRENT-INDEX &ALLOW-OTHER-KEYS) :IN SB-INT:LOAD-AS-SOURCE) {107700F1B}> #<SB-C::SOURCE-INFO {8003850423}> SB-C::INPUT-ERROR-IN-LOAD)\n27: (SB-INT:LOAD-AS-SOURCE #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8003850043}> :VERBOSE NIL :PRINT NIL :CONTEXT \"loading\")\n28: ((LABELS SB-FASL::LOAD-STREAM-1 :IN LOAD) #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8003850043}> NIL)\n29: (SB-FASL::CALL-WITH-LOAD-BINDINGS #<FUNCTION (LABELS SB-FASL::LOAD-STREAM-1 :IN LOAD) {1077009EB}> #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8003850043}> NIL #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8003850043}>)\n30: ((LABELS SB-FASL::LOAD-STREAM :IN LOAD) #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8003850043}> NIL)\n31: (LOAD #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8003850043}> :VERBOSE NIL :PRINT NIL :IF-DOES-NOT-EXIST :ERROR :EXTERNAL-FORMAT :DEFAULT)\n32: ((FLET SB-IMPL::LOAD-SCRIPT :IN SB-IMPL::PROCESS-SCRIPT) #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8003850043}>)\n33: ((FLET SB-UNIX::BODY :IN SB-IMPL::PROCESS-SCRIPT))\n34: ((FLET \"WITHOUT-INTERRUPTS-BODY-\" :IN SB-IMPL::PROCESS-SCRIPT))\n35: (SB-IMPL::PROCESS-SCRIPT \"probe.lisp\")\n36: (SB-IMPL::TOPLEVEL-INIT)\n37: ((FLET SB-UNIX::BODY :IN SB-IMPL::START-LISP))\n38: ((FLET \"WITHOUT-INTERRUPTS-BODY-3\" :IN SB-IMPL::START-LISP))\n39: (SB-IMPL::%START-LISP)\n\nunhandled condition in --disable-debugger mode, quitting\n",
+        "inputDigest": "7c8274fedc53bddd477c6cdbd151e9e82342abaa7332f03119a072c27740e9d1",
+        "cleanup": "settled"
+      }
+    },
+    "directSbclWithoutCopiedRoswellInit": {
+      "root": "/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ",
+      "result": {
+        "state": "exited",
+        "exitCode": 1,
+        "signal": null,
+        "stdout": "LEM_CLI=/Users/dkc/.roswell/local-projects/lem-project/lem/extensions/language-server/lem-language-server.asd\nTo load \"cl-lsp\":\n  Load 1 ASDF system:\n    cl-lsp\n; Loading \"cl-lsp\"\n..",
+        "stderr": "Unhandled QUICKLISP-CLIENT:SYSTEM-NOT-FOUND in thread #<SB-THREAD:THREAD tid=259 \"main thread\" RUNNING\n                                                         {8008790623}>:\n  System \"micros\" not found\n\nBacktrace for: #<SB-THREAD:THREAD tid=259 \"main thread\" RUNNING {8008790623}>\n0: (SB-DEBUG::DEBUGGER-DISABLED-HOOK #<QUICKLISP-CLIENT:SYSTEM-NOT-FOUND {8005350873}> #<unused argument> :QUIT T)\n1: (SB-DEBUG::RUN-HOOK *INVOKE-DEBUGGER-HOOK* #<QUICKLISP-CLIENT:SYSTEM-NOT-FOUND {8005350873}>)\n2: (INVOKE-DEBUGGER #<QUICKLISP-CLIENT:SYSTEM-NOT-FOUND {8005350873}>)\n3: (CERROR \"Try again\" QUICKLISP-CLIENT:SYSTEM-NOT-FOUND :NAME \"micros\")\n4: ((LABELS QUICKLISP-CLIENT::RECURSE :IN QUICKLISP-CLIENT::COMPUTE-LOAD-STRATEGY) \"micros\")\n5: (QL-DIST::CALL-WITH-CONSISTENT-DISTS #<FUNCTION (LAMBDA NIL :IN QUICKLISP-CLIENT::COMPUTE-LOAD-STRATEGY) {8008DC01BB}>)\n6: (QUICKLISP-CLIENT::COMPUTE-LOAD-STRATEGY \"micros\")\n7: (QUICKLISP-CLIENT::AUTOLOAD-SYSTEM-AND-DEPENDENCIES \"micros\" :PROMPT NIL)\n8: (QUICKLISP-CLIENT::AUTOLOAD-SYSTEM-AND-DEPENDENCIES \"cl-lsp\" :PROMPT NIL)\n9: ((:METHOD QL-IMPL-UTIL::%CALL-WITH-QUIET-COMPILATION (T T)) #<unused argument> #<FUNCTION (FLET QUICKLISP-CLIENT::QL :IN QUICKLISP-CLIENT:QUICKLOAD) {8008DC00BB}>) [fast-method]\n10: ((:METHOD QL-IMPL-UTIL::%CALL-WITH-QUIET-COMPILATION :AROUND (QL-IMPL:SBCL T)) #<QL-IMPL:SBCL {8008DC0103}> #<FUNCTION (FLET QUICKLISP-CLIENT::QL :IN QUICKLISP-CLIENT:QUICKLOAD) {8008DC00BB}>) [fast-method]\n11: ((:METHOD QUICKLISP-CLIENT:QUICKLOAD (T)) :CL-LSP :PROMPT NIL :SILENT NIL :VERBOSE NIL) [fast-method]\n12: (QL-DIST::CALL-WITH-CONSISTENT-DISTS #<FUNCTION (LAMBDA NIL :IN QUICKLISP-CLIENT:QUICKLOAD) {8008DC008B}>)\n13: (SB-INT:SIMPLE-EVAL-IN-LEXENV (QUICKLISP-CLIENT:QUICKLOAD :CL-LSP) #<NULL-LEXENV>)\n14: (EVAL-TLF (QUICKLISP-CLIENT:QUICKLOAD :CL-LSP) 5 NIL)\n15: ((LABELS SB-FASL::EVAL-FORM :IN SB-INT:LOAD-AS-SOURCE) (QUICKLISP-CLIENT:QUICKLOAD :CL-LSP) 5)\n16: ((LAMBDA (SB-KERNEL:FORM &KEY :CURRENT-INDEX &ALLOW-OTHER-KEYS) :IN SB-INT:LOAD-AS-SOURCE) (QUICKLISP-CLIENT:QUICKLOAD :CL-LSP) :CURRENT-INDEX 5)\n17: (SB-C::%DO-FORMS-FROM-INFO #<FUNCTION (LAMBDA (SB-KERNEL:FORM &KEY :CURRENT-INDEX &ALLOW-OTHER-KEYS) :IN SB-INT:LOAD-AS-SOURCE) {10529CF1B}> #<SB-C::SOURCE-INFO {8008760423}> SB-C::INPUT-ERROR-IN-LOAD)\n18: (SB-INT:LOAD-AS-SOURCE #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8008760043}> :VERBOSE NIL :PRINT NIL :CONTEXT \"loading\")\n19: ((LABELS SB-FASL::LOAD-STREAM-1 :IN LOAD) #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8008760043}> NIL)\n20: (SB-FASL::CALL-WITH-LOAD-BINDINGS #<FUNCTION (LABELS SB-FASL::LOAD-STREAM-1 :IN LOAD) {10529C9EB}> #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8008760043}> NIL #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8008760043}>)\n21: ((LABELS SB-FASL::LOAD-STREAM :IN LOAD) #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8008760043}> NIL)\n22: (LOAD #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8008760043}> :VERBOSE NIL :PRINT NIL :IF-DOES-NOT-EXIST :ERROR :EXTERNAL-FORMAT :DEFAULT)\n23: ((FLET SB-IMPL::LOAD-SCRIPT :IN SB-IMPL::PROCESS-SCRIPT) #<SB-SYS:FD-STREAM for \"file /Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/runtime-fxtyPZ/probe.lisp\" {8008760043}>)\n24: ((FLET SB-UNIX::BODY :IN SB-IMPL::PROCESS-SCRIPT))\n25: ((FLET \"WITHOUT-INTERRUPTS-BODY-\" :IN SB-IMPL::PROCESS-SCRIPT))\n26: (SB-IMPL::PROCESS-SCRIPT \"probe.lisp\")\n27: (SB-IMPL::TOPLEVEL-INIT)\n28: ((FLET SB-UNIX::BODY :IN SB-IMPL::START-LISP))\n29: ((FLET \"WITHOUT-INTERRUPTS-BODY-3\" :IN SB-IMPL::START-LISP))\n30: (SB-IMPL::%START-LISP)\n\nunhandled condition in --disable-debugger mode, quitting\n",
+        "inputDigest": "7c8274fedc53bddd477c6cdbd151e9e82342abaa7332f03119a072c27740e9d1",
+        "cleanup": "settled"
+      }
+    },
+    "microsFetch": {
+      "url": "https://github.com/lem-project/micros.git",
+      "result": {
+        "state": "exited",
+        "exitCode": 128,
+        "signal": null,
+        "stdout": "",
+        "stderr": "2026-11-15 23:03:44.280 xcodebuild[98624:28231725]  DVTFilePathFSEvents: Failed to start fs event stream.\n2026-11-15 23:03:44.483 xcodebuild[98624:28231724] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 \"Input/output error\". Using NSCachesDirectory instead.\nCloning into '/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/cl-recovery/micros-source'...\nfatal: unable to access 'https://github.com/lem-project/micros.git/': Could not resolve host: github.com\n",
+        "inputDigest": "0aea963699e5870e324a8bd9dd16f01addacc451109f05a97a193bce8f483bbf",
+        "cleanup": "settled"
+      }
+    },
+    "clMcpSource": {
+      "path": "/Users/dkc/.quicklisp/local-projects/cl-mcp-server/run-server.lisp",
+      "revision": "23322aa01dd01c44a57f9869729c457dd660ede5",
+      "protocol": "MCP; not LSP",
+      "verification": "launcher, README and ASDF source inspected; existing server not restarted"
+    }
   }
 }

@@ -1,3 +1,50 @@
+# MoDKH CL依存の再調査と修正（2026-11-15）
+
+**PLAN全体は未完了。** 現在のMacリポジトリを直接編集。基準HEAD `a82a9d447fa8ca85a8d1b289770e22f7b211f81c`、開始時clean。既存PLAN.mdはこの開始時点では存在しなかった。削除・再作成・上書きはしていない。本会話の要求と既存検証記録を継承した。commit/push/グローバル変更なし。
+
+## 今回確認できた原因
+
+既存 `/opt/homebrew/bin/sbcl`、`/opt/homebrew/bin/ros`、Roswell版Quicklisp、取得済みLem/CL-LSPが存在する。過去のDNS失敗を現在の全原因として扱わない。
+
+1. 実SBCL/ASDFで `lem-language-server/cli` は探索先登録前NIL、取得済みLemの探索先登録後は `extensions/language-server/lem-language-server.asd` に解決した。
+2. SBCL単独＋専用領域へコピーしたRoswell版Quicklispのロードは、そのlocal-initがROSWELL packageを要求して失敗。元のQuicklispを変更せず、コピーのlocal-initだけを退避して再試行。
+3. その結果、LEM_CLIの解決が成功し、`ql:quickload :cl-lsp` は次の依存 `System "micros" not found` まで進んだ。SBCL未導入ではない。
+4. 不足取得を `https://github.com/lem-project/micros.git` に対してこの実行環境から試し、git exit128 / `Could not resolve host: github.com`。ユーザーが別実行で成功したGitHub取得を否定する結果ではない。
+
+## 直接変更
+
+- `src/language/commonlisp-systems.ts`: trusted dependency root内の実.asdディレクトリを列挙し、ASDFへ明示登録。symlink/.git/.qlot/node_modulesを探索しない。システム発見probeを生成。
+- `src/language/commonlisp-install.ts`: cold構築へ `asdf-system-discovery` 段階を追加。Quicklispロード前にLem CLI等の場所をreceiptへ記録し、専用成功markerを要求。startupでもregistryを明示。取得済みLemの現在のlem.asd/qlfileで要求されていた `lem-extension-manager` を公式取得一覧へ追加。
+- `test/language.commonlisp-systems.test.ts`: 実SBCLによる「Lem secondary system不在→registry修復→発見」と、探索境界の2試験。
+- 検証記録3ファイルを更新。
+
+この修正はASDF discoveryの修正であり、CL-LSP実起動成功ではない。新テストのASDF定義は最小fixture。実Lemの発見確認は別の実ホストprobe。既存SBCL/Quicklispの自動再利用経路、取得済みcacheの完全再開、RoswellなしでのCL-LSP backendはまだ未完成。既存Lemのmicros-clientは内部で `ros run` を起動するコードを持つことも確認した。Roswell一般が必須という主張ではない。
+
+## 指定されたCL-MCP-Server
+
+`~/.quicklisp/local-projects/cl-mcp-server/run-server.lisp`、README、ASDF定義を確認。originは `https://github.com/quasi/cl-mcp-server.git`、revision `23322aa01dd01c44a57f9869729c457dd660ede5`。これはMCP（REPL/評価/内省）サーバーで、LSPではない。launcherは通常のSBCLと `~/.quicklisp/setup.lisp` を優先し、Lemに依存しない。既存SBCL/Quicklispを再利用できる構成として重要だが、LSP initialize/didOpen/definitionの代替成功証拠にはならない。稼働中サーバーは再起動・変更していない。MCP連携自体は今回追加していない。
+
+## 最終変更後の検証
+
+cwdは `/Users/dkc/Sites/Src/mdkh`。試験TMPDIRは既存除外領域 `.dkh-feasibility/cl-recovery/tmp`。
+
+| コマンド | 結果 |
+|---|---|
+| `npm run typecheck` / `npm run build` / `git diff --check` | 成功、現在のdistを再生成 |
+| `node --test test/lisp*.test.ts test/formal*.test.ts test/language*.test.ts test/language.grammar-artifact.test.mjs` | 101件:92成功/1失敗/8skip |
+| `npm test` | 442件:376成功/58失敗/8skip |
+| build済みchat/fixedを指定した `node --test test/lisp.cli.test.ts` | 2成功 |
+| `node scripts/modkh-mutation-check.mjs .dkh-feasibility/cl-recovery/mutations.json` | 既存11改変すべて検出 |
+| packed artifact | 上記suite内で実WASM・preset・子へのスキル本文試験成功。CL/Svelte実文法ではない。 |
+
+58失敗の名前とerror/codeは前回最終記録と一致。新規失敗0。今回は変更前suiteを再実行しておらず、比較基準はその旨を明記した前回の確定記録。関連1失敗は全体に含まれるHTTP EPERM、残り57件のHTTP EPERM＋1件watch EMFILEという内訳は維持。8skipも従来の実Lean6/TLC2で未実行。全件は[比較JSON](modkh-failure-comparison.json)。source/dist、実ASDF、実Quicklisp失敗、正確な取得URLは[証跡JSON](modkh-evidence.json)。
+
+CL実LSPの初期化・同期・定義・診断、CL/Svelte実文法、実ファイル監視、Tailwind/PHP診断受入、強いOS隔離、実Lean/TLC・実モデル委譲は未完了。これらをこのターンで再実行したとは主張しない。下記の前回棚卸しを継承し、CL discoveryのみ今回の部分実装として更新する。グローバル実行環境は未更新。
+
+---
+
+# 前回時点の検証記録（以下は過去の実測）
+
 # MoDKH 最終ソースの検証記録
 
 2026-11-15。**PLAN全体は未完了。** 編集先 `/Users/dkc/Sites/Src/mdkh`、branch `main`。基準HEAD `3e2ae09e40e85d27154a4ccdcda5831ae04544d3`。開始時git statusはclean。現在のリポジトリを直接編集し、既存PLANを変更していない。commit/push/グローバル環境の更新なし。CL構築・通知EPIPE・process cleanupと前回文法digest検査はHEADに存在し、再適用していない。
