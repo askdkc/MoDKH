@@ -8,9 +8,9 @@ import { loadConfig, updateConfig, DEFAULT_CONFIG } from '../src/cli/config.ts';
 // 同一プロセスで2回読む: ENOENT時の既定値は共有オブジェクトとして書き換わってはいけない。
 // 起動直後に /connect が保存したモデルが、別セッションの空の設定ディレクトリへ漏えいしない。
 test('loadConfig never returns a shared default object that a later update mutates', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-config-'));
-  const previous = process.env.DKH_HOME;
-  process.env.DKH_HOME = home;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-config-'));
+  const previous = process.env.MODKH_HOME;
+  process.env.MODKH_HOME = home;
   try {
     const first = loadConfig();
     updateConfig((c) => { c.model = 'fixed/scripted'; });
@@ -23,7 +23,7 @@ test('loadConfig never returns a shared default object that a later update mutat
       'the module default stays untouched');
     assert.equal(first.model ?? undefined, undefined);
   } finally {
-    if (previous === undefined) delete process.env.DKH_HOME; else process.env.DKH_HOME = previous;
+    if (previous === undefined) delete process.env.MODKH_HOME; else process.env.MODKH_HOME = previous;
     fs.rmSync(home, { recursive: true, force: true });
   }
 });

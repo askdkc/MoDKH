@@ -12,7 +12,7 @@ import { temporaryDirectory } from '../src/lisp/runtime.ts';
 // npm/LSP transport are fixtures; the TypeScript semantic API probe uses the real dependency.
 for (const recommendation of ['6', '']) test(`installer compatibility fallback ${recommendation ? 'publishes only after checks' : 'rejects missing recommendation and cleans staging'}`, async () => {
   const root = temporaryDirectory('modkh-ts-install-');
-  const priorPath = process.env.PATH, priorHome = process.env.DKH_HOME;
+  const priorPath = process.env.PATH, priorHome = process.env.MODKH_HOME;
   const fixture = fileURLToPath(new URL('./fixtures/fake-lsp.mjs', import.meta.url));
   const tsRoot = path.dirname(createRequire(import.meta.url).resolve('typescript/package.json'));
   const calls = path.join(root, 'calls.jsonl');
@@ -39,7 +39,7 @@ if(args.includes('typescript@latest')) {
 fs.writeFileSync(path.join(prefix,'package-lock.json'),JSON.stringify({fixture:true,args}));
 `, { mode: 0o700 });
   process.env.PATH = `${bin}${path.delimiter}${priorPath ?? ''}`;
-  process.env.DKH_HOME = path.join(root, 'home');
+  process.env.MODKH_HOME = path.join(root, 'home');
   try {
     const language = languageById('typescript')!;
     const result = await ensureInstalled(language, { autoInstall: true });
@@ -63,7 +63,7 @@ fs.writeFileSync(path.join(prefix,'package-lock.json'),JSON.stringify({fixture:t
     }
   } finally {
     if (priorPath === undefined) delete process.env.PATH; else process.env.PATH = priorPath;
-    if (priorHome === undefined) delete process.env.DKH_HOME; else process.env.DKH_HOME = priorHome;
+    if (priorHome === undefined) delete process.env.MODKH_HOME; else process.env.MODKH_HOME = priorHome;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

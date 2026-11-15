@@ -1,10 +1,10 @@
 # 目的別スキルとモデル入力の節約
 
-通常のDKHチャットとローカル子エージェントで自動的に有効です。追加のモデル呼び出し・パッケージ・Kiokuko接続は不要です。外部エージェントの内部プロンプトは対象外です。
+通常のMODKHチャットとローカル子エージェントで自動的に有効です。追加のモデル呼び出し・パッケージ・Kiokuko接続は不要です。外部エージェントの内部プロンプトは対象外です。
 
 ## 目的別スキル
 
-kiokuko-dshのスキル17件と参照資料を含む43ファイルを、原文のまま `skills/kiokuko-dsh/` に同梱しています。独自の短い `dkh-*` 代用品は廃止しました。
+kiokuko-dshのスキル17件と参照資料を含む43ファイルを、原文のまま `skills/kiokuko-dsh/` に同梱しています。独自の短い `modkh-*` 代用品は廃止しました。
 
 | 選択条件 | 注入するスキル |
 | --- | --- |
@@ -24,13 +24,13 @@ kiokuko-dshのスキル17件と参照資料を含む43ファイルを、原文�
 
 モデルは `list_skills` で17件の名前・説明・参照パスを確認し、`read_skill` で必要な本文・詳細資料を読みます。`resource` は一覧にある相対パスだけを受け付けます。長い本文には `nextLine` が返り、`startLine` に指定して続きを取得できます。組み込みworker/explorerにも両ツールを公開しています。独自の子プラグインは必要に応じて許可ツール一覧へ追加してください。
 
-DSH固有の `kioku_*`、`lisp_*`、Akinator、Goal、lease、`coding_workflow`、`task_completion` はDKHにはありません。注入時・参照読み取り時にDKHの適用規則を付け、存在しないAPIの呼び出し・導入・完了待ちを禁止し、実際のDKHツールと承認に従わせます。Lispワーカーや自動記憶保存そのものを移植したという意味ではありません。
+DSH固有の `kioku_*`、`lisp_*`、Akinator、Goal、lease、`coding_workflow`、`task_completion` はMODKHにはありません。注入時・参照読み取り時にMODKHの適用規則を付け、存在しないAPIの呼び出し・導入・完了待ちを禁止し、実際のMODKHツールと承認に従わせます。Lispワーカーや自動記憶保存そのものを移植したという意味ではありません。
 
 本文を途中で切ると制約が落ちるため、予算に入らない本文は丸ごと省略して通知します。完全一致する本文も一度だけ注入します。手順は一つの依頼中では固定し、モデルに送るsystem入力にだけ追加します。セッション履歴へ書き込まないため、再開・ツール往復による蓄積を防ぎます。次の依頼では選び直し、ローカルファイルの更新も読み直します。表示のbytesは注入テキストのUTF-8サイズであり、トークン数ではありません。
 
 ### プロジェクト固有のスキル
 
-作業ルートの `.dkh/skills.json` に、既存の手順ファイルを登録できます。
+作業ルートの `.modkh/skills.json` に、既存の手順ファイルを登録できます。
 
 ```json
 [
@@ -49,7 +49,7 @@ DSH固有の `kioku_*`、`lisp_*`、Akinator、Goal、lease、`coding_workflow`�
 - 一覧は64 KiB・128件まで。keywordsは32件まで、各1〜80文字。descriptionは500文字まで。
 - pathは作業ルート内の相対パス。範囲外へ解決されるシンボリックリンク、通常ファイルでないもの、12 KiBを超える本文は注入しません。
 - 不正な一覧・読めない本文は通知して通常の作業を続けます。未選択の本文は読みません。
-- `.dkh/` をgitignoreしている場合、一覧を共有するには明示的に管理対象にしてください。
+- `.modkh/` をgitignoreしている場合、一覧を共有するには明示的に管理対象にしてください。
 - 埋め込み利用では `runAgentLoop` の `skills: false` で注入を無効化できます。
 
 ## ツール出力
@@ -64,7 +64,7 @@ AI SDK経由とChatGPT Responses経由の両方で、モデルに渡す投影だ
 
 ## 参考実装と検証
 
-[kiokuko-dsh](https://github.com/askdkc/kiokuko-dsh) のローカル参照コミット `795172935041acb29718860458a59501a98fd466` にある、目的別選択、実行手順と文書の分離、重複注入回避、可逆な反復文字列圧縮を参考にDKHのループへ独立実装しました。KiokukoのDB・タスク状態・モデルによるスキル選択・意味的要約は移植していません。スキルセットは後続の修正で `88dac41e9f92d4638a214825b40e6967499be961` から同梱しました。`manifest.json` に全43ファイルのSHA-256を記録し、読み込み時とビルド時に検証します。MITライセンスも同梱しています。
+[kiokuko-dsh](https://github.com/askdkc/kiokuko-dsh) のローカル参照コミット `795172935041acb29718860458a59501a98fd466` にある、目的別選択、実行手順と文書の分離、重複注入回避、可逆な反復文字列圧縮を参考にMODKHのループへ独立実装しました。KiokukoのDB・タスク状態・モデルによるスキル選択・意味的要約は移植していません。スキルセットは後続の修正で `88dac41e9f92d4638a214825b40e6967499be961` から同梱しました。`manifest.json` に全43ファイルのSHA-256を記録し、読み込み時とビルド時に検証します。MITライセンスも同梱しています。
 
 ```sh
 node --test test/bundled.skills.test.ts test/skills.context.test.ts test/context.efficiency.test.ts
@@ -78,16 +78,16 @@ npm test
 
 ### 初回の確認結果（スキルセット同梱前）
 
-対象はDKH `7a93e8c731e4fcec190ee09986bedf1756412f11` を基点とする今回の変更です。
+対象はMODKH `7a93e8c731e4fcec190ee09986bedf1756412f11` を基点とする今回の変更です。
 
 - `npm run typecheck`、`npm run build`、`git diff --check`: 成功。
 - `node --test test/bundled.skills.test.ts test/skills.context.test.ts test/context.efficiency.test.ts test/agent.loop.test.ts test/subagents.service.test.ts`: 36件成功。
 - `npm test`: 366件中308件成功、58件失敗。57件はローカルHTTP待受の `EPERM`、1件は `fs.watch` の `EMFILE`。追加のAI SDK送信形式テストは、その後の関連36件に含めて成功。HTTP結合テストは未検証。
-- ビルド済み `dist/index.js` を一時的な作業ルート・専用の `DKH_HOME`・`fixed/scripted` で実行し、`dkh-debug` 選択表示、README編集、コマンドのマーカー作成、終了コード0を確認。実プロバイダーによる課題解決能力の検証ではない。
+- ビルド済み `dist/index.js` を一時的な作業ルート・専用の `MODKH_HOME`・`fixed/scripted` で実行し、`modkh-debug` 選択表示、README編集、コマンドのマーカー作成、終了コード0を確認。実プロバイダーによる課題解決能力の検証ではない。
 - 隔離コピーで旧ループに戻すと注入テストが失敗。圧縮を無効にする変更、末尾を捨てる変更も、それぞれ回帰テストが検出。
 - 合成反復ログは90,010 bytes → 176 bytes。これはこの入力のUTF-8サイズ比較に限定され、トークン・料金の測定ではない。
 
-グローバルにインストール済みのDKHの更新・動作確認、実プロバイダーへの通信は行っていません。
+グローバルにインストール済みのMODKHの更新・動作確認、実プロバイダーへの通信は行っていません。
 
 ### スキルセット同梱後の確認結果
 

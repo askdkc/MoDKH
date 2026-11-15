@@ -9,7 +9,7 @@ import { languageById } from '../src/language/catalog.ts';
 const fixture = new URL('./fixtures/fake-lsp.mjs', import.meta.url).pathname;
 
 function server(mode: string) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-sync-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-sync-'));
   return { root, live: new LspServer({ id: 'typescript', root,
     command: process.execPath, args: [fixture], requestTimeoutMs: 8000,
     env: { ...process.env, FAKE_LSP_MODE: mode } }) };

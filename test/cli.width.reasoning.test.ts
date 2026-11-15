@@ -10,7 +10,7 @@ import { once } from 'node:events';
 import { stripVTControlCharacters } from 'node:util';
 import { screenFrom } from './tui.screen.ts';
 
-const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
 /** Drive the real CLI in TUI mode and report the widest visible line per phase. */
 function fixture(columns: number, rows: number) {
@@ -26,7 +26,7 @@ function fixture(columns: number, rows: number) {
 }
 
 test('a real TUI conversation uses 85% of the width and shows provider reasoning', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-width-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-width-'));
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', data => { body += data; });
@@ -48,7 +48,7 @@ test('a real TUI conversation uses 85% of the width and shows provider reasoning
   try {
     child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(fixture(200, 40))}`, entry], {
       cwd: home,
-      env: { ...process.env, DKH_HOME: home, DKH_PLAIN: '0', TERM: 'xterm-256color' },
+      env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '0', TERM: 'xterm-256color' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let output = '';

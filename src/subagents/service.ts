@@ -193,7 +193,7 @@ export class SubagentService {
       } else {
         this.opts.parent.recordDelegation({ ...record, state: 'running' });
         if (typeof lease.module.start !== 'function') throw new Error('External plugin must export start(request, host)');
-        const accepted = await approval.approve({ kind: 'command', title: '外部エージェントを開始', detail: `${descriptor.id}\n${request.task}\n外部側の権限とリモート処理の停止はDKHでは保証できません。プロセス起動にはさらに個別承認が必要です。` });
+        const accepted = await approval.approve({ kind: 'command', title: '外部エージェントを開始', detail: `${descriptor.id}\n${request.task}\n外部側の権限とリモート処理の停止はMODKHでは保証できません。プロセス起動にはさらに個別承認が必要です。` });
         if (!accepted || signal.aborted) { result.status = signal.aborted ? 'cancelled' : 'error'; result.diagnostic = '外部実行は承認されませんでした'; return result; }
         processes = new ExternalProcesses(this.opts.root, approval, child, signal);
         const start = lease.module.start.bind(lease.module);

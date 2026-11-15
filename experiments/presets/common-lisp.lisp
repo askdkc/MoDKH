@@ -1,4 +1,4 @@
-(in-package :dkh)
+(in-package :modkh)
 
 (defmicroagent micro-common-lisp-outline
   :title "common-lisp outline"

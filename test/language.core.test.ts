@@ -11,7 +11,7 @@ import { availableGrammars, missingGrammars, grammarPaths } from '../src/languag
 import { outline, verifyGrammar } from '../src/language/syntax/parser.ts';
 import { copyFileSync } from 'node:fs';
 
-const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-language-')));
+const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-language-')));
 process.on('exit', () => fs.rmSync(root, { recursive: true, force: true }));
 
 test('positions are UTF-16 units and never normalize CRLF', () => {
@@ -118,13 +118,13 @@ test('a broken grammar does not break other grammars in the same process', async
   assert.equal((await verifyGrammar('typescript')).ok, true);
 });
 
-test('dkh language status reports every declared language without installing anything', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-language-cli-'));
+test('modkh language status reports every declared language without installing anything', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-language-cli-'));
   try {
-    const entry = process.env['DKH_TEST_ENTRY'] ?? new URL('../src/index.ts', import.meta.url).pathname;
+    const entry = process.env['MODKH_TEST_ENTRY'] ?? new URL('../src/index.ts', import.meta.url).pathname;
     const result = spawnSync(process.execPath, [entry, 'language', 'status'], {
       cwd: root, encoding: 'utf8', timeout: 60_000,
-      env: { ...process.env, DKH_HOME: home },
+      env: { ...process.env, MODKH_HOME: home },
     });
     assert.equal(result.status, 0, result.stderr);
     for (const language of LANGUAGES) assert.match(result.stdout, new RegExp(language.id), language.id);

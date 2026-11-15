@@ -7,3 +7,6 @@ dist/
 .dkh-cache-probe/
 .dkh/
 
+
+# MoDKH workspace records and skills
+.modkh/

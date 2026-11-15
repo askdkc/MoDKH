@@ -90,7 +90,7 @@ async function startFakeServer(): Promise<{ url: string; close(): Promise<void>;
 }
 
 test('OpenAI互換アダプターが偽SSEサーバでストリーミング+ツール往復を完走する', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-compat-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-compat-'));
   const fake = await startFakeServer();
   try {
     fs.writeFileSync(path.join(root, 'a.txt'), 'hello world\n');

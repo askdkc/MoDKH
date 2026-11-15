@@ -43,7 +43,7 @@ export function detectLanguage(file: string, workspaceRoot: string): Detection |
   return { language, root, ...(manifest ? { manifest } : {}) };
 }
 
-/** Languages suggested by manifests in the workspace root, used by `dkh language status`. */
+/** Languages suggested by manifests in the workspace root, used by `modkh language status`. */
 export function detectedLanguages(workspaceRoot: string): LanguageDefinition[] {
   let entries: string[] = [];
   try { entries = fs.readdirSync(workspaceRoot).slice(0, MAX_SCAN_ENTRIES); } catch { return []; }

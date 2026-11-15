@@ -7,14 +7,14 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { spawn } from 'node:child_process';
 
-const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
 /**
  * The user-visible promise: a command that outlives any single call does not block the turn,
  * and its result still reaches the model — through the completion notice or job_output.
  */
 test('a long command runs as a job, the turn continues, and the result reaches the model', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-jobs-cli-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-jobs-cli-'));
   const root = path.join(home, 'project');
   fs.mkdirSync(root, { recursive: true });
   fs.writeFileSync(path.join(root, 'slow.sh'), 'sleep 2\nprintf SLOW_JOB_FINISHED\n');
@@ -50,7 +50,7 @@ test('a long command runs as a job, the turn continues, and the result reaches t
     return id;
   }
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
-  const env: NodeJS.ProcessEnv = { ...process.env, DKH_HOME: home, DKH_PLAIN: '1' };
+  const env: NodeJS.ProcessEnv = { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' };
   delete env.NODE_TEST_CONTEXT;
   const child = spawn(process.execPath, [entry, 'chat', '--cwd', root, '--model', 'compatible/fixture',
     '--base-url', `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`], { env, stdio: ['pipe', 'pipe', 'pipe'] });

@@ -2,7 +2,7 @@
 
 ## モデル参照と選択画面
 
-`dkh` を起動し、`/connect` で OpenAI / OpenCode / Ollama Local / Ollama Cloud / OpenRouter / Infron / Hermes Agent を選ぶ。
+`modkh` を起動し、`/connect` で OpenAI / OpenCode / Ollama Local / Ollama Cloud / OpenRouter / Infron / Hermes Agent を選ぶ。
 TTYでは入力で検索、↑↓で選択、Enterで決定、Escで戻る。OpenAIではChatGPT OAuthとAPIキーを選べる。
 APIキーは環境変数を優先し、未設定ならTTYで伏せ字入力できる。入力したキーは `keys.json`(0600)に保存し、次回起動時に再利用する。
 `/models` は組み込み候補からの選択であり、利用可能なモデルの完全な一覧ではない。
@@ -38,8 +38,8 @@ APIキーは環境変数を優先し、未設定ならTTYで伏せ字入力で�
 `compatible/<model> --base-url <url>` は任意のOpenAI互換API、`fixed/scripted` はオフライン検証専用。
 
 HermesはモデルAPIではなく、サーバー側でツールを実行する別エージェント。
-Hermes側の `API_SERVER_KEY` をDKHの `HERMES_API_KEY` に指定する。
-DKHの個別承認やStopでリモートの副作用を制御・停止できる保証はないため、接続時に確認画面を出す。
+Hermes側の `API_SERVER_KEY` をMODKHの `HERMES_API_KEY` に指定する。
+MODKHの個別承認やStopでリモートの副作用を制御・停止できる保証はないため、接続時に確認画面を出す。
 
 ## Ollama Local / Cloud
 
@@ -58,14 +58,14 @@ Cloudのキー未設定・通信失敗時にLocalへ自動で切り替えない�
 ## Sign in with ChatGPT
 
 ```sh
-dkh auth login chatgpt
-# またはDKH内で /connect → OpenAI → ChatGPT
+modkh auth login chatgpt
+# またはMODKH内で /connect → OpenAI → ChatGPT
 ```
 
 - PKCE (S256) とランダムなstateを使い、`https://auth.openai.com/oauth/authorize` で認証する。
 - ローカルの `http://127.0.0.1:1455/auth/callback` を待ち受けてからブラウザを開く。
 - 正しいパス・stateのコールバックだけを受理し、`/oauth/token` で一度だけ交換する。
-- トークンを `$DKH_HOME/chatgpt-auth.json`（既定 `~/.config/dkh/`）へ0600で保存した後、ブラウザに成功を表示する。
+- トークンを `$MODKH_HOME/chatgpt-auth.json`（既定 `~/.config/modkh/`）へ0600で保存した後、ブラウザに成功を表示する。
 - ポート使用中、認証拒否、交換エラーは端末に表示する。他プロセスは停止しない。Ctrl+Cで中止でき、コールバックサーバーも閉じる。
 - ブラウザが自動で開かなければ表示URLを手動で開く。SSH・コンテナではコールバックへ到達できる構成が必要。
 - 期限切れの認証は次の送信前に更新する。更新失敗時は `/connect chatgpt` で再認証する。モデル要求を自動再送しない。

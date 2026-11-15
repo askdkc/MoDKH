@@ -50,7 +50,7 @@ for (const cancelled of [false, true]) {
 }
 
 test('failure diagnostics survive restart, bounded and separate from conversation evidence', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-diagnostic-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-diagnostic-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const store = new SessionStore(dir), session = store.create(dir, 'fixture');
   session.append({ role: 'user', content: 'implement it' });

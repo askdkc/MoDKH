@@ -55,13 +55,13 @@ release = threading.Event()
 server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
 thread = threading.Thread(target=server.serve_forever, daemon=True)
 thread.start()
-with tempfile.TemporaryDirectory(prefix='dkh-pty-') as home:
+with tempfile.TemporaryDirectory(prefix='modkh-pty-') as home:
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 32, 110, 0, 0))
     before = termios.tcgetattr(slave)
-    env = dict(os.environ, DKH_HOME=home, TERM='xterm-256color',
+    env = dict(os.environ, MODKH_HOME=home, TERM='xterm-256color',
                OLLAMA_BASE_URL=f'http://127.0.0.1:{server.server_port}/v1')
-    env.pop('DKH_PLAIN', None)
+    env.pop('MODKH_PLAIN', None)
     env.pop('NO_COLOR', None)  # This isolated run verifies blue; unit tests cover NO_COLOR.
     child = subprocess.Popen([NODE, str(ENTRY)], stdin=slave, stdout=slave, stderr=slave, env=env)
     output = b''
@@ -93,7 +93,7 @@ with tempfile.TemporaryDirectory(prefix='dkh-pty-') as home:
 
     try:
         wait_for('何を調べますか')
-        assert '██████'.encode() in output and b'DKH' in output
+        assert '██████'.encode() in output and b'MODKH' in output
         wait_for('\x1b[?25h')
         welcome = output.rsplit(b'\x1b[H', 1)[-1].decode()
         lines = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', welcome).split('\r\n')

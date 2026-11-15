@@ -1,7 +1,7 @@
 // 偽MCPサーバ(memory_policy / memory_recall / memory_capture)。
 // 呼び出し記録を LOG_FILE に追記する。stdin から newline-delimited JSON-RPC を受ける。
 const fs = require('node:fs');
-const logPath = process.env.LOG_FILE || '/tmp/dkh-fake-mcp-calls.jsonl';
+const logPath = process.env.LOG_FILE || '/tmp/modkh-fake-mcp-calls.jsonl';
 const policy = {
   global: { read: true, write: true },
   projects: [{ id: 'proj-1', name: 'Demo', read: true }],

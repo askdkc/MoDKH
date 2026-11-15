@@ -22,7 +22,7 @@
 export BRAVE_SEARCH_API_KEY="..."   # 環境変数（優先）
 ```
 
-または DKH に保存します（`~/.config/dkh/keys.json`、0600。`DKH_HOME` 指定時はその配下）。
+または MODKH に保存します（`~/.config/modkh/keys.json`、0600。`MODKH_HOME` 指定時はその配下）。
 
 ```text
 /connect brave-search

@@ -11,7 +11,7 @@ import { runAgentLoop } from '../src/agent/loop.ts';
 import type { AgentMessage, ApprovalGate } from '../src/agent/types.ts';
 
 function tmpHome(): { home: string; store: SessionStore } {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-sess-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-sess-'));
   return { home, store: new SessionStore(path.join(home, 'sessions')) };
 }
 
@@ -99,7 +99,7 @@ test('再開後のモデル要求には結果不明ツールが渡り、自動�
     const r = await runAgentLoop(messages, {
       model,
       registry: reg,
-      root: fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-resume-')),
+      root: fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-resume-')),
       signal: new AbortController().signal,
       approval: alwaysYes,
     });

@@ -7,7 +7,7 @@ import { workspaceRecordPath, recordSessionRecord, renderSessionRecord } from '.
 import type { AgentMessage } from '../src/agent/types.ts';
 
 function root(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-record-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-record-'));
   return dir;
 }
 
@@ -28,15 +28,15 @@ function fakeSession(over: Partial<Parameters<typeof recordSessionRecord>[1]> = 
   };
 }
 
-test('each session is recorded under the workspace .dkh directory', () => {
+test('each session is recorded under the workspace .modkh directory', () => {
   const dir = root();
   try {
     const session = fakeSession();
     const file = recordSessionRecord(dir, session);
     assert.equal(file, workspaceRecordPath(dir, session.id));
-    assert.ok(fs.existsSync(file), 'the record file exists in .dkh/sessions');
+    assert.ok(fs.existsSync(file), 'the record file exists in .modkh/sessions');
     const text = fs.readFileSync(file, 'utf8');
-    assert.match(text, /# dkh セッション 20260101-abcd1234/);
+    assert.match(text, /# modkh セッション 20260101-abcd1234/);
     assert.match(text, /モデル: ollama\/glm-test/);
     assert.match(text, /READMEを読んで更新して/);
     assert.match(text, /### ツール edit_file/);
@@ -52,7 +52,7 @@ test('re-recording the same session replaces only its own file', () => {
     recordSessionRecord(dir, first);
     recordSessionRecord(dir, second);
     recordSessionRecord(dir, first, ['edit_file']);
-    const names = fs.readdirSync(path.join(dir, '.dkh', 'sessions'));
+    const names = fs.readdirSync(path.join(dir, '.modkh', 'sessions'));
     assert.equal(names.length, 2, 'both sessions remain');
     const again = fs.readFileSync(workspaceRecordPath(dir, 'a-session'), 'utf8');
     assert.match(again, /結果不明のツール: edit_file/, 'the latest snapshot wins');
@@ -78,7 +78,7 @@ test('old records beyond the retention cap are pruned, newest first', () => {
       fs.utimesSync(workspaceRecordPath(dir, `session-${String(i).padStart(2, '0')}`), past, past);
       void file;
     }
-    const remaining = fs.readdirSync(path.join(dir, '.dkh', 'sessions')).sort();
+    const remaining = fs.readdirSync(path.join(dir, '.modkh', 'sessions')).sort();
     assert.equal(remaining.length, 50, 'the cap keeps 50 files');
     assert.ok(!remaining.includes('session-00.md'), 'the oldest records go first');
     assert.ok(remaining.includes('session-59.md'), 'the newest records stay');

@@ -1,4 +1,4 @@
-(in-package :dkh)
+(in-package :modkh)
 
 (defmicroagent micro-css-outline
   :title "css outline"

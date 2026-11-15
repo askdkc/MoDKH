@@ -15,9 +15,9 @@ export interface RecordableSession {
   messages: AgentMessage[];
 }
 
-/** ワークスペースに置く実行記録の保存先(.dkh/sessions/<id>.md)。 */
+/** ワークスペースに置く実行記録の保存先(.modkh/sessions/<id>.md)。 */
 export function workspaceRecordDir(root: string): string {
-  return path.join(root, '.dkh', 'sessions');
+  return path.join(root, '.modkh', 'sessions');
 }
 
 export function workspaceRecordPath(root: string, id: string): string {
@@ -32,7 +32,7 @@ function clip(text: string, limit = MAX_OUTPUT_CHARS): string {
 /** 人間が読める実行記録(逐次の会話・ツール実行)。内部の推論は含めない。 */
 export function renderSessionRecord(session: RecordableSession, unknownToolNames: string[] = []): string {
   const lines: string[] = [
-    `# dkh セッション ${session.id}`,
+    `# modkh セッション ${session.id}`,
     '',
     `- 作成: ${session.createdAt}`,
     `- モデル: ${session.model}`,
@@ -58,7 +58,7 @@ export function renderSessionRecord(session: RecordableSession, unknownToolNames
 }
 
 /**
- * セッションをワークスペースに記録する(.dkh/sessions/<id>.md)。
+ * セッションをワークスペースに記録する(.modkh/sessions/<id>.md)。
  * 失敗する理由(書き込み不可・ディスク満杯)は呼び出し元へ伝える。上書きは同一セッションのみが対象。
  */
 export function recordSessionRecord(root: string, session: RecordableSession, unknownToolNames: string[] = []): string {
@@ -76,7 +76,7 @@ function pruneOldRecords(dir: string): void {
     .filter((n) => n.endsWith('.md'))
     .map((n) => ({ n, stat: fs.statSync(path.join(dir, n)) }))
     .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
-  // 新しい50件を残す(既定のワークスペース記録の上限)。削除は .dkh 配下だけを対象にする。
+  // 新しい50件を残す(既定のワークスペース記録の上限)。削除は .modkh 配下だけを対象にする。
   for (const entry of entries.slice(MAX_RECORD_FILES)) {
     const target = path.join(dir, entry.n);
     if (path.dirname(target) === dir) fs.unlinkSync(target);

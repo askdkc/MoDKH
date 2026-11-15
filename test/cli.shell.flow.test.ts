@@ -7,7 +7,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { spawn } from 'node:child_process';
 
-const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
 /**
  * The point of the tool contract: the agent runs a check, reads the exit code, and keeps working
@@ -15,7 +15,7 @@ const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.me
  * looked like the harness breaking rather than a signal to fix the code.
  */
 test('the agent reads a failing check as a result and repairs the code', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-shell-flow-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-shell-flow-'));
   const root = path.join(home, 'project');
   fs.mkdirSync(path.join(root, 'test'), { recursive: true });
   fs.writeFileSync(path.join(root, 'value.txt'), 'BROKEN\n');
@@ -47,7 +47,7 @@ test('the agent reads a failing check as a result and repairs the code', async (
     });
   });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
-  const env: NodeJS.ProcessEnv = { ...process.env, DKH_HOME: home, DKH_PLAIN: '1' };
+  const env: NodeJS.ProcessEnv = { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' };
   delete env.NODE_TEST_CONTEXT;
   const child = spawn(process.execPath, [entry, 'chat', '--cwd', root, '--model', 'compatible/fixture',
     '--base-url', `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`], { env, stdio: ['pipe', 'pipe', 'pipe'] });

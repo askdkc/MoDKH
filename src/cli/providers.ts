@@ -19,7 +19,7 @@ export async function chooseProvider(ui: ChatTerminal, current: string | null): 
   })));
 }
 export async function confirmRemoteAgent(ui: ChatTerminal): Promise<boolean> {
-  return await ui.choose('Hermes側でツール実行 — DKHの承認・Stopの保証対象外', [
+  return await ui.choose('Hermes側でツール実行 — MODKHの承認・Stopの保証対象外', [
     { value: 'back', label: '戻る' },
     { value: 'connect', label: 'Hermes Agent に接続', detail: 'サーバー側の権限・設定を使用' },
   ]) === 'connect';

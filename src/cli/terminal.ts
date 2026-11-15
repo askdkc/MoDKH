@@ -624,6 +624,6 @@ export class TerminalUI implements ChatTerminal {
   };
 }
 export function createTerminal(cwd: string): ChatTerminal {
-  return process.stdin.isTTY && process.stdout.isTTY && process.env.TERM !== 'dumb' && process.env.DKH_PLAIN !== '1'
+  return process.stdin.isTTY && process.stdout.isTTY && process.env.TERM !== 'dumb' && process.env.MODKH_PLAIN !== '1'
     ? new TerminalUI(cwd) : new PlainTerminal();
 }

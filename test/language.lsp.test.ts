@@ -9,7 +9,7 @@ import { LanguageService } from '../src/language/lsp/service.ts';
 import { languageById } from '../src/language/catalog.ts';
 
 const fixture = new URL('./fixtures/fake-lsp.mjs', import.meta.url).pathname;
-const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-lsp-')));
+const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-lsp-')));
 process.on('exit', () => fs.rmSync(root, { recursive: true, force: true }));
 fs.mkdirSync(path.join(root, 'src'), { recursive: true });
 

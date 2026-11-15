@@ -6,10 +6,10 @@ import { verifyGrammar } from '../language/syntax/parser.ts';
 import { loadConfig } from './config.ts';
 
 const USAGE = `使い方:
-  dkh language status                検出・導入状態と文法を表示
-  dkh language install [--detected]  検出した言語(またはすべて)のサーバーを導入
-  dkh language retry <id>            失敗記録を消して再試行
-  dkh language update                既存の導入を検証し直す
+  modkh language status                検出・導入状態と文法を表示
+  modkh language install [--detected]  検出した言語(またはすべて)のサーバーを導入
+  modkh language retry <id>            失敗記録を消して再試行
+  modkh language update                既存の導入を検証し直す
 `;
 
 export async function runLanguageCommand(positional: string, cwd = process.cwd()): Promise<void> {

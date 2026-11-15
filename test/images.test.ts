@@ -36,7 +36,7 @@ test('clipboard errors and cancellation do not read or substitute clipboard text
 });
 
 test('PNG attachments survive session restart and Responses input preserves their image type', t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-image-history-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-image-history-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const store = new SessionStore(root);
   const session = store.create(root, 'chatgpt/vision');

@@ -11,16 +11,16 @@ import { pathToFileURL } from 'node:url';
 import { screenFrom } from './tui.screen.ts';
 
 // Run the same public chat/terminal adapters against source and the installed package.
-const { runChat } = await import(process.env.DKH_TEST_CHAT ?? new URL('../src/cli/chat.ts', import.meta.url).href);
-const terminalEntry = process.env.DKH_TEST_TERMINAL ? pathToFileURL(process.env.DKH_TEST_TERMINAL).href : new URL('../src/cli/terminal.ts', import.meta.url).href;
+const { runChat } = await import(process.env.MODKH_TEST_CHAT ?? new URL('../src/cli/chat.ts', import.meta.url).href);
+const terminalEntry = process.env.MODKH_TEST_TERMINAL ? pathToFileURL(process.env.MODKH_TEST_TERMINAL).href : new URL('../src/cli/terminal.ts', import.meta.url).href;
 const { TerminalUI } = await import(terminalEntry);
 const image = { mediaType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==' };
 
 for (const rejected of [false, false] as const) {
   test(`clipboard image and multiline text reach the real chat API and journal (${rejected ? 'provider rejects images' : 'success'})`, async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-composer-flow-'));
-    const previousHome = process.env.DKH_HOME;
-    process.env.DKH_HOME = home;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-composer-flow-'));
+    const previousHome = process.env.MODKH_HOME;
+    process.env.MODKH_HOME = home;
     const requests: { messages: { role: string; content: unknown }[] }[] = [];
     const server = http.createServer((req, res) => {
       let raw = '';
@@ -89,7 +89,7 @@ for (const rejected of [false, false] as const) {
     } finally {
       ui.close(); await chat?.catch(() => {});
       server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
-      if (previousHome === undefined) delete process.env.DKH_HOME; else process.env.DKH_HOME = previousHome;
+      if (previousHome === undefined) delete process.env.MODKH_HOME; else process.env.MODKH_HOME = previousHome;
       fs.rmSync(home, { recursive: true, force: true });
     }
   });

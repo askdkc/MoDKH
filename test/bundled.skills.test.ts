@@ -8,7 +8,7 @@ test('coding loads the actual Kiokuko core, rather than abbreviated substitutes'
     assert.ok(context.selected.includes(name), `missing ${name}`);
   }
   assert.match(context.text, /本当に、それを全部計算・保存・検索する必要があるのか/);
-  assert.ok(!context.selected.some(name => name.startsWith('dkh-')));
+  assert.ok(!context.selected.some(name => name.startsWith('modkh-')));
 });
 
 import { bundledSkills, readBundledSkill, runtimeSkillText, verifyBundledSkills } from '../src/agent/bundled-skills.ts';
@@ -31,7 +31,7 @@ test('all 17 source skills and 43 resources are present and digest-verified', ()
   for (const name of expectedNames) {
     const context = prepareSkillContext(`$${name}`, process.cwd());
     assert.ok(context.selected.includes(name), `explicit ${name} omitted`);
-    assert.match(context.text, /DKH host binding/);
+    assert.match(context.text, /MODKH host binding/);
   }
 });
 
@@ -91,7 +91,7 @@ test('selected source text and on-demand references reach the model without modi
 });
 
 test('bundled child roles expose read-only skill resource tools', async () => {
-  for (const role of ['dkh-worker', 'dkh-explorer']) {
+  for (const role of ['modkh-worker', 'modkh-explorer']) {
     // Source package is JavaScript; import through URL to inspect its public definition.
     const plugin = await import(new URL(`../plugins/${role}/index.mjs`, import.meta.url).href);
     assert.ok(plugin.define().tools.includes('list_skills'));

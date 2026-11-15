@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
  */
 for (const reported of [true, false]) {
   test(`CLI footer shows provider-reported usage only (${reported ? 'reported' : 'omitted'})`, async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-usage-cli-'));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-usage-cli-'));
     const project = path.join(home, 'project');
     fs.mkdirSync(project, { recursive: true });
     let requests = 0;
@@ -31,8 +31,8 @@ for (const reported of [true, false]) {
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as { port: number }).port;
-    const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
-    const env: NodeJS.ProcessEnv = { ...process.env, DKH_HOME: home, DKH_PLAIN: '1' };
+    const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+    const env: NodeJS.ProcessEnv = { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' };
     delete env.NODE_TEST_CONTEXT;
     const child = spawn(process.execPath, [entry, 'chat', '--cwd', project, '--model', 'compatible/fixture', '--base-url', `http://127.0.0.1:${port}/v1`], {
       env, stdio: ['pipe', 'pipe', 'pipe'],

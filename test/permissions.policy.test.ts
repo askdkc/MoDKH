@@ -17,7 +17,7 @@ function gate(policy: 'all' | 'workspace' | 'none') {
 }
 
 test('workspace policy runs an in-root command without prompting', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-policy-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-policy-'));
   try {
     const { gate: approval, written } = gate('workspace');
     let asked = 0;
@@ -43,7 +43,7 @@ test('workspace policy still prompts when the request leaves the root', async ()
 });
 
 test('none asks even for in-root effects, and a refusal is terminal', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-policy-none-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-policy-none-'));
   try {
     const written: string[] = [];
     const refusing = new TerminalApprovalGate({ ask: async () => 'n', write: t => { written.push(t); } }, 'none');
@@ -56,7 +56,7 @@ test('none asks even for in-root effects, and a refusal is terminal', async () =
 });
 
 test('all runs in-root edits without prompting, and the edit still applies', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-policy-all-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-policy-all-'));
   try {
     fs.writeFileSync(path.join(root, 'a.txt'), 'before\n');
     const { gate: approval, written } = gate('all');

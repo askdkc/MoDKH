@@ -56,7 +56,7 @@ export class PluginManager {
     const result = EMPTY();
     for (const [id, value] of Object.entries(object(raw.plugins))) {
       pluginId(id);
-      if (id.startsWith('dkh-')) throw new Error('Reserved plugin ID');
+      if (id.startsWith('modkh-')) throw new Error('Reserved plugin ID');
       const row = object(value);
       fields(row, ['digest', 'enabled']);
       if (typeof row.digest !== 'string' || !/^[a-f0-9]{64}$/.test(row.digest) || typeof row.enabled !== 'boolean') throw new Error('Invalid plugin catalog entry');
@@ -92,7 +92,7 @@ export class PluginManager {
       for (const id of fs.readdirSync(this.builtinDir).sort()) {
         try {
           const snapshot = inspectPackage(path.join(this.builtinDir, id));
-          if (!snapshot.manifest.id.startsWith('dkh-') || snapshot.manifest.id !== id) throw new Error('Invalid built-in ID');
+          if (!snapshot.manifest.id.startsWith('modkh-') || snapshot.manifest.id !== id) throw new Error('Invalid built-in ID');
           registry.register({ ...snapshot.manifest, digest: snapshot.digest, enabled: !catalog.disabledBuiltins.includes(id), builtin: true });
         } catch (e) { diagnostics.push(`${id}: ${String(e)}`); }
       }
@@ -108,7 +108,7 @@ export class PluginManager {
   }
   preview(directory: string): PackageSnapshot {
     const snapshot = inspectPackage(path.resolve(directory));
-    if (snapshot.manifest.id.startsWith('dkh-')) throw new Error('dkh- IDs are reserved');
+    if (snapshot.manifest.id.startsWith('modkh-')) throw new Error('modkh- IDs are reserved');
     return snapshot;
   }
   /** Called only after the human approves the displayed exact package digest. */
@@ -142,7 +142,7 @@ export class PluginManager {
     pluginId(id);
     this.transaction(() => {
       const catalog = this.catalog();
-      if (id.startsWith('dkh-')) {
+      if (id.startsWith('modkh-')) {
         if (!this.discover().registry.get(id)) throw new Error(`Unknown plugin: ${id}`);
         catalog.disabledBuiltins = catalog.disabledBuiltins.filter(value => value !== id);
         if (!enabled) catalog.disabledBuiltins.push(id);
@@ -159,7 +159,7 @@ export class PluginManager {
   remove(id: string): void {
     pluginId(id);
     this.transaction(() => {
-      if (id.startsWith('dkh-')) throw new Error('Built-in plugins can be disabled, not removed');
+      if (id.startsWith('modkh-')) throw new Error('Built-in plugins can be disabled, not removed');
       const catalog = this.catalog();
       if (!catalog.plugins[id]) throw new Error(`Unknown plugin: ${id}`);
       const leases = path.join(this.base(), 'leases', id);

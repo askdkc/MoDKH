@@ -15,7 +15,7 @@ const yes: ApprovalGate = { approve: async () => true };
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 function root(): string {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-jobs-')));
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-jobs-')));
 }
 
 function registry(dir: string) {

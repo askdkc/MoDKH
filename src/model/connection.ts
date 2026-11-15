@@ -26,7 +26,7 @@ function defaultFixedSteps(): FixedStep[] {
     ],
     [
       delta('メモを追記します。'),
-      { type: 'tool-call', call: { id: 'f-edit', name: 'edit_file', args: { path: 'README.md', old_string: '# dkh サンプル', new_string: '# dkh サンプル\n\n(固定応答モデルによる追記)' } } },
+      { type: 'tool-call', call: { id: 'f-edit', name: 'edit_file', args: { path: 'README.md', old_string: '# modkh サンプル', new_string: '# modkh サンプル\n\n(固定応答モデルによる追記)' } } },
       { type: 'finish', stopReason: 'tool-calls' },
     ],
     [
@@ -58,7 +58,7 @@ export function buildModelFromRef(ref: string, baseUrl?: string, fixedSkip?: num
   if (ref.startsWith('chatgpt/')) {
     const tokens = loadChatGptTokens();
     if (tokens === null) {
-      throw new Error('ChatGPTにログインしていない: /connect chatgpt または dkh auth login chatgpt を実行する');
+      throw new Error('ChatGPTにログインしていない: /connect chatgpt または modkh auth login chatgpt を実行する');
     }
     return new ResponsesApiModel({
       accessToken: tokens.accessToken,

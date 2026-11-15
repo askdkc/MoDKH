@@ -22,16 +22,16 @@ test('Roswell selection uses release metadata and actual glibc requirement for a
  }
 });
 test('disabled CL auto-install makes no fetch or directory; a DNS failure records the exact stage and retries are cooled down',async()=>{
- const root=temporaryDirectory('modkh-cl-install-');const oldHome=process.env.DKH_HOME,oldFetch=globalThis.fetch;
- process.env.DKH_HOME=path.join(root,'home');let fetches=0;
+ const root=temporaryDirectory('modkh-cl-install-');const oldHome=process.env.MODKH_HOME,oldFetch=globalThis.fetch;
+ process.env.MODKH_HOME=path.join(root,'home');let fetches=0;
  globalThis.fetch=async()=>{fetches++;throw new Error('fixture DNS ENOTFOUND');};
  try {
   const language=languageById('commonlisp')!;
-  assert.equal((await ensureInstalled(language,{autoInstall:false})).status,'unavailable');assert.equal(fetches,0);assert.equal(fs.existsSync(process.env.DKH_HOME),false);
+  assert.equal((await ensureInstalled(language,{autoInstall:false})).status,'unavailable');assert.equal(fetches,0);assert.equal(fs.existsSync(process.env.MODKH_HOME),false);
   const failed=await ensureInstalled(language,{autoInstall:true});assert.equal(failed.status,'error');assert.match(failed.detail!,/release-metadata.*ENOTFOUND/);
   assert.equal(fetches,1);
   const again=await ensureInstalled(language,{autoInstall:true});assert.equal(again.status,'unavailable');assert.equal(fetches,1);
-  const target=path.join(process.env.DKH_HOME,'language','servers','commonlisp');
+  const target=path.join(process.env.MODKH_HOME,'language','servers','commonlisp');
   // Locate through the same public home helper: state remains failure-only.
   const {languageHome}=await import('../src/language/detect.ts');
   const home=languageHome();const report=JSON.parse(fs.readFileSync(path.join(home,'servers/commonlisp/last-failure.json'),'utf8'));
@@ -39,7 +39,7 @@ test('disabled CL auto-install makes no fetch or directory; a DNS failure record
   assert.equal(fs.readdirSync(path.join(home,'servers/commonlisp')).some(n=>n.startsWith('attempt-')),false);
   assert.equal(JSON.parse(fs.readFileSync(path.join(home,'state.json'),'utf8')).servers.commonlisp,undefined);
   void target;
- } finally {globalThis.fetch=oldFetch;if(oldHome===undefined)delete process.env.DKH_HOME;else process.env.DKH_HOME=oldHome;fs.rmSync(root,{recursive:true,force:true});}
+ } finally {globalThis.fetch=oldFetch;if(oldHome===undefined)delete process.env.MODKH_HOME;else process.env.MODKH_HOME=oldHome;fs.rmSync(root,{recursive:true,force:true});}
 });
 test('CL bootstrap abort never leaves a success receipt or attempts a download',async()=>{
  const root=temporaryDirectory('modkh-cl-abort-');const fetch_=globalThis.fetch;let calls=0;
@@ -49,13 +49,13 @@ test('CL bootstrap abort never leaves a success receipt or attempts a download',
 });
 
 test('simultaneous CL installation attempts share the lock and do not repeat a failed download',async()=>{
- const root=temporaryDirectory('modkh-cl-lock-');const oldHome=process.env.DKH_HOME,oldFetch=globalThis.fetch;
- process.env.DKH_HOME=path.join(root,'home');let calls=0;
+ const root=temporaryDirectory('modkh-cl-lock-');const oldHome=process.env.MODKH_HOME,oldFetch=globalThis.fetch;
+ process.env.MODKH_HOME=path.join(root,'home');let calls=0;
  globalThis.fetch=async()=>{calls++;throw new Error('fixture DNS ENOTFOUND');};
  try {
   const results=await Promise.all([1,2].map(()=>ensureInstalled(languageById('commonlisp')!,{autoInstall:true})));
   assert.ok(results.every(r=>r.status!=='ready'));assert.equal(calls,1);
- } finally {globalThis.fetch=oldFetch;if(oldHome===undefined)delete process.env.DKH_HOME;else process.env.DKH_HOME=oldHome;fs.rmSync(root,{recursive:true,force:true});}
+ } finally {globalThis.fetch=oldFetch;if(oldHome===undefined)delete process.env.MODKH_HOME;else process.env.MODKH_HOME=oldHome;fs.rmSync(root,{recursive:true,force:true});}
 });
 test('CL compiler absence fails at its own stage before network access',async()=>{
  const root=temporaryDirectory('modkh-cl-no-cc-');const oldPath=process.env.PATH,oldFetch=globalThis.fetch;let calls=0;

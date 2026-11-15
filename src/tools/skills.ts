@@ -1,6 +1,6 @@
 import type { Tool } from '../agent/types.ts';
 import { ToolError } from '../agent/types.ts';
-import { bundledSkills, DKH_SKILL_BINDING, readBundledSkill } from '../agent/bundled-skills.ts';
+import { bundledSkills, MODKH_SKILL_BINDING, readBundledSkill } from '../agent/bundled-skills.ts';
 
 export const skillTools: Tool[] = [
   {
@@ -25,7 +25,7 @@ export const skillTools: Tool[] = [
       catch { throw new ToolError('SKILL_UNAVAILABLE', 'Unknown or invalid bundled Skill resource'); }
       const lines = body.split('\n'), start = (args.startLine as number | undefined) ?? 1;
       if (start > lines.length) throw new ToolError('INVALID_ARGS', 'startLine exceeds resource length');
-      let output = DKH_SKILL_BINDING + `\nSkill: ${args.name}, resource: ${args.resource ?? 'SKILL.md'}\n`;
+      let output = MODKH_SKILL_BINDING + `\nSkill: ${args.name}, resource: ${args.resource ?? 'SKILL.md'}\n`;
       let next = start;
       while (next <= lines.length) {
         const line = `${next}: ${lines[next - 1]}\n`;

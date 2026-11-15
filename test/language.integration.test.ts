@@ -17,7 +17,7 @@ const fixtureLsp = new URL('./fixtures/fake-lsp.mjs', import.meta.url).pathname;
  */
 for (const mode of ['clean', 'silent'] as const) {
   test(`read and edit carry analysis automatically without changing the tool result (${mode})`, async () => {
-    const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-auto-')));
+    const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-auto-')));
     fs.mkdirSync(path.join(project, 'src'));
     fs.writeFileSync(path.join(project, 'tsconfig.json'), '{}');
     const file = path.join(project, 'src', 'app.ts');
@@ -58,7 +58,7 @@ for (const mode of ['clean', 'silent'] as const) {
 }
 
 test('a broken analysis never fails the edit and never invites a second write', async () => {
-  const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-broken-analysis-')));
+  const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-broken-analysis-')));
   fs.mkdirSync(path.join(project, 'src'));
   const file = path.join(project, 'src', 'a.ts');
   fs.writeFileSync(file, 'old\n');
@@ -81,7 +81,7 @@ test('a broken analysis never fails the edit and never invites a second write', 
 });
 
 test('language tools refuse unsupported files and report a real zero result', async () => {
-  const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-lang-tools-')));
+  const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-lang-tools-')));
   fs.mkdirSync(path.join(project, 'src'));
   fs.writeFileSync(path.join(project, 'src', 'a.ts'), 'const a = 1;\n');
   fs.writeFileSync(path.join(project, 'notes.txt'), 'text\n');
@@ -106,7 +106,7 @@ test('language tools refuse unsupported files and report a real zero result', as
 });
 
 test('the public CLI wires analysis into read_file without any extra flag', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-auto-cli-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-auto-cli-'));
   const project = path.join(home, 'project');
   fs.mkdirSync(path.join(project, 'src'), { recursive: true });
   fs.writeFileSync(path.join(project, 'tsconfig.json'), '{}');
@@ -132,8 +132,8 @@ test('the public CLI wires analysis into read_file without any extra flag', asyn
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as { port: number }).port;
-  const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
-  const env: NodeJS.ProcessEnv = { ...process.env, DKH_HOME: home, DKH_PLAIN: '1' };
+  const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+  const env: NodeJS.ProcessEnv = { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' };
   delete env.NODE_TEST_CONTEXT;
   const child = spawn(process.execPath, [entry, 'chat', '--cwd', project, '--model', 'compatible/fixture', '--base-url', `http://127.0.0.1:${port}/v1`], {
     env, stdio: ['pipe', 'pipe', 'pipe'],
@@ -160,15 +160,15 @@ test('the public CLI wires analysis into read_file without any extra flag', asyn
 });
 
 test('the CLI starts, exits, and leaves no language server process behind', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-lang-cli-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-lang-cli-'));
   const project = path.join(home, 'project');
   fs.mkdirSync(path.join(project, 'src'), { recursive: true });
   fs.writeFileSync(path.join(project, 'src', 'a.ts'), 'const a = 1;\n');
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
     language: { autoInstall: false, servers: { typescript: { command: process.execPath, args: [fixtureLsp, 'clean'] } } },
   }));
-  const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
-  const env: NodeJS.ProcessEnv = { ...process.env, DKH_HOME: home, DKH_PLAIN: '1' };
+  const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+  const env: NodeJS.ProcessEnv = { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' };
   delete env.NODE_TEST_CONTEXT;
   const child = spawn(process.execPath, [entry, 'chat', '--cwd', project, '--model', 'compatible/none', '--base-url', 'http://127.0.0.1:9/v1'], {
     env, stdio: ['pipe', 'pipe', 'pipe'],

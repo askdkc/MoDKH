@@ -10,7 +10,7 @@ import { SubagentService } from '../src/subagents/service.ts';
 
 for (const phase of ['starting', 'child', 'running', 'effect', 'finished']) {
   test(`cold resume after process exit at ${phase} never repeats a child effect`, async t => {
-    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-crash-')));
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-crash-')));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const processResult = spawnSync(process.execPath, [new URL('./fixtures/delegation-crash.mjs', import.meta.url).pathname, root, phase], { encoding: 'utf8', timeout: 10000 });
     assert.equal(processResult.status, 23, processResult.stderr);
@@ -19,11 +19,11 @@ for (const phase of ['starting', 'child', 'running', 'effect', 'finished']) {
     const parentReceipt = parent.messages.flatMap(m => m.role === 'tool' ? m.results : []).find(r => r.callId === 'crash-call');
     assert.equal(parentReceipt?.status, phase === 'finished' ? 'ok' : 'unknown');
     const manager = new PluginManager(path.join(root, 'home'));
-    manager.setEnabled('dkh-worker', false);
+    manager.setEnabled('modkh-worker', false);
     const service = new SubagentService({ parent, store, manager, root, tools: [], approval: { approve: async () => { throw new Error('Must not approve on replay'); } }, connection: () => { throw new Error('Must not create model on replay'); } });
-    const result = await (await service.start({ pluginId: 'dkh-worker', task: 'Crash boundary' }, { callId: 'crash-call', signal: new AbortController().signal })).result;
+    const result = await (await service.start({ pluginId: 'modkh-worker', task: 'Crash boundary' }, { callId: 'crash-call', signal: new AbortController().signal })).result;
     assert.equal(result.status, phase === 'finished' ? 'completed' : 'unknown');
-    if (phase !== 'finished') await assert.rejects(service.start({ pluginId: 'dkh-worker', task: 'Crash boundary' }, { callId: 'new-id', signal: new AbortController().signal }), /結果が不明/);
+    if (phase !== 'finished') await assert.rejects(service.start({ pluginId: 'modkh-worker', task: 'Crash boundary' }, { callId: 'new-id', signal: new AbortController().signal }), /結果が不明/);
     const marker = path.join(root, 'effect-count');
     assert.equal(fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : '', ['effect', 'finished'].includes(phase) ? 'once\n' : '');
     if (phase === 'finished') {

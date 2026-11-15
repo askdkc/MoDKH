@@ -1,23 +1,23 @@
 #!/usr/bin/env node
-// dkh — MoDKH (Mixture of DKH)
+// modkh — MoDKH (Mixture of DKH)
 
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const VERSION = '0.1.0';
 
-const HELP = `dkh ${VERSION} — MoDKH (Mixture of DKH)
+const HELP = `modkh ${VERSION} — MoDKH (Mixture of DKH)
 
 使い方:
-  dkh [--model <provider>/<model>] [--cwd <dir>] [--resume <id>] [--base-url <url>]
+  modkh [--model <provider>/<model>] [--cwd <dir>] [--resume <id>] [--base-url <url>]
       (サブコマンドなしで起動すると対話ハーネスを開く)
-  dkh chat --model <provider>/<model> [--cwd <dir>] [--resume <id>] [--base-url <url>]
-  dkh chat --lisp-config agents.lisp --trust-lisp-sha256 SHA256 [--sbcl PATH] [--verification-isolation required|integrity-only]
+  modkh chat --model <provider>/<model> [--cwd <dir>] [--resume <id>] [--base-url <url>]
+  modkh chat --lisp-config agents.lisp --trust-lisp-sha256 SHA256 [--sbcl PATH] [--verification-isolation required|integrity-only]
       [--routing auto] [--lean PATH] [--java PATH --tla-jar PATH]
-  dkh auth login chatgpt
-  dkh session list
-  dkh plugin list | add <directory> | enable <id> | disable <id> | remove <id>
-  dkh language status | install [--detected] | retry <id> | update
+  modkh auth login chatgpt
+  modkh session list
+  modkh plugin list | add <directory> | enable <id> | disable <id> | remove <id>
+  modkh language status | install [--detected] | retry <id> | update
 
 対話中のコマンド:
   /connect                                     検索できるプロバイダー一覧
@@ -44,11 +44,11 @@ const HELP = `dkh ${VERSION} — MoDKH (Mixture of DKH)
 GOOGLE_GENERATIVE_AI_API_KEY, DEEPSEEK_API_KEY, OPENCODE_API_KEY, OPENROUTER_API_KEY,
 INFRON_API_KEY, HERMES_API_KEY, OLLAMA_API_KEY, GROQ_API_KEY, XAI_API_KEY)。
 
-TTYではDKHロゴ・コマンド補完・検索メニューを表示。↑↓/Enterで選択、Escで戻る。
+TTYではMODKHロゴ・コマンド補完・検索メニューを表示。↑↓/Enterで選択、Escで戻る。
 出力は通常のスクリーンバッファに流れるので、端末のスクロール(マウスホイール等)で履歴を辿れる。
-各セッションの記録はワークスペースの .dkh/sessions/<id>.md にも保存される(.gitignoreに .dkh/ を追加している)。
+各セッションの記録はワークスペースの .modkh/sessions/<id>.md にも保存される(.gitignoreに .modkh/ を追加している)。
 timeoutMs(既定600000=10分)は応答の無通信時間の上限。config.json で 5000〜1800000 ms に変更できる。
-DKH_PLAIN=1 dkh で行入力モード(スクリーンリーダー向け)。NO_COLORで色を無効化。
+MODKH_PLAIN=1 modkh で行入力モード(スクリーンリーダー向け)。NO_COLORで色を無効化。
 `;
 
 export interface ParsedInvocation {
@@ -120,7 +120,7 @@ async function dispatch(cmd: string, args: Record<string, string | undefined>): 
     }
     if (cmd === 'auth') {
       if (args['@positional'] !== 'login chatgpt') {
-        process.stderr.write('使い方: dkh auth login chatgpt\n');
+        process.stderr.write('使い方: modkh auth login chatgpt\n');
         process.exit(1);
       }
       const { loginChatGpt } = await import('./model/chatgpt/login.ts');
@@ -142,7 +142,7 @@ async function dispatch(cmd: string, args: Record<string, string | undefined>): 
         }
         return;
       }
-      process.stderr.write('使い方: dkh session list\n');
+      process.stderr.write('使い方: modkh session list\n');
       process.exit(1);
     }
     process.stderr.write(`不明なコマンド: ${cmd}\n\n${HELP}`);

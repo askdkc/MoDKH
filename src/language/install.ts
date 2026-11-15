@@ -86,7 +86,7 @@ async function withLock<T>(target: string, action: () => Promise<T>): Promise<T>
       try {
         if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) { fs.rmSync(lock, { recursive: true, force: true }); continue; }
       } catch { continue; }
-      if (Date.now() > deadline) throw new Error('他のDKHプロセスが導入中のため待機時間を超えました');
+      if (Date.now() > deadline) throw new Error('他のMODKHプロセスが導入中のため待機時間を超えました');
       await new Promise(resolve => setTimeout(resolve, 250));
     }
   }
@@ -197,7 +197,7 @@ export interface Resolution {
 }
 
 /**
- * Find a server without installing: explicit setting, then DKH-managed prefix, then host PATH.
+ * Find a server without installing: explicit setting, then MODKH-managed prefix, then host PATH.
  * Installation is a separate step so a plain read never blocks on a network download.
  */
 export function resolveServer(language: LanguageDefinition, options: { disabled?: boolean; server?: { command: string; args?: string[] } }): Resolution {

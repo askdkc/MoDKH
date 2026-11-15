@@ -18,7 +18,7 @@ const approve={approve:async()=>true};
 async function fixture() {
   const root=fs.realpathSync(temporaryDirectory('modkh-delegation-test-'));
   const file=path.join(root,'agents.lisp');
-  const source='(in-package :dkh) (defmicroagent micro-ts-outline :title "構造担当" :tool "code_outline" :language "ts" :task-kind "outline" :instruction "Inspect source")';
+  const source='(in-package :modkh) (defmicroagent micro-ts-outline :title "構造担当" :tool "code_outline" :language "ts" :task-kind "outline" :instruction "Inspect source")';
   fs.writeFileSync(file,source);
   const config=await loadLispConfiguration(file,sha256(source));
   const manager=new PluginManager(path.join(root,'home')); manager.registerSessionDefinitions(config.entries,config.digest);

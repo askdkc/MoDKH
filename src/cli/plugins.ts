@@ -40,5 +40,5 @@ export async function runPluginCommand(positional: string): Promise<void> {
     process.stdout.write(`登録を解除しました: ${target}。監査用パッケージと履歴は保持します。\n`);
     return;
   }
-  throw new Error('使い方: dkh plugin list | add <directory> | enable <id> | disable <id> | remove <id>');
+  throw new Error('使い方: modkh plugin list | add <directory> | enable <id> | disable <id> | remove <id>');
 }

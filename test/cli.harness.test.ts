@@ -8,10 +8,10 @@ import { spawn, spawnSync } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import { SessionStore } from '../src/session/store.ts';
 
-const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 for (const resume of [false, true]) {
   test(`public CLI researches, edits with approval and runs a real test (${resume ? 'legacy oversized history' : 'ignored replay archive'})`, async () => {
-    const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-harness-flow-')));
+    const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-harness-flow-')));
     const root = path.join(home, 'project'); fs.mkdirSync(root);
     assert.equal(spawnSync('git', ['init', '--quiet', root]).status, 0);
     fs.mkdirSync(path.join(root, 'src')); fs.mkdirSync(path.join(root, 'test')); fs.mkdirSync(path.join(root, '.agenticreplay'));
@@ -48,7 +48,7 @@ for (const resume of [false, true]) {
       });
     });
     await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
-    const env: NodeJS.ProcessEnv = { ...process.env, DKH_HOME: home, DKH_PLAIN: '1' };
+    const env: NodeJS.ProcessEnv = { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' };
     // The CLI is an ordinary app, not a nested node:test worker. Keep the real test assertion below.
     delete env.NODE_TEST_CONTEXT;
     const child = spawn(process.execPath, [entry, 'chat', '--cwd', root, '--model', 'compatible/fixture', '--base-url', `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, ...(saved ? ['--resume', saved.id] : [])], {

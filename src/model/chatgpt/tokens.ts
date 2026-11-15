@@ -10,11 +10,11 @@ export interface ChatGptTokens {
 }
 
 function authDir(): string {
-  if (process.env['DKH_HOME']) {
-    return process.env['DKH_HOME'];
+  if (process.env['MODKH_HOME']) {
+    return process.env['MODKH_HOME'];
   }
   const configBase = process.env['XDG_CONFIG_HOME'] ?? path.join(os.homedir(), '.config');
-  return path.join(configBase, 'dkh');
+  return path.join(configBase, 'modkh');
 }
 
 function authFile(): string {

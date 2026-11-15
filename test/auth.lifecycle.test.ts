@@ -9,11 +9,11 @@ import { loginChatGpt, currentChatGptTokens } from '../src/model/chatgpt/login.t
 import { saveChatGptTokens, loadChatGptTokens } from '../src/model/chatgpt/tokens.ts';
 
 async function isolated(fn: () => Promise<void>) {
-  const old = process.env.DKH_HOME;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-oauth-lifecycle-'));
-  process.env.DKH_HOME = home;
+  const old = process.env.MODKH_HOME;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-oauth-lifecycle-'));
+  process.env.MODKH_HOME = home;
   try { await fn(); } finally {
-    if (old === undefined) delete process.env.DKH_HOME; else process.env.DKH_HOME = old;
+    if (old === undefined) delete process.env.MODKH_HOME; else process.env.MODKH_HOME = old;
     fs.rmSync(home, { recursive: true, force: true });
   }
 }

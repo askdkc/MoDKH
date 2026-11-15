@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { readBundledSkill, DKH_SKILL_BINDING } from '../agent/bundled-skills.ts';
+import { readBundledSkill, MODKH_SKILL_BINDING } from '../agent/bundled-skills.ts';
 import type { LocalDefinition, PluginDescriptor } from '../plugins/api.ts';
 import { executeBounded, privateEnvironment, temporaryDirectory, sha256 } from './runtime.ts';
 export interface SessionDefinition { descriptor: PluginDescriptor; definition: LocalDefinition }
@@ -44,7 +44,7 @@ export function validateDefinitions(raw: unknown, digest: string): SessionDefini
     if (row.check && row.workflow !== 'edit-verify') throw new Error('Only edit workflows accept checks');
     const instruction = string(row.instruction, 'instruction', 8192);
     const definition: LocalDefinition = {
-      system: `MoDKH microagent ${id}. ${row.workflow ? 'Edit only the explicit owner-approved source snapshots. Never change the verifier.' : 'Observe only using your assigned tools.'} Host/parent owns final acceptance. Skills do not add tools or authority. Unread references are not evidence.\n${DKH_SKILL_BINDING}\n${instruction}${skills}`,
+      system: `MoDKH microagent ${id}. ${row.workflow ? 'Edit only the explicit owner-approved source snapshots. Never change the verifier.' : 'Observe only using your assigned tools.'} Host/parent owns final acceptance. Skills do not add tools or authority. Unread references are not evidence.\n${MODKH_SKILL_BINDING}\n${instruction}${skills}`,
       tools: tool === 'edit_file' ? ['read_file', 'edit_file'] : [tool],
       skillPolicy: 'none', maxTurns, requireAllTools: true,
       ...(language === 'tailwindcss' ? { languageServer: 'tailwind' as const } : {}),
@@ -63,8 +63,8 @@ export function validateDefinitions(raw: unknown, digest: string): SessionDefini
 
 // This is Common Lisp evaluated by SBCL, not an S-expression parser in JavaScript.
 const DRIVER = String.raw`
-(defpackage :dkh (:use :cl) (:export :defmicroagent :register-agent :disable-agent :remove-agent :list-agents :set-agent-check))
-(in-package :dkh)
+(defpackage :modkh (:use :cl) (:export :defmicroagent :register-agent :disable-agent :remove-agent :list-agents :set-agent-check))
+(in-package :modkh)
 (defvar *agents* (make-hash-table :test 'equal))
 (defun agent-id (id) (string-downcase (string id)))
 (defun register-agent (id &rest fields)

@@ -97,7 +97,7 @@ test('same call identity with changed input is rejected', async () => {
 });
 
 test('request is persisted before an effect and its receipt before the next effect', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-journal-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-journal-'));
   try {
     const store = new SessionStore(dir);
     const session = store.create(process.cwd(), 'test');
@@ -122,7 +122,7 @@ test('request is persisted before an effect and its receipt before the next effe
 });
 
 test('a persisted request without a receipt resumes as unknown, never silently forgotten', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-orphan-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-orphan-'));
   try {
     const store = new SessionStore(dir);
     const session = store.create(process.cwd(), 'test');
@@ -135,7 +135,7 @@ test('a persisted request without a receipt resumes as unknown, never silently f
 
 for (const tool of [createFileTool, editFileTool]) {
   test(`${tool.name} does not write when Stop arrives during approval`, async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-stop-edit-'));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-stop-edit-'));
     try {
       if (tool === editFileTool) fs.writeFileSync(path.join(root, 'a'), 'before');
       const ac = new AbortController();
@@ -149,7 +149,7 @@ for (const tool of [createFileTool, editFileTool]) {
 }
 
 test('editing rechecks the approved base rather than overwriting a concurrent change', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-stale-edit-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-stale-edit-'));
   try {
     const file = path.join(root, 'a');
     fs.writeFileSync(file, 'before');
@@ -174,7 +174,7 @@ test('an unexpected tool failure after an effect remains unknown and stops later
 });
 
 test('declining creation does not create parent directories', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-denied-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-denied-'));
   try {
     await assert.rejects(createFileTool.execute({ path: 'new/a', content: 'x' }, {
       root, approval: { approve: async () => false },

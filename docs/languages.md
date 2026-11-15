@@ -1,6 +1,6 @@
 # 言語解析（LSP・tree-sitter）
 
-DKHは対象ファイルの言語を検出し、必要な解析器だけを準備して、読み取り・編集・調査に使います。利用者が毎回「LSPを使って」と指示したり、言語ごとにインストールする必要はありません。
+MODKHは対象ファイルの言語を検出し、必要な解析器だけを準備して、読み取り・編集・調査に使います。利用者が毎回「LSPを使って」と指示したり、言語ごとにインストールする必要はありません。
 
 ## 自動で起きること
 
@@ -35,7 +35,7 @@ Svelte・Common Lisp は文法WASMを同梱していないため、`code_outline
 
 ## 導入と保存先
 
-- 解析器は `DKH_HOME`（既定は `~/.config/dkh`）配下の `language/` に置きます。対象プロジェクトの依存・lockfileは変更しません。
+- 解析器は `MODKH_HOME`（既定は `~/.config/modkh`）配下の `language/` に置きます。対象プロジェクトの依存・lockfileは変更しません。
 - npm系は専用prefixと専用キャッシュへ導入し、`--ignore-scripts` で導入時のコード実行を避けます。プロジェクトや利用者のnpmキャッシュは変更しません。
 - 導入先は一時領域に作り、検証後に原子的に公開します。同時導入はロックで排他します。
 - 導入した版・取得元・検証時刻は `language/state.json` に記録します。毎起動時にlatestを取り直しません。
@@ -44,11 +44,11 @@ Svelte・Common Lisp は文法WASMを同梱していないため、`code_outline
 ### 操作コマンド
 
 ```sh
-dkh language status            # 検出・導入状態・文法の有無
-dkh language install           # すべての宣言済み言語を導入（手操作は通常不要）
-dkh language install --detected # 検出した言語だけ
-dkh language retry <id>        # 失敗記録を消して再試行
-dkh language update            # 導入済みサーバーと文法を検証し直す
+modkh language status            # 検出・導入状態・文法の有無
+modkh language install           # すべての宣言済み言語を導入（手操作は通常不要）
+modkh language install --detected # 検出した言語だけ
+modkh language retry <id>        # 失敗記録を消して再試行
+modkh language update            # 導入済みサーバーと文法を検証し直す
 ```
 
 通常利用ではこれらは不要です。最初の読み取りで自動的に準備します。

@@ -7,14 +7,14 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { spawn } from 'node:child_process';
 
-const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
 /**
  * The user-visible promise of promotion: a command that overruns its deadline keeps running and
  * its output is still reachable, instead of being killed with the words "limit exceeded".
  */
 test('a command that overruns its deadline keeps running and reports back through a job', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-promote-cli-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-promote-cli-'));
   const root = path.join(home, 'project');
   fs.mkdirSync(root, { recursive: true });
   // Finishes well past the deadline the model asks for.
@@ -49,7 +49,7 @@ test('a command that overruns its deadline keeps running and reports back throug
     return id;
   }
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
-  const env: NodeJS.ProcessEnv = { ...process.env, DKH_HOME: home, DKH_PLAIN: '1' };
+  const env: NodeJS.ProcessEnv = { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' };
   delete env.NODE_TEST_CONTEXT;
   const child = spawn(process.execPath, [entry, 'chat', '--cwd', root, '--model', 'compatible/fixture',
     '--base-url', `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`], { env, stdio: ['pipe', 'pipe', 'pipe'] });

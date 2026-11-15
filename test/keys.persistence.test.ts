@@ -5,13 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
 test('line mode refuses to read a secret and says how to provide it instead', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-keys-plain-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-keys-plain-'));
   const project = path.join(home, 'project');
   fs.mkdirSync(project);
-  const env: NodeJS.ProcessEnv = { ...process.env, DKH_HOME: home, DKH_PLAIN: '1' };
+  const env: NodeJS.ProcessEnv = { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' };
   delete env.NODE_TEST_CONTEXT;
   delete env.OPENAI_API_KEY;
   const child = spawn(process.execPath, [entry, 'chat', '--cwd', project], { env, stdio: ['pipe', 'pipe', 'pipe'] });

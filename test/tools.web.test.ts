@@ -212,10 +212,10 @@ test('web_search は承認後にだけクエリを送り、タイトルとURLだ
   try {
     const gate = new RecordingGate(true);
     const tool = createWebSearchTool({ searchEndpoint: `${server.origin}/search`, keyLookup: () => 'test-key' });
-    const out = await call(tool, { query: 'dkh web', count: 2 }, ctx(gate));
+    const out = await call(tool, { query: 'modkh web', count: 2 }, ctx(gate));
     assert.equal(gate.requests.length, 1);
     assert.equal(gate.requests[0]!.outsideWorkspace, true);
-    assert.match(seen.url ?? '', /q=dkh\+web/);
+    assert.match(seen.url ?? '', /q=modkh\+web/);
     assert.equal(seen.token, 'test-key');
     assert.match(out, /2 件/);
     assert.match(out, /Alpha & Beta/);
@@ -305,9 +305,9 @@ test('web_search の未登録キーは環境変数と保存済みキーのどち
 });
 
 test('保存済みキーの解決は brave-search の名前を使う(既定の解決経路)', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-web-'));
-  const before = process.env['DKH_HOME'], beforeKey = process.env['BRAVE_SEARCH_API_KEY'];
-  process.env['DKH_HOME'] = home;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-web-'));
+  const before = process.env['MODKH_HOME'], beforeKey = process.env['BRAVE_SEARCH_API_KEY'];
+  process.env['MODKH_HOME'] = home;
   delete process.env['BRAVE_SEARCH_API_KEY'];
   try {
     assert.equal(resolveApiKey('brave-search', process.env, 'BRAVE_SEARCH_API_KEY'), undefined);
@@ -317,7 +317,7 @@ test('保存済みキーの解決は brave-search の名前を使う(既定の�
     process.env['BRAVE_SEARCH_API_KEY'] = 'env-key';
     assert.equal(resolveApiKey('brave-search', process.env, 'BRAVE_SEARCH_API_KEY'), 'env-key', '環境変数が優先される');
   } finally {
-    if (before === undefined) delete process.env['DKH_HOME']; else process.env['DKH_HOME'] = before;
+    if (before === undefined) delete process.env['MODKH_HOME']; else process.env['MODKH_HOME'] = before;
     if (beforeKey === undefined) delete process.env['BRAVE_SEARCH_API_KEY']; else process.env['BRAVE_SEARCH_API_KEY'] = beforeKey;
     fs.rmSync(home, { recursive: true, force: true });
   }

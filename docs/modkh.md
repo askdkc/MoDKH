@@ -1,6 +1,6 @@
 # MoDKH: trusted Common Lisp microagents
 
-MoDKH (Mixture of DKH) is distributed as `modkh`, exposing only the `modkh` command so an existing `dkh` installation is not overwritten. `DKH_HOME`, configuration location and session format remain compatible. No npm publication or global installation is required to test this checkout.
+MoDKH (Mixture of DKH) is distributed as `modkh`, exposing only the `modkh` command so an existing `dkh` installation is not overwritten. Configuration uses `MODKH_HOME` or `~/.config/modkh`; workspace records and skill configuration use `.modkh`. Legacy DKH data is not read, migrated or removed automatically. Lisp configuration uses the `:modkh` package. No npm publication or global installation is required to test this checkout.
 
 ## Run
 
@@ -13,7 +13,7 @@ node dist/index.js chat --cwd . --lisp-config agents.lisp \
   --trust-lisp-sha256 REVIEWED_SHA256 --sbcl sbcl
 ```
 
-SBCL must already be installed. Without `--lisp-config`, ordinary DKH behavior remains available. With it, builtin/installed plugins are excluded for this session, the head has read/language/delegation tools only, and editing/formal checking is delegated. Hermes cannot be used as the head because its remote tools bypass this boundary. Normal input always goes through the head model unless `--routing auto` is explicitly supplied.
+SBCL must already be installed. Without `--lisp-config`, ordinary MODKH behavior remains available. With it, builtin/installed plugins are excluded for this session, the head has read/language/delegation tools only, and editing/formal checking is delegated. Hermes cannot be used as the head because its remote tools bypass this boundary. Normal input always goes through the head model unless `--routing auto` is explicitly supplied.
 
 The trusted Lisp file is **arbitrary OS code**, not sandboxed configuration. Its input bytes are snapshotted, hash checked, and evaluated with startup files disabled in a private temporary HOME/TMPDIR and a minimal environment. Additional files loaded by that trusted code are not recursively covered by the hash. Relative loads resolve in the snapshot directory: combine the presets before hashing, or explicitly review absolute dependencies. There is no implicit reload or workspace discovery.
 
@@ -28,7 +28,7 @@ The compatibility default is `--verification-isolation integrity-only`. It retai
 ## Configuration API
 
 ```lisp
-(in-package :dkh)
+(in-package :modkh)
 (defmicroagent micro-ts-outline
   :title "TypeScript構造担当"
   :tool "code_outline" :language "ts" :task-kind "outline"

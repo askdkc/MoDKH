@@ -6,13 +6,13 @@ import path from 'node:path';
 import { loadConfig, saveConfig, updateConfig, parseTimeoutMs, configPath, TIMEOUT_MS_MIN, TIMEOUT_MS_MAX } from '../src/cli/config.ts';
 
 function home(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-config-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-config-'));
 }
 
 test('config keeps the last model/reasoning/timeoutMs fields through load and save', () => {
   const home0 = home();
-  const previous = process.env.DKH_HOME;
-  process.env.DKH_HOME = home0;
+  const previous = process.env.MODKH_HOME;
+  process.env.MODKH_HOME = home0;
   try {
     const config = {
       memory: { enabled: false, command: 'kiokuko', args: ['mcp', '--profile', 'chatgpt-memory'] },
@@ -36,7 +36,7 @@ test('config keeps the last model/reasoning/timeoutMs fields through load and sa
     assert.equal(reloaded.permissions, 'workspace');
   } finally {
     fs.rmSync(home0, { recursive: true, force: true });
-    if (previous === undefined) delete process.env.DKH_HOME; else process.env.DKH_HOME = previous;
+    if (previous === undefined) delete process.env.MODKH_HOME; else process.env.MODKH_HOME = previous;
   }
 });
 
@@ -52,8 +52,8 @@ test('timeoutMs accepts only sane integers', () => {
 
 test('a malformed config file falls back to defaults without losing updates', () => {
   const home2 = home();
-  const previous = process.env.DKH_HOME;
-  process.env.DKH_HOME = home2;
+  const previous = process.env.MODKH_HOME;
+  process.env.MODKH_HOME = home2;
   try {
     fs.mkdirSync(home2, { recursive: true });
     fs.writeFileSync(configPath(), '{ broken');
@@ -65,14 +65,14 @@ test('a malformed config file falls back to defaults without losing updates', ()
     assert.equal(fixed.memory.enabled, false);
   } finally {
     fs.rmSync(home2, { recursive: true, force: true });
-    if (previous === undefined) delete process.env.DKH_HOME; else process.env.DKH_HOME = previous;
+    if (previous === undefined) delete process.env.MODKH_HOME; else process.env.MODKH_HOME = previous;
   }
 });
 
 test('a truncated config still yields the last model, so the next launch is not unconnected', () => {
   const home3 = home();
-  const previous = process.env.DKH_HOME;
-  process.env.DKH_HOME = home3;
+  const previous = process.env.MODKH_HOME;
+  process.env.MODKH_HOME = home3;
   try {
     fs.mkdirSync(home3, { recursive: true });
     // 強制終了・電源断で書き込みが途中になった状態。モデル指定だけは救出する。
@@ -89,14 +89,14 @@ test('a truncated config still yields the last model, so the next launch is not 
     assert.equal(after.reasoning, 'low');
   } finally {
     fs.rmSync(home3, { recursive: true, force: true });
-    if (previous === undefined) delete process.env.DKH_HOME; else process.env.DKH_HOME = previous;
+    if (previous === undefined) delete process.env.MODKH_HOME; else process.env.MODKH_HOME = previous;
   }
 });
 
 test('saving keeps hand-written keys and never leaves a partial file behind', () => {
   const home4 = home();
-  const previous = process.env.DKH_HOME;
-  process.env.DKH_HOME = home4;
+  const previous = process.env.MODKH_HOME;
+  process.env.MODKH_HOME = home4;
   try {
     fs.mkdirSync(home4, { recursive: true });
     fs.writeFileSync(configPath(), JSON.stringify({ model: 'ollama-cloud/keep-me', theme: 'dark', myOwn: 42 }));
@@ -111,6 +111,6 @@ test('saving keeps hand-written keys and never leaves a partial file behind', ()
       'derived diagnostics are not persisted as settings');
   } finally {
     fs.rmSync(home4, { recursive: true, force: true });
-    if (previous === undefined) delete process.env.DKH_HOME; else process.env.DKH_HOME = previous;
+    if (previous === undefined) delete process.env.MODKH_HOME; else process.env.MODKH_HOME = previous;
   }
 });

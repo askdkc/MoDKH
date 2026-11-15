@@ -20,7 +20,7 @@ function terminal(columns = 100, rows = 30, options?: { readClipboardImage?: (si
     key: (name: string, value = '', ctrl = false) => input.emit('keypress', value, { name, ctrl }) };
 }
 
-test('TUI shows DKH once, completes /conn, searches and selects providers by keyboard', async () => {
+test('TUI shows MODKH once, completes /conn, searches and selects providers by keyboard', async () => {
   const t = terminal();
   try {
     const command = t.ui.next();
@@ -44,7 +44,7 @@ test('TUI shows DKH once, completes /conn, searches and selects providers by key
   assert.equal(t.input.listenerCount('keypress'), 0);
 });
 
-test('the DKH banner is streamed exactly once and never erased', () => {
+test('the MODKH banner is streamed exactly once and never erased', () => {
   const t = terminal(120, 30);
   try {
     const input = t.ui.next();

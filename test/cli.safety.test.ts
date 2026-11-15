@@ -8,10 +8,10 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { SessionStore } from '../src/session/store.ts';
 
-const entry = process.env['DKH_TEST_ENTRY'] ?? new URL('../src/index.ts', import.meta.url).pathname;
+const entry = process.env['MODKH_TEST_ENTRY'] ?? new URL('../src/index.ts', import.meta.url).pathname;
 function launch(home: string, cwd: string, args: string[], input: string) {
   const child = spawn(process.execPath, [entry, 'chat', '--cwd', cwd, ...args], {
-    env: { ...process.env, DKH_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, MODKH_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'],
   });
   let output = '';
   child.stdout.on('data', d => { output += d; });
@@ -25,7 +25,7 @@ function launch(home: string, cwd: string, args: string[], input: string) {
 }
 
 test('CLI error stays error after EOF and original user whitespace is retained', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-cli-state-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cli-state-'));
   let requests = 0;
   const server = http.createServer((_req, res) => {
     requests++;
@@ -48,7 +48,7 @@ test('CLI error stays error after EOF and original user whitespace is retained',
 });
 
 test('CLI refuses to resume evidence in a different repository', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-cli-root-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cli-root-'));
   try {
     const first = path.join(home, 'first');
     const other = path.join(home, 'other');

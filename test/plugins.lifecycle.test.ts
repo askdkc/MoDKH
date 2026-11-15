@@ -8,7 +8,7 @@ import { inspectPackage } from '../src/plugins/package.ts';
 import { SubagentRegistry } from '../src/plugins/registry.ts';
 
 function fixture(t: { after(fn: () => void): void }, source = 'export function define() { return { system: \"Read only\", tools: [\"read_file\"] }; }') {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-plugin-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-plugin-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const directory = path.join(root, 'source');
   fs.mkdirSync(directory);

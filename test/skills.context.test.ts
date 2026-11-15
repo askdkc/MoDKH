@@ -10,13 +10,13 @@ import { ToolRegistry } from '../src/tools/registry.ts';
 import type { AgentMessage } from '../src/agent/types.ts';
 
 function fixture(t: test.TestContext) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-skills-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-skills-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.mkdirSync(path.join(root, '.dkh'));
+  fs.mkdirSync(path.join(root, '.modkh'));
   return root;
 }
 const entry = (name: string, keywords: string[] = []) => ({ name, keywords, description: name, path: `${name}.md` });
-const catalog = (root: string, items: unknown) => fs.writeFileSync(path.join(root, '.dkh/skills.json'), JSON.stringify(items));
+const catalog = (root: string, items: unknown) => fs.writeFileSync(path.join(root, '.modkh/skills.json'), JSON.stringify(items));
 
 test('task selection handles Japanese, English boundaries, explicit names and unrelated tasks', t => {
   const root = fixture(t);

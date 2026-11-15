@@ -11,7 +11,7 @@ import type { ApprovalGate } from '../src/agent/types.ts';
 const yes: ApprovalGate = { approve: async () => true };
 
 function root(): string {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-shell-')));
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-shell-')));
 }
 
 function run(dir: string, command: string, extra: Record<string, unknown> = {}) {

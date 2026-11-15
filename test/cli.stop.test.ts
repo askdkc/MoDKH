@@ -7,10 +7,10 @@ import path from 'node:path';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-const entry = process.env['DKH_TEST_CHAT'] ?? new URL('../src/cli/chat.ts', import.meta.url).href;
+const entry = process.env['MODKH_TEST_CHAT'] ?? new URL('../src/cli/chat.ts', import.meta.url).href;
 
 test('CLI approval Stop preserves the next instruction through the real model adapter', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-cli-stop-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cli-stop-'));
   const requests: { messages: { role: string; content: unknown }[] }[] = [];
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -45,7 +45,7 @@ test('CLI approval Stop preserves the next instruction through the real model ad
     const args = { model: 'compatible/fake', 'base-url': baseUrl, cwd: home };
     const child = spawn(process.execPath, ['--input-type=module', '-e',
       `import { runChat } from ${JSON.stringify(entry)}; await runChat({args:${JSON.stringify(args)}});`],
-    { env: { ...process.env, DKH_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] });
+    { env: { ...process.env, MODKH_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     let stopped = false, continued = false;
     const exited = new Promise<number | null>((resolve, reject) => {

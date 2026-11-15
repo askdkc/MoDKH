@@ -13,7 +13,7 @@ const yes: ApprovalGate = { approve: async () => true };
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 function root(): string {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-promote-')));
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-promote-')));
 }
 
 function registry(dir: string) {

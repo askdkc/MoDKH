@@ -133,7 +133,7 @@ export async function loginChatGpt(opts: LoginOptions = {}): Promise<ChatGptToke
     if (claimed) { reply(409, '認証処理中です。端末を確認してください。'); return; }
     const code = url.searchParams.get('code');
     if (url.searchParams.has('error') || !code) {
-      reply(400, '認証は完了しませんでした。DKHで再試行してください。');
+      reply(400, '認証は完了しませんでした。MODKHで再試行してください。');
       rejectResult(new Error('認証が拒否されたか、認可コードがありません。/connect chatgpt で再試行してください'));
       return;
     }
@@ -142,9 +142,9 @@ export async function loginChatGpt(opts: LoginOptions = {}): Promise<ChatGptToke
     void exchangeCode({ ...cfg, code, verifier, redirectUri, signal }).then((tokens) => {
       signal.throwIfAborted();
       saveChatGptTokens(tokens);
-      reply(200, 'DKH: 認証情報を保存しました。このタブを閉じて端末へ戻ってください。');
+      reply(200, 'MODKH: 認証情報を保存しました。このタブを閉じて端末へ戻ってください。');
       resolveResult(tokens);
-    }).catch((error: Error) => { reply(500, 'DKH: 認証を保存できませんでした。端末の案内を確認してください。'); rejectResult(error); });
+    }).catch((error: Error) => { reply(500, 'MODKH: 認証を保存できませんでした。端末の案内を確認してください。'); rejectResult(error); });
   });
   const onAbort = () => rejectResult(new Error(signal.reason?.name === 'TimeoutError'
     ? '認証がタイムアウトしました。/connect chatgpt で再試行してください' : '認証を中止しました'));

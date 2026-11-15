@@ -7,7 +7,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { spawn } from 'node:child_process';
 
-const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
 interface Run { output: string; requests: unknown[]; code: number | null }
 
@@ -33,7 +33,7 @@ async function chat(home: string, config: object | null, limit: number): Promise
     });
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const env: NodeJS.ProcessEnv = { ...process.env, DKH_HOME: home, DKH_PLAIN: '1' };
+  const env: NodeJS.ProcessEnv = { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' };
   delete env.NODE_TEST_CONTEXT;
   const child = spawn(process.execPath, [entry, 'chat', '--cwd', project, '--model', 'compatible/fixture',
     '--base-url', `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`], { env, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -56,7 +56,7 @@ async function chat(home: string, config: object | null, limit: number): Promise
 }
 
 test('30 round trips complete under the default limit instead of being truncated', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-turns-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-turns-'));
   try {
     const run = await chat(home, null, 30);
     assert.equal(run.code, 0, run.output);
@@ -66,7 +66,7 @@ test('30 round trips complete under the default limit instead of being truncated
 });
 
 test('a configured maxTurns caps the turn and says the work can be continued', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-turns-cap-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-turns-cap-'));
   try {
     const run = await chat(home, { maxTurns: 3 }, 100);
     assert.equal(run.code, 0, run.output);
@@ -77,7 +77,7 @@ test('a configured maxTurns caps the turn and says the work can be continued', a
 });
 
 test('an invalid maxTurns falls back to the default with a diagnostic', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-turns-bad-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-turns-bad-'));
   try {
     const run = await chat(home, { maxTurns: 'lots' }, 1);
     assert.equal(run.code, 0, run.output);

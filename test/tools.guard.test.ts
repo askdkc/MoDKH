@@ -9,7 +9,7 @@ import { ToolRegistry, defaultTools } from '../src/tools/registry.ts';
 import { ToolError, type ApprovalGate, type ApprovalRequest, type ToolContext, type ToolResult } from '../src/agent/types.ts';
 
 function tmpRoot(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-tools-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-tools-'));
 }
 
 class FakeGate implements ApprovalGate {
@@ -62,7 +62,7 @@ test('read_file はルート外参照を拒否する', async () => {
 test('シンボリックリンク経由のルート外参照を拒否する', async () => {
   const root = tmpRoot();
   try {
-    const outside = path.join(path.dirname(root), 'dkh-secret.txt');
+    const outside = path.join(path.dirname(root), 'modkh-secret.txt');
     fs.writeFileSync(outside, 'secret');
     fs.symlinkSync(outside, path.join(root, 'leak'));
     await expectError(run(root, new FakeGate(true), 'read_file', { path: 'leak' }), 'OUT_OF_ROOT');

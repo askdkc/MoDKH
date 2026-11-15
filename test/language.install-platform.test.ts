@@ -17,14 +17,14 @@ test('Darwin/Linux x64/arm64 target selection and official checksum requirement'
   assert.equal(hostPlatform('win32','x64'),undefined);assert.equal(hostPlatform('linux','riscv64'),undefined);
 });
 test('autoInstall=false creates no prefix; TypeScript requires actual tsserver capability',async()=>{
-  const dir=temporaryDirectory('modkh-installer-test-');const prior=process.env.DKH_HOME;process.env.DKH_HOME=path.join(dir,'home');
+  const dir=temporaryDirectory('modkh-installer-test-');const prior=process.env.MODKH_HOME;process.env.MODKH_HOME=path.join(dir,'home');
   try {
     assert.equal((await ensureInstalled(languageById('typescript')!,{autoInstall:false})).status,'unavailable');
-    assert.equal(fs.existsSync(process.env.DKH_HOME),false);
+    assert.equal(fs.existsSync(process.env.MODKH_HOME),false);
     assert.throws(()=>verifyTsserver(dir),/tsserver.js/);
     const api=path.join(dir,'node_modules/typescript/lib');fs.mkdirSync(api,{recursive:true});fs.writeFileSync(path.join(api,'tsserver.js'),'// fixture');
     assert.doesNotThrow(()=>verifyTsserver(dir));
-  } finally {if(prior===undefined)delete process.env.DKH_HOME;else process.env.DKH_HOME=prior;fs.rmSync(dir,{recursive:true,force:true});}
+  } finally {if(prior===undefined)delete process.env.MODKH_HOME;else process.env.MODKH_HOME=prior;fs.rmSync(dir,{recursive:true,force:true});}
 });
 
 test('PHP native download rejects checksum mismatch before extraction or publication',async()=>{

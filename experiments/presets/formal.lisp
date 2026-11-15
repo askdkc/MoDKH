@@ -1,4 +1,4 @@
-(in-package :dkh)
+(in-package :modkh)
 (defmicroagent micro-zenki :title "前鬼" :tool "verify_tla"
   :language "tla" :task-kind "verify" :max-turns 4
   :instruction "指定モデルと設定をTLCで検査し、有限探索範囲・不変条件・反例・制約を返す。実装との等価性は別問題。")

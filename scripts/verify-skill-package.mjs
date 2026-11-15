@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-skill-package-'));
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-skill-package-'));
 try {
   const packed = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', directory, '--cache', path.join(directory, 'cache')], { encoding: 'utf8' }));
   execFileSync('tar', ['-xzf', path.join(directory, packed[0].filename), '-C', directory]);

@@ -116,7 +116,7 @@ export class McpStdioClient {
 
     try {
       const result = await this.request('initialize', {
-        protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'dkh', version: '0.1.0' },
+        protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'modkh', version: '0.1.0' },
       }, this.connectTimeoutMs, signal);
       if (!result || typeof result !== 'object') throw new Error('MCP初期化応答が不正');
       if (signal?.aborted || this.closed) throw new Error('MCP接続を中断した');

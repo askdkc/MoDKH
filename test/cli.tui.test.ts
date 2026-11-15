@@ -10,7 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { screenFrom } from './tui.screen.ts';
 
 // Stream-level terminal integration, not a substitute for the real PTY acceptance script.
-const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 const preload = `
   process.stdin.isTTY = true;
   process.stdin.isRaw = false;
@@ -22,7 +22,7 @@ const preload = `
 `;
 
 test('public CLI terminal path: logo → completion → seven providers → connect → response → Stop → recover → exit', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-tui-entry-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-tui-entry-'));
   const requests: Record<string, unknown>[] = [];
   const server = http.createServer((req, res) => {
     let body = '';
@@ -45,7 +45,7 @@ test('public CLI terminal path: logo → completion → seven providers → conn
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(preload)}`, entry], {
     cwd: home,
-    env: { ...process.env, DKH_HOME: home, DKH_PLAIN: '0', TERM: 'xterm-256color',
+    env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '0', TERM: 'xterm-256color',
       OLLAMA_BASE_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
       OLLAMA_CLOUD_BASE_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/cloud/v1`, OLLAMA_API_KEY: '' },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -71,7 +71,7 @@ test('public CLI terminal path: logo → completion → seven providers → conn
     });
   };
   try {
-    await wait('何を調べますか'); assert.match(output, /██████/); assert.match(output, /DKH/);
+    await wait('何を調べますか'); assert.match(output, /██████/); assert.match(output, /MODKH/);
     send('/conn'); await wait('Commands');
     send('\r'); await wait('Hermes Agent');
     for (const label of ['OpenAI', 'OpenCode', 'Ollama Local', 'Ollama Cloud', 'OpenRouter', 'Infron', 'Hermes Agent']) assert.ok(output.slice(start).includes(label), label);

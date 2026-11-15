@@ -3,7 +3,7 @@ import path from 'node:path';
 import { configDir } from './config.ts';
 
 /**
- * Provider API keys entered at /connect. Kept in the DKH config directory with mode 0600 and
+ * Provider API keys entered at /connect. Kept in the MODKH config directory with mode 0600 and
  * never written to a session log or echoed back by a command. Environment variables still win,
  * so an exported key is not silently overridden by a stale saved one.
  */

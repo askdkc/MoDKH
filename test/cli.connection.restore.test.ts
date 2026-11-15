@@ -6,10 +6,10 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { SessionStore } from '../src/session/store.ts';
 
-const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 async function launch(home: string, args: string[], input = '/exit\n') {
   const child = spawn(process.execPath, [...(fs.existsSync(path.join(home, 'transport.mjs')) ? ['--import', path.join(home, 'transport.mjs')] : []), entry, '--cwd', home, ...args], {
-    env: { ...process.env, DKH_HOME: home, DKH_PLAIN: '1' }, stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' }, stdio: ['pipe', 'pipe', 'pipe'],
   });
   let output = '';
   child.stdout.on('data', d => { output += d; }); child.stderr.on('data', d => { output += d; });
@@ -22,7 +22,7 @@ async function launch(home: string, args: string[], input = '/exit\n') {
 }
 
 test('saved demo never runs on ordinary startup or overwrites the real connection', async t => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-demo-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-demo-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const file = path.join(home, 'config.json');
   fs.writeFileSync(file, JSON.stringify({ model: 'fixed/scripted' }));
@@ -39,14 +39,14 @@ test('saved demo never runs on ordinary startup or overwrites the real connectio
 });
 
 test('restored URL, config updates and resumed session retain the actual connection across launches', async t => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-restore-flow-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-restore-flow-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   // Exercise the public CLI and real SDK with an in-process SSE transport (no listening socket).
   fs.writeFileSync(path.join(home, 'transport.mjs'), `
     import fs from 'node:fs'; import path from 'node:path';
     globalThis.fetch = async (url, init) => {
       const body = JSON.parse(init.body);
-      fs.appendFileSync(path.join(process.env.DKH_HOME, 'requests.jsonl'), JSON.stringify({url, ...body}) + '\\n');
+      fs.appendFileSync(path.join(process.env.MODKH_HOME, 'requests.jsonl'), JSON.stringify({url, ...body}) + '\\n');
       return new Response('data: ' + JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', created: 1, model: body.model,
         choices: [{ index: 0, delta: { content: 'answer to ' + body.messages.at(-1).content }, finish_reason: 'stop' }] })
         + '\\n\\ndata: [DONE]\\n\\n', { headers: { 'content-type': 'text/event-stream' } });
@@ -72,13 +72,13 @@ test('restored URL, config updates and resumed session retain the actual connect
 });
 
 test('CLI passes the request and tool failures back to the model, applies the repair and runs verification', async t => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-request-flow-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-request-flow-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   fs.writeFileSync(path.join(home, 'value.txt'), 'before');
   fs.writeFileSync(path.join(home, 'verify.mjs'), `import fs from 'node:fs'; import assert from 'node:assert/strict'; assert.equal(fs.readFileSync('value.txt', 'utf8'), 'after'); console.log('VERIFIED_ACTUAL_FILE');`);
   fs.writeFileSync(path.join(home, 'transport.mjs'), `
     import fs from 'node:fs'; import path from 'node:path';
-    const home = process.env.DKH_HOME;
+    const home = process.env.MODKH_HOME;
     globalThis.fetch = async (_url, init) => {
       const body = JSON.parse(init.body);
       const outputs = body.messages.filter(m => m.role === 'tool').map(m => JSON.parse(m.content));
@@ -113,10 +113,10 @@ test('CLI passes the request and tool failures back to the model, applies the re
 });
 
 test('public interactive startup omits the redundant session instructions', async t => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-startup-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-startup-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   fs.writeFileSync(path.join(home, 'transport.mjs'), `
-    delete process.env.DKH_PLAIN;
+    delete process.env.MODKH_PLAIN;
     process.env.TERM = 'xterm-256color';
     process.stdin.isTTY = true;
     process.stdin.setRawMode = raw => { process.stdin.isRaw = raw; return process.stdin; };

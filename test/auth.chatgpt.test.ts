@@ -22,29 +22,29 @@ import {
 import { ResponsesApiModel } from '../src/model/chatgpt/responses.ts';
 import { ToolRegistry, defaultTools } from '../src/tools/registry.ts';
 import { runAgentLoop } from '../src/agent/loop.ts';
-import { DKH_SKILL_BINDING, readBundledSkill } from '../src/agent/bundled-skills.ts';
+import { MODKH_SKILL_BINDING, readBundledSkill } from '../src/agent/bundled-skills.ts';
 import type { AgentMessage } from '../src/agent/types.ts';
 
 function withHome<T>(fn: () => T): T {
-  const prev = process.env['DKH_HOME'];
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-auth-'));
-  process.env['DKH_HOME'] = home;
+  const prev = process.env['MODKH_HOME'];
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-auth-'));
+  process.env['MODKH_HOME'] = home;
   try {
     return fn();
   } finally {
-    process.env['DKH_HOME'] = prev;
+    process.env['MODKH_HOME'] = prev;
     fs.rmSync(home, { recursive: true, force: true });
   }
 }
 
 async function withHomeAsync<T>(fn: () => Promise<T>): Promise<T> {
-  const prev = process.env['DKH_HOME'];
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-auth-'));
-  process.env['DKH_HOME'] = home;
+  const prev = process.env['MODKH_HOME'];
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-auth-'));
+  process.env['MODKH_HOME'] = home;
   try {
     return await fn();
   } finally {
-    process.env['DKH_HOME'] = prev;
+    process.env['MODKH_HOME'] = prev;
     fs.rmSync(home, { recursive: true, force: true });
   }
 }
@@ -198,7 +198,7 @@ test('Responses API アダプターが偽SSEでストリーミング+関数往�
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as AddressInfo).port;
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-responses-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-responses-'));
   try {
     fs.writeFileSync(path.join(root, 'a.txt'), 'hello world\n');
     const model = new ResponsesApiModel({
@@ -228,7 +228,7 @@ test('Responses API アダプターが偽SSEでストリーミング+関数往�
     const first = requests[0];
     assert.equal(first['store'], false);
     // 日本語の依頼ではホスト指示にルーターと日本語スキルが追加される。
-    const instructions = 'テスト用指示\n\n' + DKH_SKILL_BINDING
+    const instructions = 'テスト用指示\n\n' + MODKH_SKILL_BINDING
       + `\n[kiokuko-soul]\n${readBundledSkill('kiokuko-soul')}\n`
       + `\n[natural-japanese-output]\n${readBundledSkill('natural-japanese-output')}\n`;
     assert.equal(first['instructions'], instructions);
@@ -237,7 +237,7 @@ test('Responses API アダプターが偽SSEでストリーミング+関数往�
     assert.equal(tools[0].strict, false);
     const second = requests[1];
     assert.equal(second['instructions'], instructions);
-    assert.doesNotMatch(JSON.stringify(second['input']), /DKH host binding|\[natural-japanese-output\]/);
+    assert.doesNotMatch(JSON.stringify(second['input']), /MODKH host binding|\[natural-japanese-output\]/);
     const input2 = second['input'] as { type?: string; output?: string }[];
     const outItem = input2.find((i) => i.type === 'function_call_output');
     assert.ok(outItem);

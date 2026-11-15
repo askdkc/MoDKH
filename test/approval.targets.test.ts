@@ -6,7 +6,7 @@ import path from 'node:path';
 import { ToolRegistry, defaultTools } from '../src/tools/registry.ts';
 
 async function workspace(run: (root: string, outside: string) => Promise<void>) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-approval-target-'));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-approval-target-'));
   const root = path.join(base, 'root'), outside = path.join(base, 'outside');
   fs.mkdirSync(root); fs.mkdirSync(outside);
   try { await run(root, outside); }

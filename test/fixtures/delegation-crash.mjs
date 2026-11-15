@@ -9,7 +9,7 @@ const [root, phase] = process.argv.slice(2);
 const store = new SessionStore(path.join(root, 'sessions'));
 const parent = store.create(root, 'fixed/crash');
 fs.writeFileSync(path.join(root, 'parent-id'), parent.id);
-parent.append({ role: 'assistant', origin: 'manual', content: '', toolCalls: [{ id: 'crash-call', name: 'run_subagent', args: { pluginId: 'dkh-worker', task: 'Crash boundary' } }] });
+parent.append({ role: 'assistant', origin: 'manual', content: '', toolCalls: [{ id: 'crash-call', name: 'run_subagent', args: { pluginId: 'modkh-worker', task: 'Crash boundary' } }] });
 const record = parent.recordDelegation.bind(parent);
 parent.recordDelegation = event => {
   record(event);
@@ -34,5 +34,5 @@ const service = new SubagentService({
     [{ type: 'text-delta', text: 'Captured output' }, { type: 'finish', stopReason: 'stop' }],
   ]) }),
 });
-await (await service.start({ pluginId: 'dkh-worker', task: 'Crash boundary' }, { callId: 'crash-call', signal: new AbortController().signal })).result;
+await (await service.start({ pluginId: 'modkh-worker', task: 'Crash boundary' }, { callId: 'crash-call', signal: new AbortController().signal })).result;
 throw new Error('Crash boundary was not reached');

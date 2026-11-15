@@ -38,7 +38,7 @@ readline.createInterface({input: process.stdin}).on('line', (line) => {
 `;
 
 async function withMemory(mode: string, run: (mem: KiokukoMemory, dir: string) => Promise<void>) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-mem-boundary-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-mem-boundary-'));
   const mem = openKiokukoMemory(true, {
     command: process.execPath, args: ['-e', BOUNDARY_SERVER],
     env: { LOG_FILE: path.join(dir, 'calls.jsonl'), MODE: mode },
@@ -141,7 +141,7 @@ test('不正な保存応答をsavedとは表示しない', async () => {
 });
 
 test('closeはSIGTERMを無視するMCP子プロセスも回収してから戻る', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-mcp-close-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-mcp-close-'));
   const client = new McpStdioClient({ command: process.execPath, args: ['-e', BOUNDARY_SERVER],
     env: { LOG_FILE: path.join(dir, 'calls.jsonl'), MODE: 'stubborn' } });
   let pid: number | undefined;
@@ -170,7 +170,7 @@ function readCalls(dir: string): { call: string; args?: Record<string, unknown> 
 }
 
 test('既定は無効: 接続せず null / declined を返す', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-mem-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-mem-'));
   const mem = openKiokukoMemory(false, {
     command: process.execPath,
     args: [FAKE_SERVER],
@@ -188,7 +188,7 @@ test('既定は無効: 接続せず null / declined を返す', async () => {
 });
 
 test('有効時: policy→検索→承認時のみ capture が stdio MCP で通る', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-mem-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-mem-'));
   const mem = openKiokukoMemory(true, {
     command: process.execPath,
     args: [FAKE_SERVER],
@@ -240,7 +240,7 @@ test('有効時: policy→検索→承認時のみ capture が stdio MCP で通�
 
 test('接続不能でも例外を出さず、null で続行する', async () => {
   const mem = openKiokukoMemory(true, {
-    command: 'dkh-no-such-command-xyz',
+    command: 'modkh-no-such-command-xyz',
   });
   const policy = await mem.policy();
   assert.equal(policy, null);

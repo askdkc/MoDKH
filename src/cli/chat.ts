@@ -267,7 +267,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   // Session-wide totals: only provider-reported numbers are added, never estimates.
   let usageTotals: UsageTotals = EMPTY_USAGE;
   let aborted = false;
-  // ワークスペースの .dkh/sessions/<id>.md に人間が読める実行記録を残す。
+  // ワークスペースの .modkh/sessions/<id>.md に人間が読める実行記録を残す。
   // 失敗(書き込み不可など)は一度だけ報告し、会話とセッション保存は止めない。
   let workspaceRecordFailed = false;
   const saveWorkspaceRecord = (): void => {
@@ -277,7 +277,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       recordSessionRecord(cwd, session, unknown);
     } catch (e) {
       workspaceRecordFailed = true;
-      ui.write(`(ワークスペース記録を保存できません: ${cwd}/.dkh — ${(e as Error).message})\n`);
+      ui.write(`(ワークスペース記録を保存できません: ${cwd}/.modkh — ${(e as Error).message})\n`);
     }
   };
   saveWorkspaceRecord();
@@ -533,7 +533,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       }
       if (line === '/help') {
         ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /allow: 承認ポリシー  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n'
-          + '/reasoning off|minimal|low|medium|high [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信 / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 dkh: スクリーンリーダー・行入力モード\n');
+          + '/reasoning off|minimal|low|medium|high [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信 / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');
         continue;
       }
       if (line.startsWith('/head ')) { if (!model) { ui.write('/connect でモデルを接続してください\n'); continue; } await runTurn(line.slice(6), model); continue; }
@@ -547,7 +547,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         const available = subagents.list();
         if (line === '/agents') {
           for (const item of available) ui.write(`${item.id}  ${item.title}  ${item.kind}  ${item.description}\n`);
-          ui.write(available.length ? '/agents run <ID> で依頼 (子の自動再開・並列実行なし)\n' : '利用可能な子はありません。dkh plugin list と設定を確認してください。\n');
+          ui.write(available.length ? '/agents run <ID> で依頼 (子の自動再開・並列実行なし)\n' : '利用可能な子はありません。modkh plugin list と設定を確認してください。\n');
           continue;
         }
         const match = /^\/agents run(?:\s+([a-z][a-z0-9-]*))?(?:\s+([\s\S]*))?$/.exec(line);

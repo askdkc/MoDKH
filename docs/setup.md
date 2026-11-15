@@ -71,7 +71,7 @@ CL-LSPのREADMEにある `ros install lem-project/lem cxxxr/cl-lsp` は、この
 
 MoDKH側は取得したLemの `qlfile` を専用領域で `qlot install --no-deps` に渡し、`QUICKLISP_HOME` をCL-LSPと内部プロセスで共有します。生成lock、段階別結果、ASDFの解決先を記録します。実ダウンロード・LSP応答の検証は未完了です。QlotやSBCLの導入成功だけでCL-LSPの動作成功とはしません。
 
-既に動くCL-LSPがある場合は `~/.config/dkh/config.json` の既存設定に次を統合します。
+既に動くCL-LSPがある場合は `~/.config/modkh/config.json` の既存設定に次を統合します。
 
 ```json
 {

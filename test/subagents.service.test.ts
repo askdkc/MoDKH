@@ -14,7 +14,7 @@ import { parseAgentSettings } from '../src/subagents/settings.ts';
 
 const done: FixedStep = [{ type: 'text-delta', text: 'Observed result' }, { type: 'finish', stopReason: 'stop' }];
 function fixture(t: TestContext) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-subagents-'));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-subagents-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const root = fs.realpathSync(directory);
   const store = new SessionStore(path.join(root, 'sessions'));
@@ -30,7 +30,7 @@ function fixture(t: TestContext) {
   return { root, store, parent, manager, models, approvals, opts };
 }
 const owner = (callId = 'call-1', signal = new AbortController().signal) => ({ callId, signal });
-const request = { pluginId: 'dkh-explorer', task: 'Read current sources' };
+const request = { pluginId: 'modkh-explorer', task: 'Read current sources' };
 function externalFixture(root: string, manager: PluginManager, body: string): string {
   const directory = path.join(root, 'external');
   fs.mkdirSync(directory);
@@ -83,8 +83,8 @@ test('worker approval names the exact child, and denied edits leave no file', as
   const f = fixture(t);
   const steps: FixedStep[] = [[{ type: 'tool-call', call: { id: 'write', name: 'create_file', args: { path: 'denied', content: 'bad' } } }, { type: 'finish', stopReason: 'tool-calls' }], done];
   const service = new SubagentService({ ...f.opts, approval: { approve: async req => { f.approvals.push(req.title); return false; } }, connection: () => ({ ref: 'fixed/scripted', create: () => new FixedModel(steps) }) });
-  const result = await (await service.start({ ...request, pluginId: 'dkh-worker' }, owner())).result;
-  assert.match(f.approvals[0], new RegExp(`dkh-worker / ${result.agentId}`));
+  const result = await (await service.start({ ...request, pluginId: 'modkh-worker' }, owner())).result;
+  assert.match(f.approvals[0], new RegExp(`modkh-worker / ${result.agentId}`));
   assert.equal(fs.existsSync(path.join(f.root, 'denied')), false);
 });
 
@@ -96,7 +96,7 @@ test('child cancellation releases only its approval waiter and returns to the pa
   const gate = new TerminalApprovalGate({ write: () => {}, ask: (_prompt, signal) => new Promise<string>(resolve => { requested(); signal?.addEventListener('abort', () => resolve(''), { once: true }); }) }, 'none');
   const model = new FixedModel([[{ type: 'tool-call', call: { id: 'write', name: 'create_file', args: { path: 'cancelled', content: 'bad' } } }, { type: 'finish', stopReason: 'tool-calls' }], done]);
   const service = new SubagentService({ ...f.opts, approval: gate, connection: () => ({ ref: 'fixed/scripted', create: () => model }) });
-  const handle = await service.start({ ...request, pluginId: 'dkh-worker' }, owner('call-1', AbortSignal.timeout(3000)));
+  const handle = await service.start({ ...request, pluginId: 'modkh-worker' }, owner('call-1', AbortSignal.timeout(3000)));
   try {
     await reached;
     await assert.rejects(service.start(request, owner('other')), /1つまで/);
@@ -113,7 +113,7 @@ test('uncertain child effects propagate through the public tool and block new ID
   const steps: FixedStep[] = [[{ type: 'tool-call', call: { id: 'effect', name: 'create_file', args: {} } }, { type: 'finish', stopReason: 'tool-calls' }]];
   const service = new SubagentService({ ...f.opts, tools: [tool], connection: () => ({ ref: 'fixed/scripted', create: () => new FixedModel(steps) }) });
   const registry = new ToolRegistry(subagentTools(service));
-  const call = { id: 'delegate', name: 'run_subagent', args: { ...request, pluginId: 'dkh-worker' } };
+  const call = { id: 'delegate', name: 'run_subagent', args: { ...request, pluginId: 'modkh-worker' } };
   const ctx = { root: f.root, approval: f.opts.approval, signal: new AbortController().signal };
   const first = await registry.executeOne(call, ctx);
   assert.equal(first.status, 'unknown');
@@ -141,7 +141,7 @@ test('invalid requests, pre-start Stop and disabled plugins create no child sess
   await assert.rejects(service.start({ ...request, extra: true }, owner()), /Unknown field/);
   await assert.rejects(service.start({ ...request, task: 'x'.repeat(32769) }, owner()), /Invalid task/);
   await assert.rejects(service.start(request, owner('stop', AbortSignal.abort())), /中断済み/);
-  f.manager.setEnabled('dkh-explorer', false);
+  f.manager.setEnabled('modkh-explorer', false);
   await assert.rejects(service.start(request, owner()), /利用できない/);
   assert.equal(f.store.list().length, 1);
   assert.deepEqual(f.parent.delegations(), []);
@@ -163,9 +163,9 @@ test('legacy sessions remain readable and gain an append-only format event when 
 });
 
 test('malformed per-plugin settings fail closed without changing another plugin', () => {
-  const parsed = parseAgentSettings({ 'dkh-worker': { tools: 'all' }, 'dkh-explorer': { tools: ['read_file'] } });
-  assert.equal(parsed.settings['dkh-worker'].disabled, true);
-  assert.deepEqual(parsed.settings['dkh-explorer'].tools, ['read_file']);
+  const parsed = parseAgentSettings({ 'modkh-worker': { tools: 'all' }, 'modkh-explorer': { tools: ['read_file'] } });
+  assert.equal(parsed.settings['modkh-worker'].disabled, true);
+  assert.deepEqual(parsed.settings['modkh-explorer'].tools, ['read_file']);
   assert.equal(parseAgentSettings(null).unavailable, true);
 });
 
@@ -292,7 +292,7 @@ test('parent model delegates through the ordinary agent loop and consumes a pers
 
 test('effective permissions are the intersection of parent, user and plugin policy', async t => {
   const f = fixture(t);
-  const service = new SubagentService({ ...f.opts, tools: defaultTools().filter(t => ['read_file', 'create_file'].includes(t.name)), settings: { 'dkh-explorer': { tools: ['read_file', 'run_command'] } } });
+  const service = new SubagentService({ ...f.opts, tools: defaultTools().filter(t => ['read_file', 'create_file'].includes(t.name)), settings: { 'modkh-explorer': { tools: ['read_file', 'run_command'] } } });
   await (await service.start(request, owner())).result;
   assert.deepEqual(f.models[0].requests[0].tools.map(t => t.name), ['read_file']);
   assert.deepEqual(f.parent.delegations()[0].effectiveTools, ['read_file']);

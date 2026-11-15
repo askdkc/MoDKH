@@ -5,19 +5,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
 /**
  * An edit must not wait for language analysis. The fixture model edits one file and then runs a
  * command; the total time is measured with analysis forced to be slow via a disabled server.
  */
 test('an edit returns before analysis finishes, and the next read still reports diagnostics', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-edit-fast-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-edit-fast-'));
   const project = path.join(home, 'project');
   fs.mkdirSync(project);
-  fs.writeFileSync(path.join(project, 'README.md'), '# dkh サンプル\n');
+  fs.writeFileSync(path.join(project, 'README.md'), '# modkh サンプル\n');
   fs.writeFileSync(path.join(project, 'a.ts'), 'const a = 1;\n');
-  const env: NodeJS.ProcessEnv = { ...process.env, DKH_HOME: home, DKH_PLAIN: '1' };
+  const env: NodeJS.ProcessEnv = { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' };
   delete env.NODE_TEST_CONTEXT;
   // Point the server at a command that never answers so a synchronous wait would be obvious.
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({

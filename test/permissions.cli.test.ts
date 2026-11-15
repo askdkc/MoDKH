@@ -5,12 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-const entry = process.env.DKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
 async function cli(home: string, input: string): Promise<{ output: string; code: number | null }> {
   const project = path.join(home, 'project');
   fs.mkdirSync(project, { recursive: true });
-  const env: NodeJS.ProcessEnv = { ...process.env, DKH_HOME: home, DKH_PLAIN: '1' };
+  const env: NodeJS.ProcessEnv = { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' };
   delete env.NODE_TEST_CONTEXT;
   const child = spawn(process.execPath, [entry, 'chat', '--cwd', project], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   let output = '';
@@ -29,7 +29,7 @@ async function cli(home: string, input: string): Promise<{ output: string; code:
 }
 
 test('/allow shows and changes the policy, and --save writes the config', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-allow-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-allow-'));
   try {
     const shown = await cli(home, '/allow\n/exit\n');
     assert.equal(shown.code, 0, shown.output);
@@ -58,7 +58,7 @@ test('/allow shows and changes the policy, and --save writes the config', async 
 });
 
 test('an invalid saved policy falls back to workspace with a diagnostic', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-allow-bad-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-allow-bad-'));
   try {
     fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ permissions: 'readonly' }));
     const { output, code } = await cli(home, '/allow\n/exit\n');

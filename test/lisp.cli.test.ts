@@ -14,7 +14,7 @@ for (const isolation of ['integrity-only', 'required']) test(isolation === 'requ
   fs.writeFileSync(path.join(root,'src/add.mjs'),'export const add=(a,b)=>a-b;');
   fs.writeFileSync(path.join(root,'test/add.test.mjs'),'import {add} from "../src/add.mjs";import assert from "node:assert/strict";assert.equal(add(2,3),5);');
   const before=sha256(fs.readFileSync(path.join(root,'test/add.test.mjs')));
-  const source=`(in-package :dkh)
+  const source=`(in-package :modkh)
 (defmicroagent micro-js-edit :title "JS編集担当" :tool "edit_file" :workflow "edit-verify" :language "js" :task-kind "edit" :instruction "Fix addition" :max-turns 8)
 (defmicroagent micro-js-outline :tool "code_outline" :language "js" :task-kind "outline" :instruction "Inspect structure")
 (set-agent-check "micro-js-edit" "node --test test/add.test.mjs" :sources '("src/add.mjs") :protected '("test/add.test.mjs"))`;
@@ -25,7 +25,7 @@ for (const isolation of ['integrity-only', 'required']) test(isolation === 'requ
   const child=[step('read','read_file',{path:'src/add.mjs'}),step('edit','edit_file',{path:'src/add.mjs',old_string:'a-b',new_string:'a+b'}),done];
   const harness=`import {runChat} from ${JSON.stringify(chat)};import {FixedModel} from ${JSON.stringify(fixed)};import fs from 'node:fs';const head=new FixedModel(${JSON.stringify(head)}),observer=new FixedModel(${JSON.stringify(observer)}),child=new FixedModel(${JSON.stringify(child)});let count=0;await runChat({args:${JSON.stringify({cwd:root,model:'fixed/scripted','verification-isolation':isolation,'lisp-config':'agents.lisp','trust-lisp-sha256':sha256(source)})},modelFactory:()=>[head,observer,child][count++]});fs.writeFileSync(${JSON.stringify(path.join(root,'requests.json'))},JSON.stringify({head:head.requests,child:child.requests}));`;
   try {
-    const process_=spawn(process.execPath,['--input-type=module','-e',harness],{cwd:root,env:{...privateEnvironment(home),DKH_HOME:home,DKH_PLAIN:'1',NO_COLOR:'1'},stdio:['pipe','pipe','pipe']});
+    const process_=spawn(process.execPath,['--input-type=module','-e',harness],{cwd:root,env:{...privateEnvironment(home),MODKH_HOME:home,MODKH_PLAIN:'1',NO_COLOR:'1'},stdio:['pipe','pipe','pipe']});
     let output='';process_.stdout.on('data',b=>output+=b);process_.stderr.on('data',b=>output+=b);
     const timer=setTimeout(()=>process_.kill('SIGKILL'),10000);process_.stdin.end('Fix addition\n/exit\n');
     const exit=await new Promise<number|null>((resolve,reject)=>{process_.on('error',reject);process_.on('close',resolve);});clearTimeout(timer);

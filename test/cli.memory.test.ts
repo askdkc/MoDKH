@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
 
-const entry = process.env['DKH_TEST_ENTRY'] ?? fileURLToPath(new URL('../src/index.ts', import.meta.url));
+const entry = process.env['MODKH_TEST_ENTRY'] ?? fileURLToPath(new URL('../src/index.ts', import.meta.url));
 const serverSource = String.raw`
 const fs = require('node:fs');
 const readline = require('node:readline');
@@ -16,13 +16,13 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line);
   if (m.id === undefined) return;
   const name = m.params.name || m.method;
-  fs.appendFileSync(process.env.DKH_MEMORY_LOG, JSON.stringify({name, args:m.params.arguments}) + '\n');
+  fs.appendFileSync(process.env.MODKH_MEMORY_LOG, JSON.stringify({name, args:m.params.arguments}) + '\n');
   const send = (result) => process.stdout.write(JSON.stringify({jsonrpc:'2.0', id:m.id, result}) + '\n');
   if (m.method === 'initialize') return send({serverInfo:{name:'cli-memory-test'}});
   if (name === 'memory_policy') return send({content:[{type:'text',text:JSON.stringify({global:{read:true,write:false},projects:[]})}]});
   if (name === 'memory_recall') {
-    if (process.env.DKH_MEMORY_MODE === 'error') return send({isError:true,content:[{type:'text',text:'optional backend unavailable'}]});
-    if (process.env.DKH_MEMORY_MODE === 'hang') return;
+    if (process.env.MODKH_MEMORY_MODE === 'error') return send({isError:true,content:[{type:'text',text:'optional backend unavailable'}]});
+    if (process.env.MODKH_MEMORY_MODE === 'hang') return;
     return send({content:[{type:'text',text:'REFERENCE_FOR_' + m.params.arguments.query}]});
   }
   send({isError:true,content:[{type:'text',text:'unexpected call'}]});
@@ -33,7 +33,7 @@ interface WireMessage { role: string; content: string }
 interface SessionEvent { type: string; message?: WireMessage; [key: string]: unknown }
 
 async function chatWithMemory(mode: string, inputs: string[]) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-cli-memory-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cli-memory-'));
   const requests: { messages: WireMessage[] }[] = [];
   const backend = http.createServer((req, res) => {
     let raw = '';
@@ -58,8 +58,8 @@ async function chatWithMemory(mode: string, inputs: string[]) {
     } }));
     const child = spawn(process.execPath, [entry, 'chat', '--cwd', home,
       '--model', 'compatible/fake', '--base-url', `http://127.0.0.1:${(backend.address() as AddressInfo).port}/v1`],
-    { env: { ...process.env, DKH_HOME: home, DKH_MEMORY_MODE: mode,
-      DKH_MEMORY_LOG: path.join(home, 'memory.jsonl') }, stdio: ['pipe', 'pipe', 'pipe'] });
+    { env: { ...process.env, MODKH_HOME: home, MODKH_MEMORY_MODE: mode,
+      MODKH_MEMORY_LOG: path.join(home, 'memory.jsonl') }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });

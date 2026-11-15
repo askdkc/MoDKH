@@ -47,13 +47,13 @@ export interface SessionSummary {
   seq: number;
 }
 
-/** 既定の保存先。DKH_HOME で差し替え可能(検証用)。 */
+/** 既定の保存先。MODKH_HOME で差し替え可能(検証用)。 */
 export function defaultSessionDir(): string {
-  if (process.env['DKH_HOME']) {
-    return path.join(process.env['DKH_HOME'], 'sessions');
+  if (process.env['MODKH_HOME']) {
+    return path.join(process.env['MODKH_HOME'], 'sessions');
   }
   const configBase = process.env['XDG_CONFIG_HOME'] ?? path.join(os.homedir(), '.config');
-  return path.join(configBase, 'dkh', 'sessions');
+  return path.join(configBase, 'modkh', 'sessions');
 }
 
 /**

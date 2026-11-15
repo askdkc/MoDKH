@@ -5,7 +5,7 @@
  * this release, so the picker works offline and without a key. It is a convenience list, not an
  * entitlement: a model may require a plan the account does not have, and the service may add or
  * retire models at any time. `/connect <provider>/<model>` always accepts an ID from outside this
- * list, and `dkh models refresh` can rewrite the snapshot from the live endpoint.
+ * list, and `modkh models refresh` can rewrite the snapshot from the live endpoint.
  */
 export interface CatalogEntry {
   /** Full `<provider>/<model>` reference used everywhere else. */
@@ -45,7 +45,7 @@ export const OLLAMA_CLOUD_CATALOG: readonly CatalogEntry[] = [
 /** Sentinel value for the pinned search row; never a real model reference. */
 export const SEARCH_ROW_VALUE = '\u0000search'
 
-/** The endpoint and the date of the snapshot above; shown by `dkh models status`. */
+/** The endpoint and the date of the snapshot above; shown by `modkh models status`. */
 export const OLLAMA_CLOUD_SOURCE = {
   url: 'https://ollama.com/v1/models',
   capturedAt: '2026-11-14',

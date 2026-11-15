@@ -35,17 +35,17 @@ test('buildModelFromRef は未知のプロバイダーで明示エラー(自動�
 });
 
 test('buildModelFromRef は chatgpt 未ログインで明示エラー', () => {
-  const prev = process.env['DKH_HOME'];
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-connect-'));
-  process.env['DKH_HOME'] = home;
+  const prev = process.env['MODKH_HOME'];
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-connect-'));
+  process.env['MODKH_HOME'] = home;
   try {
     assert.throws(
       () => buildModelFromRef('chatgpt/gpt-5.2'),
       /ChatGPTにログインしていない/,
     );
   } finally {
-    if (prev === undefined) delete process.env['DKH_HOME'];
-    else process.env['DKH_HOME'] = prev;
+    if (prev === undefined) delete process.env['MODKH_HOME'];
+    else process.env['MODKH_HOME'] = prev;
   }
 });
 

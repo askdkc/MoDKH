@@ -10,7 +10,7 @@ import { runAgentLoop } from '../src/agent/loop.ts';
 import type { AgentMessage, ApprovalGate, ApprovalRequest, ToolResult } from '../src/agent/types.ts';
 
 function tmpRoot(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-loop-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-loop-'));
 }
 
 class RecordingGate implements ApprovalGate {

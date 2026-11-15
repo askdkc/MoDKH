@@ -121,7 +121,7 @@ export class LspServer {
     connection.onRequest('client/unregisterCapability', () => null);
     connection.onRequest('workspace/configuration', (params: unknown) => this.configuration(params));
     // A server asking to edit the workspace is refused: edits go through the approved tool path.
-    connection.onRequest('workspace/applyEdit', () => ({ applied: false, failureReason: 'DKHはサーバー発の編集を適用しません' }));
+    connection.onRequest('workspace/applyEdit', () => ({ applied: false, failureReason: 'MODKHはサーバー発の編集を適用しません' }));
     connection.onRequest('window/workDoneProgress/create', () => null);
     connection.onNotification('window/logMessage', (value: unknown) => {
       const message = (value as { message?: unknown })?.message;
@@ -137,7 +137,7 @@ export class LspServer {
       const rootUri = pathToFileURL(this.options.root).href;
       const initialized = await this.withTimeout(Promise.race([spawnFailure, connection.sendRequest('initialize', {
         processId: process.pid,
-        clientInfo: { name: 'dkh' },
+        clientInfo: { name: 'modkh' },
         rootUri,
         workspaceFolders: [{ uri: rootUri, name: path.basename(this.options.root) }],
         capabilities: {

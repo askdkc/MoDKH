@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { bundledSkills, readBundledSkill, DKH_SKILL_BINDING } from './bundled-skills.ts';
+import { bundledSkills, readBundledSkill, MODKH_SKILL_BINDING } from './bundled-skills.ts';
 
 export interface TaskSkill {
   name: string;
@@ -85,7 +85,7 @@ function readLocal(root: string, relative: string, limit: number): string {
 
 function localCatalog(root: string, warnings: string[], builtin: readonly TaskSkill[]): TaskSkill[] {
   let text: string;
-  try { text = readLocal(root, '.dkh/skills.json', MAX_CATALOG_BYTES); }
+  try { text = readLocal(root, '.modkh/skills.json', MAX_CATALOG_BYTES); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') warnings.push('スキル一覧を読めないため組み込み手順のみ使用');
     return [];
@@ -131,7 +131,7 @@ export function prepareSkillContext(task: string, root: string): SkillContext {
   // Host entry and mandatory code guidance precede optional specialists; no top-three cutoff on core contracts.
   const order = ['kiokuko-soul', ...CODING_CORE, ...optional.map(skill => skill.name), 'natural-japanese-output'];
   const selected = [...new Set(order)].filter(name => names.has(name)).map(name => catalog.find(skill => skill.name === name)).filter((skill): skill is TaskSkill => !!skill);
-  const header = '\n\n' + DKH_SKILL_BINDING;
+  const header = '\n\n' + MODKH_SKILL_BINDING;
   let text = '';
   const delivered: string[] = [];
   const bodies = new Set<string>();

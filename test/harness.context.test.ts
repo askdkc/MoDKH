@@ -14,7 +14,7 @@ import { toResponsesInput } from '../src/model/chatgpt/responses.ts';
 
 const context = (root: string) => ({ root, approval: { approve: async () => false } });
 test('search honors gitignore and does not feed replay archives back to the model', async t => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-source-search-')));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-source-search-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   assert.equal(spawnSync('git', ['init', '--quiet', root]).status, 0);
   fs.writeFileSync(path.join(root, '.gitignore'), '.agenticreplay/\ncustom-generated/\n');
@@ -32,7 +32,7 @@ test('search honors gitignore and does not feed replay archives back to the mode
 });
 
 test('search bounds excerpts from giant single lines while keeping the actual match visible', async t => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-long-line-')));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-long-line-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   assert.equal(spawnSync('git', ['init', '--quiet', root]).status, 0);
   fs.writeFileSync(path.join(root, 'large.json'), 'x'.repeat(300000) + 'NEEDLE' + 'y'.repeat(300000));

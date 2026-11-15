@@ -62,7 +62,7 @@ export function openKiokukoMemory(
     if (signal?.aborted) return null;
     if (policy !== null) return policy;
     if (!(await client.connect(signal))) {
-      if (client.lastError && !signal?.aborted) process.stderr.write(`dkh memory: ${client.lastError}\n`);
+      if (client.lastError && !signal?.aborted) process.stderr.write(`modkh memory: ${client.lastError}\n`);
       return null;
     }
     try {

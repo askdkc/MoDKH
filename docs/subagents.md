@@ -5,16 +5,16 @@
 ```text
 /connect fixed/scripted
 /agents
-/agents run dkh-explorer 調査する内容
-/agents run dkh-worker 実装する内容
+/agents run modkh-explorer 調査する内容
+/agents run modkh-worker 実装する内容
 ```
 
 `/agents run` だけなら種類と依頼を選択・入力できます。`fixed/scripted` はオフライン検証用の固定手順で、依頼に応じて推論するモデルではありません。通常の作業では `/connect` で利用するモデルを接続してください。
 
-- **dkh-explorer**: 列挙・検索・読み取りのみ。編集、シェル、再委譲は実行できません。
-- **dkh-worker**: 親が持つファイル・コマンドツールを利用します。編集・コマンドごとの承認は省略しません。
+- **modkh-explorer**: 列挙・検索・読み取りのみ。編集、シェル、再委譲は実行できません。
+- **modkh-worker**: 親が持つファイル・コマンドツールを利用します。編集・コマンドごとの承認は省略しません。
 - 承認にはプラグインIDと子IDが表示されます。拒否やCtrl+Cで中断でき、終了後は入力に戻ります。
-- 親セッションの子は同時に1つ、深さは1段。親は結果保存・後片付けを待ちます。別DKHプロセスとの編集排他は保証しません。
+- 親セッションの子は同時に1つ、深さは1段。親は結果保存・後片付けを待ちます。別MODKHプロセスとの編集排他は保証しません。
 - 子は独立したモデルと履歴を持ちます。親の全履歴、記憶、認証キーをプロンプトへ自動コピーしません。
 - `completed` / `ok` は実行終了であり、依頼達成やテスト合格の証明ではありません。
 
@@ -23,16 +23,16 @@
 ## ローカルパッケージを登録する
 
 ```sh
-dkh plugin add ./my-reviewer
-dkh plugin list
-dkh plugin disable my-reviewer
-dkh plugin enable my-reviewer
-dkh plugin remove my-reviewer
+modkh plugin add ./my-reviewer
+modkh plugin list
+modkh plugin disable my-reviewer
+modkh plugin enable my-reviewer
+modkh plugin remove my-reviewer
 ```
 
 登録時には内容のSHA256と警告を確認し、信頼する場合のみ `y` を入力します。登録と一覧表示ではESMをimportしません。起動前に保存した内容のdigestを再確認し、改変・無効化・重複IDは拒否します。更新は実行終了後に登録解除し、新しい内容を改めて信頼・登録してください。登録解除は監査用パッケージや会話履歴を削除しません。
 
-有効・無効の変更は新しい子の起動時に検査します。受理済みの実行を消しません。子モデル・ツールの設定変更はDKHを次に起動したときに読み込みます。組み込みは無効化できますが、削除できません。
+有効・無効の変更は新しい子の起動時に検査します。受理済みの実行を消しません。子モデル・ツールの設定変更はMODKHを次に起動したときに読み込みます。組み込みは無効化できますが、削除できません。
 
 **プラグインは任意のNode.jsコードです。OSサンドボックスではありません。** 信頼するコードだけを登録してください。管理APIを使わずにファイルやネットワークへアクセスする悪意あるコードを防ぐ仕組みではありません。npm取得、依存解決、インストールスクリプト、HMRはありません。
 
@@ -67,18 +67,18 @@ export function define() {
 
 `define()` は同期関数です。実行用の状態・プロセスを作らず、定義データを返してください。公開型は `import type { LocalPlugin, ExternalPlugin } from 'modkh/plugin-api'` で利用できます。
 
-IDは英小文字始まりの小文字英数字・ハイフンで64文字まで。`dkh-` は予約済み。API版は整数 `1` のみ。未知フィールド、範囲外entry、シンボリックリンクは拒否します。entryはパッケージ内の `.js` または `.mjs` です。
+IDは英小文字始まりの小文字英数字・ハイフンで64文字まで。`modkh-` は予約済み。API版は整数 `1` のみ。未知フィールド、範囲外entry、シンボリックリンクは拒否します。entryはパッケージ内の `.js` または `.mjs` です。
 
 上限はmanifest 64 KiB、パッケージ10 MiB・1,000エントリ（ディレクトリを含む）、深さ32。依頼32 KiB、補足128 KiB、結果テキスト64 KiB。切り捨てずエラーにします。子には120秒で停止を要求します（後片付け時間は別）。ローカルモデルは既存ループの最大25ターンです。
 
 ## 子モデルとツール制限
 
-設定は `DKH_HOME/config.json`、未指定なら `XDG_CONFIG_HOME/dkh/config.json`、さらに未指定なら `~/.config/dkh/config.json` です。既存の `memory` 設定を残して `subagents` を追加してください。
+設定は `MODKH_HOME/config.json`、未指定なら `XDG_CONFIG_HOME/modkh/config.json`、さらに未指定なら `~/.config/modkh/config.json` です。既存の `memory` 設定を残して `subagents` を追加してください。
 
 ```json
 {
   "subagents": {
-    "dkh-explorer": { "tools": ["read_file", "search_files"] },
+    "modkh-explorer": { "tools": ["read_file", "search_files"] },
     "my-reviewer": { "model": "fixed/scripted", "tools": ["read_file"] }
   }
 }
@@ -116,9 +116,9 @@ export function start(request, host) {
 - 要求だけ残った実行や `unknown` を、新しいcall IDや別プラグインで自動再送しません。
 - 再起動は子を自動再開しません。完了済み結果の閲覧に、削除済みプラグインのロードは必要ありません。
 - 取得済み出力は子の履歴にも残します。親の結果保存失敗は成功扱いせず、未確定記録を保持します。
-- 既存v1ログは書き換えず、必要に応じてv2形式イベントを追記します。旧DKHへのダウングレード後の再開は非対応です。
+- 既存v1ログは書き換えず、必要に応じてv2形式イベントを追記します。旧MODKHへのダウングレード後の再開は非対応です。
 
-登録データは設定ディレクトリ内の `plugins/catalog.json`、保存パッケージは `plugins/packages/ID/DIGEST`、実行leaseは `plugins/leases/ID/` にあります。leaseにはDKHプロセスのPIDとdigestが含まれます。クラッシュ時のlease・カタログロック・未完了stagingは自動削除しません。未確定のleaseがある種類の登録解除は拒否します。
+登録データは設定ディレクトリ内の `plugins/catalog.json`、保存パッケージは `plugins/packages/ID/DIGEST`、実行leaseは `plugins/leases/ID/` にあります。leaseにはMODKHプロセスのPIDとdigestが含まれます。クラッシュ時のlease・カタログロック・未完了stagingは自動削除しません。未確定のleaseがある種類の登録解除は拒否します。
 
 不明な実行は、親子の記録、コマンド、対象ファイル、外部・リモート処理を確認してください。履歴を書き換えて成功扱いしたり、確認なしにロックやleaseを削除したりしないでください。初版には自動復旧・lease照合コマンドはありません。停止と影響を確認したうえで、新規の実行が必要か判断します。
 

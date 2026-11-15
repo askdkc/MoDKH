@@ -9,7 +9,7 @@ import { ShellProcess, type ShellName } from './shell-process.ts';
  * readable so a late `job_output` still reports how it ended.
  *
  * Registered jobs never outlive the owning session: `close()` stops every job and waits for the
- * process groups to disappear, so DKH cannot exit leaving orphaned children.
+ * process groups to disappear, so MODKH cannot exit leaving orphaned children.
  */
 export type JobStatus = 'running' | 'stopping' | 'completed' | 'killed' | 'failed';
 

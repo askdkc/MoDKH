@@ -40,7 +40,7 @@ test('Stop terminates shell descendants, not only the shell', async () => {
 });
 
 test('Stop escalates for a descendant that ignores TERM after shell exit', async () => {
-  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-stop-ready-')));
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-stop-ready-')));
   const readyFile = path.join(directory, 'ready.json');
   const ac = new AbortController();
   const watcher = fs.watch(directory);

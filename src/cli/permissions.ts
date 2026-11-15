@@ -1,7 +1,7 @@
 /**
  * Approval policy for effectful tools.
  *
- * This decides when DKH asks the human; it is not an OS sandbox. `all` and `workspace` still run
+ * This decides when MODKH asks the human; it is not an OS sandbox. `all` and `workspace` still run
  * commands with the user's own privileges, so the distinction is about prompting, not isolation.
  */
 export type PermissionPolicy = 'all' | 'workspace' | 'none';

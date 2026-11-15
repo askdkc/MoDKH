@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Installed-package check: empty DKH_HOME -> automatic TypeScript server -> diagnostics.
+"""Installed-package check: empty MODKH_HOME -> automatic TypeScript server -> diagnostics.
 
 Runs the published CLI from the tarball install against a project with a real type error, using an
 offline OpenAI-compatible model fixture that asks for read_file. No network is needed after the
@@ -15,7 +15,7 @@ import threading
 
 cli, work, project = sys.argv[1], sys.argv[2], sys.argv[3]
 home = os.path.join(work, "lang-home")
-env = {**os.environ, "DKH_HOME": home, "DKH_PLAIN": "1"}
+env = {**os.environ, "MODKH_HOME": home, "MODKH_PLAIN": "1"}
 failures = []
 requests = []
 

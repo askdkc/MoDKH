@@ -7,13 +7,13 @@ import path from 'node:path';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-const entry = process.env['DKH_TEST_CHAT'] ?? new URL('../src/cli/chat.ts', import.meta.url).href;
+const entry = process.env['MODKH_TEST_CHAT'] ?? new URL('../src/cli/chat.ts', import.meta.url).href;
 async function chat(input: string, options = '{}', env: NodeJS.ProcessEnv = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-interactive-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-interactive-'));
   try {
     const child = spawn(process.execPath, ['--input-type=module', '-e',
       `import { runChat } from ${JSON.stringify(entry)}; await runChat({args: {}, ...${options}});`],
-    { cwd: home, env: { ...process.env, DKH_HOME: home, OPENAI_API_KEY: '', OLLAMA_API_KEY: '', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    { cwd: home, env: { ...process.env, MODKH_HOME: home, OPENAI_API_KEY: '', OLLAMA_API_KEY: '', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     child.stdout.on('data', (data) => { stdout += data; });
     child.stderr.on('data', (data) => { stderr += data; });

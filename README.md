@@ -2,7 +2,9 @@
 
 **Mixture of DKH** — Common Lispで専門担当を定義し、ヘッドモデルから調査・編集・検証を委譲できるコーディングハーネス。
 
-npmパッケージ名・コマンド名は `modkh`。既存の `dkh` コマンドとは別にインストールします。設定先は `~/.config/dkh`（変更する場合は `DKH_HOME`）です。
+npmパッケージ名・コマンド名は `modkh`。既存の `dkh` コマンドとは別にインストールします。設定先は `~/.config/modkh`（変更する場合は `MODKH_HOME`）です。
+
+既存の `.dkh`・`~/.config/dkh` は自動で読み込み・移行しません。新しい保存先は `.modkh`・`~/.config/modkh`、環境変数は `MODKH_HOME`・`MODKH_PLAIN` です。初回は `/connect` で接続を設定してください。Lisp設定も `(in-package :modkh)` を使用します。
 
 ## インストール
 
@@ -87,6 +89,6 @@ modkh language retry commonlisp
 | 言語解析の状態 | `modkh language status` |
 | 開発時の検証 | `npm run typecheck`、`npm run build`、`npm test` |
 
-承認ポリシーはOS sandboxではありません。セッション記録は作業ルートの `.dkh/sessions/` に保存します。
+承認ポリシーはOS sandboxではありません。セッション記録は作業ルートの `.modkh/sessions/` に保存します。
 
 詳細：[入力](docs/input.md) · [言語解析](docs/languages.md) · [サブエージェント](docs/subagents.md) · [Web検索](docs/web.md) · [スキルと入力節約](docs/context-efficiency.md)
