@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { ToolRegistry, defaultTools } from '../src/tools/registry.ts';
 import { ToolError, type ApprovalGate, type ApprovalRequest, type ToolContext, type ToolResult } from '../src/agent/types.ts';
@@ -182,6 +183,8 @@ test('レジストリは未知のツール名と不正な引数形状を結果�
 
 test('list / search / read が基本の読み取りを満たす', async () => {
   const root = tmpRoot();
+  // Do not inherit the enclosing repository's ignore rules for this fixture.
+  assert.equal(spawnSync('git', ['init', '--quiet', root]).status, 0);
   try {
     fs.mkdirSync(path.join(root, 'src'));
     fs.writeFileSync(path.join(root, 'src', 'main.ts'), 'export const x = 1;\nexport const y = 2;\n');

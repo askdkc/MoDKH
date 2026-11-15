@@ -27,7 +27,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-grammars.mjs && node scripts/verify-bundled-skills.mjs",
     "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json",
-    "test": "node --test --test-reporter=tap \"test/*.test.ts\""
+    "test": "node --test --test-reporter=tap \"test/*.test.ts\" \"test/*.test.mjs\""
   },
   "keywords": [
     "cli",

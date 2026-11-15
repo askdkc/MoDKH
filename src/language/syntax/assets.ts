@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,14 +23,23 @@ function assetDirectory(): string | null {
   return null;
 }
 
-export interface GrammarPaths { wasm: string; license: string }
+export interface GrammarPaths { wasm: string; license: string; bytes: Uint8Array }
 
 export function grammarPaths(id: string): GrammarPaths | null {
+  if (!/^[a-z][a-z0-9_]*$/.test(id)) return null;
   const directory = assetDirectory();
   if (!directory) return null;
   const file = path.join(directory, `tree-sitter-${id}.wasm`);
   if (!fs.existsSync(file)) return null;
-  return { wasm: file, license: path.join(directory, 'LICENSE') };
+  const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'manifest.json'), 'utf8'));
+  if (manifest.schema !== 1 || !Array.isArray(manifest.grammars)) throw new Error('Grammar integrity manifest missing or unsupported; rebuild the package');
+  const entries = manifest.grammars.filter((entry: { id?: string }) => entry.id === id);
+  if (entries.length !== 1) throw new Error(`Grammar ${id} is not uniquely declared in the manifest`);
+  const bytes = fs.readFileSync(file), entry = entries[0];
+  if (entry.bytes !== bytes.length || entry.sha256 !== createHash('sha256').update(bytes).digest('hex')) throw new Error(`Grammar ${id} digest mismatch`);
+  const license = path.join(directory, 'LICENSE');
+  if (manifest.license?.file !== 'LICENSE' || manifest.license.sha256 !== createHash('sha256').update(fs.readFileSync(license)).digest('hex')) throw new Error('Grammar license digest mismatch');
+  return { wasm: file, license, bytes };
 }
 
 export function availableGrammars(): string[] {
@@ -38,7 +48,8 @@ export function availableGrammars(): string[] {
   try {
     return fs.readdirSync(directory)
       .filter(name => name.startsWith('tree-sitter-') && name.endsWith('.wasm'))
-      .map(name => name.slice('tree-sitter-'.length, -'.wasm'.length));
+      .map(name => name.slice('tree-sitter-'.length, -'.wasm'.length))
+      .filter(id => { try { return grammarPaths(id) !== null; } catch { return false; } });
   } catch { return []; }
 }
 

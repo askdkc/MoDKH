@@ -1,130 +1,47 @@
 {
-  "baseRevision": "f3af9d9bd2308957a8a167c47f5e0f38eb3e3839",
+  "baseRevision": "6b0412d60eae22092048fe756c41f066e10627f9",
   "identity": {
     "source": {
-      "sha256": "844d5fe0c6d919673e0d44fb492f3829be86c8bfbb6ad5c11a38000bdac72e61",
+      "sha256": "15e57a5cae07ae7602a16e961673834570485d61398c75e72ef0b8e3341477c0",
       "files": 148
     },
     "artifact": {
-      "sha256": "4b4a77c8ce94b7073b29b164d06f64317d59962c4018117f946bb61c1e21931b",
+      "sha256": "d3a83f69db115a4396d2670a9cc5623077fd32366529fef633bcd52f5f1a98c8",
       "files": 170
     }
   },
   "environment": {
     "os": "Darwin",
     "arch": "arm64",
-    "node": "26.13.0",
-    "npm": "9.6.7",
-    "sbcl": "2.6.10"
+    "workspace": "/Users/dkc/Sites/Src/mdkh",
+    "branch": "main"
   },
   "baseline": {
-    "tests": 427,
-    "pass": 360,
-    "fail": 59,
+    "tests": 435,
+    "pass": 365,
+    "fail": 62,
     "skipped": 8
   },
   "finalSuite": {
-    "tests": 435,
-    "pass": 369,
+    "tests": 438,
+    "pass": 372,
     "fail": 58,
     "skipped": 8
   },
   "relatedSuite": {
-    "tests": 94,
-    "passCount": 85,
+    "tests": 97,
+    "pass": 88,
     "fail": 1,
     "skipped": 8
   },
+  "relatedFailure": {
+    "name": "the public CLI wires analysis into read_file without any extra flag",
+    "cause": "listen EPERM: operation not permitted 127.0.0.1",
+    "alsoInFullSuite": true
+  },
   "typecheck": "passed",
-  "build": "passed; 12 grammars, 17 skills",
-  "builtChatEntry": "passed; scripted model, real SBCL and Node verifier",
-  "mutations": [
-    {
-      "name": "acceptance-reuse",
-      "status": "detected",
-      "exitCode": 1,
-      "failedTests": [
-        "acceptance is single-use and closes edit access even after a failed check"
-      ]
-    },
-    {
-      "name": "restored-verifier",
-      "status": "detected",
-      "exitCode": 1,
-      "failedTests": [
-        "rewriting and restoring an original verifier invalidates its snapshot"
-      ]
-    },
-    {
-      "name": "pull-report-shape",
-      "status": "detected",
-      "exitCode": 1,
-      "failedTests": [
-        "malformed/unchanged pull reports do not invent clean diagnostics; valid empty report is observed"
-      ]
-    },
-    {
-      "name": "typescript-semantic-api",
-      "status": "detected",
-      "exitCode": 1,
-      "failedTests": [
-        "real installed TypeScript produces a semantic diagnostic; a placeholder API is rejected"
-      ]
-    },
-    {
-      "name": "typescript-fallback",
-      "status": "detected",
-      "exitCode": 1,
-      "failedTests": [
-        "installer compatibility fallback publishes only after checks"
-      ]
-    },
-    {
-      "name": "child-language-tools",
-      "status": "detected",
-      "exitCode": 1,
-      "failedTests": [
-        "real chat entry: trusted Lisp head delegates bounded edit and receives independent Node receipt"
-      ]
-    },
-    {
-      "name": "target-allowlist",
-      "status": "detected",
-      "exitCode": 1,
-      "failedTests": [
-        "real Node acceptance fails before edit and passes after; verifier immutable and source applied"
-      ]
-    },
-    {
-      "name": "exit-zero",
-      "status": "detected",
-      "exitCode": 1,
-      "failedTests": [
-        "no-op is verified only by a successful fixed check",
-        "fixed checker nonzero with forged success text never passes or applies source"
-      ]
-    },
-    {
-      "name": "tsserver-api",
-      "status": "detected",
-      "exitCode": 1,
-      "failedTests": [
-        "autoInstall=false creates no prefix; TypeScript requires actual tsserver capability"
-      ]
-    },
-    {
-      "name": "lean-unverified",
-      "status": "detected",
-      "exitCode": 1,
-      "failedTests": [
-        "compiler exit0 remains unverified: empty (wrapper test with fake compiler)",
-        "compiler exit0 remains unverified: true (wrapper test with fake compiler)",
-        "compiler exit0 remains unverified: different goal (wrapper test with fake compiler)",
-        "compiler exit0 remains unverified: sorry (wrapper test with fake compiler)",
-        "compiler exit0 remains unverified: generated axiom (wrapper test with fake compiler)"
-      ]
-    }
-  ],
+  "build": "passed",
+  "builtChatEntry": "passed; scripted model",
   "realTypeScript": {
     "platform": "darwin",
     "arch": "arm64",
@@ -134,7 +51,7 @@
     "sourceSha256": "4aa3fe450c06cafeebb654ff7df7a3fac2be81c334b0881798fc7a21391650ae",
     "initialized": true,
     "status": "passed",
-    "startedAt": "2026-11-15T13:05:10.277Z",
+    "startedAt": "2026-11-15T13:19:26.616Z",
     "capabilities": {
       "textDocumentSync": 2,
       "completionProvider": {
@@ -241,13 +158,13 @@
       }
     },
     "logs": [
-      "Using Typescript version (bundled) 5.3.3 from path \"/usr/local/lib/node_modules/typescript/lib/tsserver.js\""
+      "Using Typescript version (workspace) 5.9.3 from path \"/Users/dkc/Sites/Src/mdkh/node_modules/typescript/lib/tsserver.js\""
     ],
     "diagnostics": {
       "status": "observed",
       "diagnostics": [
         {
-          "path": "/private/var/folders/ny/r9_lhz_j37334k1vrp1f0pgm0000gn/T/modkh-real-lsp-WcHYjT/input.ts",
+          "path": "/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/current-mac/tmp/modkh-real-lsp-K7P0ZH/input.ts",
           "line": 1,
           "column": 7,
           "endLine": 1,
@@ -263,18 +180,17 @@
     "hover": "\n```typescript\nfunction add(a: number, b: number): number\n```\n",
     "definition": [
       {
-        "file": "/private/var/folders/ny/r9_lhz_j37334k1vrp1f0pgm0000gn/T/modkh-real-lsp-WcHYjT/input.ts",
+        "file": "/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/current-mac/tmp/modkh-real-lsp-K7P0ZH/input.ts",
         "line": 2,
         "character": 10
       }
     ],
     "cleanup": "settled",
-    "finishedAt": "2026-11-15T13:05:10.966Z"
+    "finishedAt": "2026-11-15T13:19:27.884Z"
   },
   "realCommonLispInstall": {
-    "os": "darwin",
-    "arch": "arm64",
-    "outcome": {
+    "home": "/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/current-mac/cl-private-VJo58L",
+    "result": {
       "status": "error",
       "detail": "Common Lisp release-metadata: TypeError: fetch failed (ENOTFOUND: getaddrinfo ENOTFOUND api.github.com)"
     },
@@ -284,7 +200,7 @@
         "arch": "arm64",
         "target": "aarch64-apple-darwin"
       },
-      "startedAt": "2026-11-15T12:57:04.920Z",
+      "startedAt": "2026-11-15T13:15:46.668Z",
       "stages": [
         {
           "name": "compiler-capability",
@@ -294,7 +210,7 @@
             "exitCode": 0,
             "signal": null,
             "stdout": "Apple clang version 21.0.0 (clang-2100.4.1.1)\nTarget: arm64-apple-darwin27.2.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
-            "stderr": "2026-11-15 21:57:05.300 xcodebuild[59096:28074239]  DVTFilePathFSEvents: Failed to start fs event stream.\n2026-11-15 21:57:05.502 xcodebuild[59096:28074238] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 \"Input/output error\". Using NSCachesDirectory instead.\n",
+            "stderr": "2026-11-15 22:15:48.387 xcodebuild[72895:28128529]  DVTFilePathFSEvents: Failed to start fs event stream.\n2026-11-15 22:15:48.761 xcodebuild[72895:28128526] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 \"Input/output error\". Using NSCachesDirectory instead.\n",
             "inputDigest": "33445ff5af165ef3a74beaecc67c5353682b1dfa7d026356db84b415b05fb823",
             "cleanup": "settled"
           }
@@ -307,12 +223,106 @@
       ],
       "revisions": {},
       "status": "failed",
-      "provenance": "Roswell release verified against official SHA256; Git checkouts recorded by commit. Quicklisp transitive downloads are upstream-managed, not independently authenticated by this installer.",
-      "finishedAt": "2026-11-15T12:57:06.586Z"
-    },
-    "privateRoot": "/var/folders/ny/r9_lhz_j37334k1vrp1f0pgm0000gn/T/modkh-real-cl-install-LK242y",
-    "sourceNote": "Actual cold attempt preceded the final provenance wording-only correction. No post-DNS stages executed."
+      "provenance": "Verification policy: Roswell archive must match official SHA256 metadata; completed Git checkouts record commits. Consult stage results for actual verification. Quicklisp transitive downloads are upstream-managed, not independently authenticated by this installer.",
+      "finishedAt": "2026-11-15T13:15:50.549Z"
+    }
   },
+  "osIsolationProbe": {
+    "state": "exited",
+    "exitCode": 71,
+    "signal": null,
+    "stdout": "",
+    "stderr": "sandbox-exec: sandbox_apply: Operation not permitted\n",
+    "inputDigest": "capability-only",
+    "cleanup": "settled"
+  },
+  "mutations": [
+    {
+      "name": "acceptance-reuse",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "acceptance is single-use and closes edit access even after a failed check"
+      ]
+    },
+    {
+      "name": "restored-verifier",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "rewriting and restoring an original verifier invalidates its snapshot"
+      ]
+    },
+    {
+      "name": "pull-report-shape",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "malformed/unchanged pull reports do not invent clean diagnostics; valid empty report is observed"
+      ]
+    },
+    {
+      "name": "typescript-semantic-api",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "real installed TypeScript produces a semantic diagnostic; a placeholder API is rejected"
+      ]
+    },
+    {
+      "name": "typescript-fallback",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "installer compatibility fallback publishes only after checks"
+      ]
+    },
+    {
+      "name": "child-language-tools",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "real chat entry: trusted Lisp head delegates bounded edit and receives independent Node receipt"
+      ]
+    },
+    {
+      "name": "target-allowlist",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "real Node acceptance fails before edit and passes after; verifier immutable and source applied"
+      ]
+    },
+    {
+      "name": "exit-zero",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "no-op is verified only by a successful fixed check",
+        "fixed checker nonzero with forged success text never passes or applies source"
+      ]
+    },
+    {
+      "name": "tsserver-api",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "autoInstall=false creates no prefix; TypeScript requires actual tsserver capability"
+      ]
+    },
+    {
+      "name": "lean-unverified",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "compiler exit0 remains unverified: empty (wrapper test with fake compiler)",
+        "compiler exit0 remains unverified: true (wrapper test with fake compiler)",
+        "compiler exit0 remains unverified: different goal (wrapper test with fake compiler)",
+        "compiler exit0 remains unverified: sorry (wrapper test with fake compiler)",
+        "compiler exit0 remains unverified: generated axiom (wrapper test with fake compiler)"
+      ]
+    }
+  ],
   "skips": [
     {
       "name": "real Lean transitive sorry remains unverified even when its consumer is accepted",
@@ -347,48 +357,25 @@
       "reason": "Java/TLC host settings not supplied"
     }
   ],
-  "changedFiles": [
-    "src/language/commonlisp-install.ts",
-    "src/language/install.ts",
-    "src/language/native.ts",
-    "src/language/lsp/client.ts",
-    "src/language/lsp/pool.ts",
-    "test/language.commonlisp-install.test.ts",
-    "test/language.lsp.test.ts",
-    "test/fixtures/fake-lsp.mjs"
-  ],
   "completion": "partial",
   "originalWorkingTreeModified": true,
   "committed": false,
   "pushed": false,
-  "blockers": {
-    "commonlisp": "release metadata DNS ENOTFOUND; later stages not run",
-    "grammars": "CL/Svelte actual WASM absent; no Emscripten/tree-sitter CLI; registry DNS unavailable",
-    "isolation": "strong OS isolation not implemented; prior sandbox_apply denied, not retried",
-    "formal": "Lean missing; java exists without Java Runtime; TLC host settings absent",
-    "linux": "No Linux execution used; cloud environment listing failed",
-    "model": "Real autonomous model delegation not run"
-  },
-  "diffCheck": "passed: git apply --check --whitespace=error against unchanged base",
-  "appliedTo": "/Users/dkc/Sites/Src/mdkh",
-  "appliedSourceAndTestsMatchVerifiedCopy": true,
-  "appliedVerification": {
-    "typecheck": "passed",
-    "build": "passed",
-    "sourceAndArtifactIdentityMatchesIsolatedCopy": true,
-    "relatedTests": {
-      "tests": 22,
-      "pass": 22,
-      "fail": 0
-    },
-    "builtChatEntry": "passed",
-    "fullSuite": {
-      "tests": 435,
-      "pass": 369,
-      "fail": 58,
-      "skipped": 8
-    },
-    "failureNamesAndCausesMatchIsolatedRun": true,
-    "diffCheck": "passed"
+  "packedArtifact": "3 tests passed: missing/corrupt build rejection, real WASM load, tampering rejection",
+  "sourceAndArtifactNote": "Built here. CL/Svelte grammars absent. Global installed command not updated.",
+  "logs": {
+    "before-full.log": "592812bea070cd78b0290ab5cc314cf08de4e7fc7cf35289ae3045035e8dbb3f",
+    "before-build.log": "67dadc3abefcc76a4e7265ae956e21759d04ad2cdac1a1cede17178836d9d6a6",
+    "grammar-test.log": "4d62871d41222ba49a418a8463a10ae55e16c319a24b1f3697485661f5ee3061",
+    "mutations.log": "836f2b99264fda3f931b95d1536f3c60e3c71c3d75ab79f905db47e57c2e41fc",
+    "final-related.log": "82a7809e9a10aa94d71352e57e6c63f32f2106b32f397c750f369421d5c47d70",
+    "final-entry.log": "d30386bcb84a666438e1f2a19494ab5a598e1ed30537a950a838bbb988242391",
+    "before-typecheck.log": "dee392318606ff10f5553223c3952d2c472b8591afef084b8c222da76a1f5d89",
+    "final-typecheck.log": "dee392318606ff10f5553223c3952d2c472b8591afef084b8c222da76a1f5d89",
+    "final-build.log": "67dadc3abefcc76a4e7265ae956e21759d04ad2cdac1a1cede17178836d9d6a6",
+    "working-typecheck.log": "dee392318606ff10f5553223c3952d2c472b8591afef084b8c222da76a1f5d89",
+    "final-full.log": "653428fd6a3b7e42f181d9d5333b59f909c781f2c63fcbc1bd5083fa39de81ad",
+    "working-build.log": "67dadc3abefcc76a4e7265ae956e21759d04ad2cdac1a1cede17178836d9d6a6",
+    "focused.log": "bb35cf01d368b17d5f372ffc3511dc47fbce8089e68020df917e88379c0c39f2"
   }
 }

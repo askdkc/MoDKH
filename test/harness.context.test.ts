@@ -34,6 +34,7 @@ test('search honors gitignore and does not feed replay archives back to the mode
 test('search bounds excerpts from giant single lines while keeping the actual match visible', async t => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dkh-long-line-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  assert.equal(spawnSync('git', ['init', '--quiet', root]).status, 0);
   fs.writeFileSync(path.join(root, 'large.json'), 'x'.repeat(300000) + 'NEEDLE' + 'y'.repeat(300000));
   const output = await searchFilesTool.execute({ pattern: 'NEEDLE' }, context(root)) as string;
   assert.ok(Buffer.byteLength(output) < 32 * 1024);

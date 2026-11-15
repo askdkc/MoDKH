@@ -17,6 +17,8 @@ for (const recommendation of ['6', '']) test(`installer compatibility fallback $
   const tsRoot = path.dirname(createRequire(import.meta.url).resolve('typescript/package.json'));
   const calls = path.join(root, 'calls.jsonl');
   const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
+  // Keep the extensionless fake npm CommonJS even when TMPDIR is inside this ESM repo.
+  fs.writeFileSync(path.join(bin, 'package.json'), JSON.stringify({ type: 'commonjs' }));
   const launcher = `#!${process.execPath}\nimport ${JSON.stringify(fixture)};\n`;
   fs.writeFileSync(path.join(bin, 'npm'), `#!${process.execPath}
 const fs=require('node:fs'),path=require('node:path');

@@ -1,98 +1,84 @@
-# MoDKH 実装・検証状況
+# MoDKH 現在のMacリポジトリでの実装・検証
 
-2026-11-15。**PLAN全体は未完了。** 原PLANは変更していない。
+2026-11-15。**PLAN全体は未完了。** 実装先は `/Users/dkc/Sites/Src/mdkh`、branch `main`、基準HEAD `6b0412d60eae22092048fe756c41f066e10627f9`。開始時の未コミット変更は未追跡の `PLAN.md` のみ。これを保持し、現在のファイルを直接編集した。commit・push・グローバル設定変更は行っていない。
 
-基準HEAD: `f3af9d9bd2308957a8a167c47f5e0f38eb3e3839`。開始時の元作業ツリーの差分は未追跡の `PLAN.md` のみ。独立作業コピーで実装・検証後、ユーザーの明示指示により `/Users/dkc/Sites/Src/mdkh` へ11ファイルのパッチを適用した。既存の `PLAN.md` は保持し、変更ソース・テスト8ファイルが検証済みコピーとバイト一致することを確認した。commit、push、グローバル導入、設定変更は行っていない。前回報告のHEAD・361成功という数値を今回の証拠として流用していない。
+## 前回変更の確認
 
-実行環境はDarwin arm64、Node 26.13.0、npm 9.6.7、SBCL 2.6.10。既存node_modulesを読取共有。Linux実機は使用していない。cloud環境の一覧取得はツールエラーとなり、代替実行環境を確保できなかった。
+CL private段階構築、導入失敗/中断/同時導入/cache拒否、LSP通知Promiseのawait、所有process group停止とcleanup失敗伝搬はHEADに存在する。旧パッチを読み、`git apply --check --whitespace=error /tmp/modkh-isolated-u8396o8e/modkh-remaining.patch` を実行したところ既に適用済みのため拒否された。強制適用せず、現在の実装と関連試験を確認した。旧パッチを読んだ以外、今回の実装・試験データは現在のリポジトリ内。
 
-## 今回の変更
+## 今回の変更ファイル
 
-| ファイル | 内容 |
+| ファイル | 変更と目的 |
 |---|---|
-| `src/language/commonlisp-install.ts` | private HOME/Roswell/XDG/prefixで段階的に構築。公式latest metadataのOS/CPU/glibc別assetとSHA256を選択、private SBCL/ASDF/Quicklisp、公式Lem依存、native async-process、launcher、成功marker、実initialize/同期/lexical定義検査を接続。失敗段階・cleanup・revisionをreceiptへ保存。global未評価定義と診断は別観測。 |
-| `src/language/install.ts` | CL通常自動導入入口を接続。長時間導入lockのheartbeat、lock取得後の失敗cache再確認、不完全なmanaged cacheの拒否。autoInstall=falseのno-write/no-networkを維持。 |
-| `src/language/native.ts` | 既存の取得先・サイズ・時間を制限したdownloadを共用公開。 |
-| `src/language/lsp/client.ts` | initialized/didOpen/didChange通知のPromiseをawaitしEPIPEの未処理rejectionを防止。所有プロセスグループの終了を待つ。重複disposeは同じPromise。停止不明は例外。 |
-| `src/language/lsp/pool.ts` | evictionの停止失敗を捨てず、settled/disposeAllへ伝搬。全serverの停止結果を収集。 |
-| `test/language.commonlisp-install.test.ts` | 6件。OS/CPU/glibc/checksum、autoInstall=false、DNS失敗・cooldown、事前abort、同時導入、cc不在、不完全receipt/launcher改変を検査。ネットワークはfixture。 |
-| `test/language.lsp.test.ts`, `test/fixtures/fake-lsp.mjs` | 実Node子プロセスの停止と冪等dispose、poolのcleanup不明伝搬を追加。 |
-| `docs/modkh-verification.md`, `docs/modkh-failure-comparison.json`, `docs/modkh-evidence.json` | 現在の基準・実行結果・同一性に更新。 |
+| `scripts/build-grammars.mjs` | 文法欠損・不正WASM header・license不在をbuild失敗にする。全入力確認後にコピーし、途中失敗時に古い成功manifestを残さない。固定のパッケージ版文字列を廃止し、実package metadata、license、各WASMのSHA256を記録。 |
+| `src/language/syntax/assets.ts` | 文法IDとmanifest schema/重複/size/SHA256/licenseを確認。古いmanifestや改変ファイルは明示エラー。列挙でも検証できない文法を利用可能としない。 |
+| `src/language/syntax/parser.ts` | digest確認済みのバイト列をLanguage.loadへ渡し、確認後に同じパスを再読込しない。 |
+| `test/language.grammar-artifact.test.mjs` | 3試験。欠損・破損のbuild拒否、実npm packを展開して同梱WASMでTS/JS/PHP/HTML/CSSを解析、日本語・CRLF位置、改変後のエラーと他文法の正常動作を確認。 |
+| `package.json` | 既存全TS試験を維持し、新しいmjs試験も全体suiteに含める。 |
+| `test/harness.context.test.ts`, `test/tools.guard.test.ts` | 検索fixtureに独立Git境界を作り、リポジトリ内の除外領域に配置しても親のignore規則を誤継承させない。検索結果のassertは保持。 |
+| `test/language.install-fallback.test.ts` | fake npmのCommonJSをbin/package.jsonで明示し、親リポジトリのESM設定に依存しない。元の導入/拒否assertは保持。 |
+| `docs/modkh-verification.md`, `docs/modkh-failure-comparison.json`, `docs/modkh-evidence.json` | 今回の結果・比較・source/dist identityを記録。 |
 
-CL bootstrapはソースの部分実装であり、実導入成功ではない。空private領域から通常のensureInstalled入口を実行し、Apple clangの能力確認は成功、`api.github.com` の `ENOTFOUND` によりrelease-metadataで停止した。成功stateは作成されず失敗receiptが保存された。ダウンロード・コンパイル・warmup・CL-LSP起動・定義・push/pull診断は未実行。最後のsource修正はreceiptの検証方針を実測成功と誤読させない文言修正であり、実DNS失敗receiptは修正前の観測としてそのまま保存した。
+文法は既存12種類のみ。Common Lisp/Svelteの実WASMを追加したわけではない。npm配布packageのdigestはバイト同一性の根拠であり、個々の文法の上流revisionや独立認証の代替ではない。CL/Svelteを他言語文法で偽装していない。
 
-新導入はprivate Roswellを構築する。既存グローバルRoswell/SBCL/ASDFの能力に基づく選択的再利用は未完成。Git commitとRoswell SHA256の記録経路はあるが、Quicklisp推移依存の完全inventory・独立認証・hash閉包は未実装。再利用時の検査はlauncherと成功receiptであり、依存閉包再検査ではない。warmup成功markerだけではreadyにせずlexical定義応答を要求するが、その成功経路は実ホストでは未検証。インストーラは公式配布元の実行コードを実行する信頼境界を持ち、OS sandboxではない。プロジェクトのload/evalを導入probeには追加していない。
+## 実ホストでの到達点
 
-診断は提供元を分ける。既存SBCL reader補助診断と `#.` 評価禁止を保持。CL-LSPの空/未着/pull未対応を診断成功にしない。新receiptのreadyはlexical定義だけの意味であり、diagnostics.verifiedとは別。実CL-LSPによる不正入力診断受入は未達。
+Darwin arm64で実行。CLは新しいprivate領域を `.dkh-feasibility/current-mac/` 配下に作成し、通常のensureInstalled入口を使用。compiler-capabilityは成功、release-metadataは `ENOTFOUND api.github.com` で失敗。失敗receiptを保存し成功stateを作らなかった。Roswell取得以降、CL-LSP initialize/didOpen/lexical定義/global定義/push診断/pull診断は未実行。提供元SBCL readerのno-eval回帰試験は別途成功し、通常フォーム・`#.`・package生成の副作用反例を保持した。
 
-## 最終変更後の試験
+現在の権限で `/usr/bin/sandbox-exec -p '(version 1) (deny default) (allow process*) (allow file-read*)' /usr/bin/true` をbounded実行。exit71、`sandbox_apply: Operation not permitted`、cleanup settled。これは能力確認専用profileであり、製品の隔離実装ではない。強いOS隔離はblocked。拒否を迂回せず、無隔離の実行を強い隔離として報告しない。既存の改変検出と明示的な `private-snapshot-not-os-sandbox` は維持。ネットワーク/秘密/書込み先の完全なOS境界は未実装。
+
+`curl --max-time 10 -I https://api.github.com/repos/roswell/roswell/releases/latest` も名前解決失敗。tree-sitter CLI、Emscripten、wasm-ld、Lean、Roswell、bwrapはPATH上にない。`/usr/bin/java -version` はJava Runtime不在。新規WASM構築と形式runtimeの取得・実行はblocked。Linux実行は行っていない。実モデル接続による委譲も未実施であり、scripted試験と区別する。
+
+## 最終変更後のコマンドと結果
+
+全コマンドのcwdは現在のMacリポジトリ。テストでは `TMPDIR="$PWD/.dkh-feasibility/current-mac/tmp"` を指定。ここは既存の `.gitignore` で除外済み。パッケージ検査用cacheも同じリポジトリ内に限定。snapshotは改変試験だけに使用し、実装先にはしていない。
 
 | コマンド | 結果 |
 |---|---|
-| `npm run typecheck` | pass |
-| `npm run build` | pass、12文法・17スキル。CL/Svelte実文法は含まれない。 |
-| `node --test test/lisp*.test.ts test/formal*.test.ts test/language*.test.ts` | 94件、85 pass / 1 fail / 8 skip。HTTP待受EPERMが1件。 |
-| `npm test` | 435件、369 pass / 58 fail / 8 skip。exit1。 |
-| `MODKH_TEST_CHAT=file:///tmp/modkh-isolated-u8396o8e/dist/cli/chat.js MODKH_TEST_FIXED=file:///tmp/modkh-isolated-u8396o8e/dist/model/fixed.js node --test test/lisp.cli.test.ts` | 1 pass。scriptedモデル、実SBCL、実Node受入、headへのreceipt返却。 |
-| `node scripts/modkh-mutation-check.mjs /tmp/modkh-iso-mutations.json` | 既存10改変すべて検出。テストを弱めていない。 |
-| `node scripts/modkh-language-probe.mjs typescript /usr/local/bin/typescript-language-server /tmp/modkh-iso-real-ts.json --stdio` | 実既存TS LSPでinitialize・定義・型不一致診断・cleanup成功。registryからのlatest導入成功ではない。 |
-| `node scripts/modkh-source-identity.mjs /tmp/modkh-iso-identity.json` | sourceとdistのSHA256を記録。対象一覧は同script。テストとdocsはこのsource集合外。 |
+| `git diff --check` | 成功 |
+| `npm run typecheck` | 成功 |
+| `npm run build` | 成功。現在のdist再生成、12文法・17スキル。 |
+| `node --test test/lisp*.test.ts test/formal*.test.ts test/language*.test.ts test/language.grammar-artifact.test.mjs` | 97件、88成功 / 1失敗 / 8skip。 |
+| `npm test` | 438件、372成功 / 58失敗 / 8skip。exit1。 |
+| `MODKH_TEST_CHAT=file:///Users/dkc/Sites/Src/mdkh/dist/cli/chat.js MODKH_TEST_FIXED=file:///Users/dkc/Sites/Src/mdkh/dist/model/fixed.js node --test test/lisp.cli.test.ts` | 1成功。scriptedモデル、実SBCL、実Node受入。 |
+| `node scripts/modkh-mutation-check.mjs .dkh-feasibility/current-mac/mutations.json` | 既存10改変すべて検出。 |
+| `node scripts/modkh-language-probe.mjs typescript /usr/local/bin/typescript-language-server .dkh-feasibility/current-mac/typescript.json --stdio` | 実既存TS LSPの初期化・定義・診断・cleanup成功。latest導入ではない。 |
+| `node scripts/modkh-source-identity.mjs .dkh-feasibility/current-mac/identity.json` | source/dist SHA256を保存。scopeは同script。 |
 
-開始時にも型検査・buildを実行し成功。全体は427件、360 pass / 59 fail / 8 skipで、前回報告361/58/8と一致しなかった。追加の `pool reuses one server per key and caps concurrent servers` は未処理 `write EPIPE`。通知Promiseの処理後、最終suiteでは再発しなかった。残る58件は57件の`listen EPERM`と1件の`EMFILE ... watch`。**各試験名・error・codeの照合で、新規失敗0、同名原因変化0、EPIPEの1件のみ消失。** 件数だけの比較ではない。[全件比較](modkh-failure-comparison.json)。全体greenではない。
+開始時は435件、365成功/62失敗/8skip。前回より増えた4件は、リポジトリ内TMPDIRで親Git除外設定/ESM設定を継承したfixtureの失敗。修正後は全4件が成功。最終58件は前回報告の58件と**試験名・error・codeが一致**し、開始時との比較でも新規失敗0・同名原因変化0。57件はHTTP待受EPERM、1件はwatchのEMFILE。テスト削除や成功偽装はしていない。比較全件は [modkh-failure-comparison.json](modkh-failure-comparison.json)。
 
-sourceとビルド成果物の同一性、実TSのhash、冷開始CL失敗receipt、改変試験結果は [modkh-evidence.json](modkh-evidence.json)。以下の独立コピー検証とは別に、反映先でも型検査・build・試験を実施する。反映後の結果は本書末尾に記録する。
+関連試験の1失敗は `test/language.integration.test.ts:108` の `the public CLI wires analysis into read_file without any extra flag`。原因は `listen EPERM: operation not permitted 127.0.0.1`。全体58失敗に含まれる同一試験で、追加の59件目ではない。
 
-## 8件の未実行
+## 8件のskip（今回も全件未実行）
 
-| 試験名 | 未実行理由 | 状態 |
+| 試験名 | 実行時に記録された理由 |
+|---|---|
+| `real Lean transitive sorry remains unverified even when its consumer is accepted` | Official Lean executable unavailable; real kernel/counterexample tests not run |
+| `real Lean sorry cannot be certified by compiler acceptance` | Official Lean executable unavailable; real kernel/counterexample tests not run |
+| `real Lean false theorem cannot be certified by compiler acceptance` | Official Lean executable unavailable; real kernel/counterexample tests not run |
+| `real Lean custom axiom cannot be certified by compiler acceptance` | Official Lean executable unavailable; real kernel/counterexample tests not run |
+| `real Lean generated axiom cannot be certified by compiler acceptance` | Official Lean executable unavailable; real kernel/counterexample tests not run |
+| `real Lean true theorem is accepted/unverified` | Official Lean executable not supplied |
+| `real TLC good.cfg` | Java/TLC host settings not supplied |
+| `real TLC bad.cfg` | Java/TLC host settings not supplied |
+
+Lean/Javaの実runtimeを得られていないため解消できていない。wrapperやfake compilerの成功を実Lean/TLC成功と呼ばず、Leanはexit0でもunverifiedを維持。TLCのモデル・cfg・検査範囲の証跡も維持する。
+
+## 元PLANと追加要求の状態
+
+| 項目 | 分類 | 根拠・残件 |
 |---|---|---|
-| `real Lean transitive sorry remains unverified even when its consumer is accepted` | Official Lean executable unavailable; real kernel/counterexample tests not run | blocked |
-| `real Lean sorry cannot be certified by compiler acceptance` | Official Lean executable unavailable; real kernel/counterexample tests not run | blocked |
-| `real Lean false theorem cannot be certified by compiler acceptance` | Official Lean executable unavailable; real kernel/counterexample tests not run | blocked |
-| `real Lean custom axiom cannot be certified by compiler acceptance` | Official Lean executable unavailable; real kernel/counterexample tests not run | blocked |
-| `real Lean generated axiom cannot be certified by compiler acceptance` | Official Lean executable unavailable; real kernel/counterexample tests not run | blocked |
-| `real Lean true theorem is accepted/unverified` | Official Lean executable not supplied | blocked |
-| `real TLC good.cfg` | Java/TLC host settings not supplied | blocked |
-| `real TLC bad.cfg` | Java/TLC host settings not supplied | blocked |
+| 0–2: 編集先・既存確認・初期測定 | 完了 | 現在のmainを直接編集。既存PLAN保持。 |
+| 3A: 実Lisp設定 | 完了（既存限定契約） | 実SBCL回帰成功。OS sandboxの保証ではない。 |
+| 3B: プリセット・スキル本文 | 部分実装 | 既存設定/全文注入を再検証。CL/Svelte実構造能力未達。 |
+| 3C: ヘッド委譲 | 部分実装／未検証 | ビルド済みscripted入口は成功。実モデル未実施。 |
+| 3D: 編集担当と受入検証器 | 部分実装／blocked | 既存snapshot/鮮度/改変/receiptを維持。Mac隔離機構は拒否。Linux実分離なし。 |
+| 4: LSP・文法 | 部分実装／blocked | 既存WASMのbuild・配布・digest検査とpack実試験を追加。CL/Svelte実文法・埋込位置・上流revision/license受入は未達。 |
+| 5: 自動導入 | 部分実装／blocked | 前回bootstrapはHEADに反映済み。実CL冷開始はDNSで停止。各OS成功・依存閉包・global意味解析は未検証。 |
+| 6: TLC | 部分実装／blocked | wrapperと範囲receiptは保持、実runtimeなし。 |
+| 7: Lean | 部分実装／blocked | 未検証分類と反例試験を保持。実runtime/対象同一性/推移公理の正式検証は未達。 |
+| 8: 全受入 | 部分実装 | 最終コマンド実行済みだが58fail/8skip。 |
+| 9: 過去Linux試作 | 未検証 | 今回の成功証拠に流用しない。 |
+| 10: 引渡し | 部分実装 | 現在のgit diffで確認可能。全受入未達を明示。 |
 
-`command -v lean`で実行物なし、`/usr/bin/java -version`はJava Runtime不在。Java/TLCのhost指定もない。DNS制約下で新規実runtimeを導入できず、全8件は未実行のまま。fake compilerによる分類試験の成功を実Lean検証と呼ばない。
-
-## 元PLANの棚卸し
-
-| 項目 | 状態 | 証拠・残り |
-|---|---|---|
-| 0–2: 名称・境界・既存構造・初期測定 | 完了（今回の作業範囲） | MoDKH対象、基準HEADと差分保存、初期測定、独立コピー。 |
-| 3A: 実Common Lisp設定 | 完了（限定契約） | 既存実SBCL試験を再実行。設定hash・最小env・管理API・失敗分類。任意LispのOS隔離ではない。 |
-| 3B: 8技術プリセット・スキル本文 | 部分実装 | 既存8設定/38役割と本文注入試験成功。CL/Svelte実構造能力は未達。 |
-| 3C: ヘッド委譲 | 部分実装／実モデル未検証 | 実ビルド入口＋scripted応答で成功。実モデルの自律委譲は未実施。 |
-| 3D: 限定編集と検証 | 部分実装 | 既存snapshot/改変検出/単発receipt/鮮度/拒否を維持。OS readonly分離・依存閉包・一般的TOCTOU保証は未実装。 |
-| 4: LSP・構文解析 | 部分実装／blocked | TS実LSP成功、既存言語回帰実行。CL/Svelteの実WASM・実ノード座標・pack後受入は未達。Tailwind実hover等も未検証。 |
-| 5: 自動導入 | 部分実装／blocked | CL段階構築を追加したがDarwin実導入はDNSで停止。Linuxは選択fixtureのみ。PHP実download、各OSのcold導入、依存inventoryは未完。 |
-| 6: 前鬼/TLC | 部分実装／blocked | モデル・cfg・範囲のreceiptを維持。実TLC good/bad未実行。 |
-| 7: 後鬼/Lean | 部分実装／blocked | exit0でもunverifiedを維持。推移公理・対象同一性の信頼できる証明検査は未実装。実Lean6件未実行。 |
-| 8: 全受入 | 部分実装 | 型検査/build/関連/全体/改変を再実行。58 fail / 8 skip。packed CL/Svelte実文法試験なし。 |
-| 9: 過去クラウド結果 | 未検証 | 今回のLinux・実モデル・正式証明の証拠へ流用しない。 |
-| 10: 引渡し | 部分実装 | ソース差分と更新検証記録を提供。全受入未達。明示指示により元Macへ反映。commit/pushなし。 |
-
-## 残る制約
-
-- Darwin arm64での実測のみ。Linux/x64の成功を主張しない。選択ロジックの4構成試験はmock。
-- `curl --max-time 10 -I https://registry.npmjs.org/tree-sitter-svelte`もDNS失敗。Emscripten/tree-sitter CLI/必要WASMがなく、実文法ビルド・配布・位置検査はblocked。
-- 前回のsandbox-exec拒否を迂回していない。今回OS分離は追加していない。hash・監視・プロセスグループ停止を強い隔離とは呼ばない。setsid等で脱出する悪意ある子孫を止める保証もない。
-- compiler不在・事前abort・DNS・同時開始・不完全receiptは試験済み。ダウンロード中断からの実再開、20分timeout、native compile失敗、成功した既存導入の実再利用は未検証。
-- 実モデル接続による委譲未実施。scriptedの配線成功と分離する。
-
-公式出典: [Roswell release](https://github.com/roswell/roswell/releases/latest)、[Roswell build](https://github.com/roswell/roswell/blob/master/Makefile.am)、[CL-LSP](https://github.com/cxxxr/cl-lsp)、[Lem依存](https://github.com/lem-project/lem/blob/main/qlfile)、[async-process](https://github.com/lem-project/async-process)。公式ソースを調査したことと、生成launcherが実稼働したことを混同しない。
-
-## 元リポジトリへの反映後の検証
-
-ユーザーの明示指示で `/Users/dkc/Sites/Src/mdkh` へ適用済み。新規2ファイルを含む11ファイルの変更で、既存未追跡PLAN.mdを保持。commit/pushなし。
-
-- `npm run typecheck`: 成功。
-- `npm run build`: 成功。元リポジトリのdistを再生成。source/distのSHA256は独立コピーと一致。
-- `node --test test/language.commonlisp-install.test.ts test/language.lsp.test.ts`: 22件すべて成功。
-- ビルド済み `dist/cli/chat.js` / `dist/model/fixed.js` を指定した `node --test test/lisp.cli.test.ts`: 1件成功。
-- `npm test`: 435件、369成功／58失敗／8skip。全失敗名・error・codeが独立コピーの最終試験と一致。
-- `git diff --check`: 成功。
-
-反映は完了したが、上記の実CL-LSP・実文法・OS隔離・実形式検証などの制約は残る。PLAN全体は未完了。
+現在のdistは更新・入口検証済み。グローバルインストールや稼働中のハーネスは更新していない。[機械判読証跡](modkh-evidence.json)にidentity、実CL失敗、OS拒否、改変結果、ログhashを保存。全PLAN完了・全体green・実CL導入成功は主張しない。

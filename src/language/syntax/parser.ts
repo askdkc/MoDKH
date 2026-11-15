@@ -87,7 +87,7 @@ async function load(grammar: string): Promise<Loaded> {
     const paths = grammarPaths(grammar);
     if (!paths) throw new Error(`文法 ${grammar} は同梱されていません`);
     await runtime();
-    const language = await Language.load(paths.wasm);
+    const language = await Language.load(paths.bytes);
     const parser = new Parser();
     parser.setLanguage(language);
     const value = { parser, language };

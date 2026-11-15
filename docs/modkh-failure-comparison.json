@@ -1,10 +1,10 @@
 {
-  "baseRevision": "f3af9d9bd2308957a8a167c47f5e0f38eb3e3839",
+  "baseRevision": "6b0412d60eae22092048fe756c41f066e10627f9",
   "before": {
     "summary": {
-      "tests": 427,
-      "pass": 360,
-      "fail": 59,
+      "tests": 435,
+      "pass": 365,
+      "fail": 62,
       "skipped": 8
     },
     "failures": [
@@ -189,9 +189,24 @@
         "code": "'EPERM'"
       },
       {
+        "name": "installer compatibility fallback publishes only after checks",
+        "error": "\"ENOENT: no such file or directory, open '/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/current-mac/tmp/modkh-ts-install-rBxk1g/calls.jsonl'\"",
+        "code": "'ENOENT'"
+      },
+      {
+        "name": "installer compatibility fallback rejects missing recommendation and cleans staging",
+        "error": "\"ENOENT: no such file or directory, open '/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/current-mac/tmp/modkh-ts-install-MUlvQL/calls.jsonl'\"",
+        "code": "'ENOENT'"
+      },
+      {
         "name": "legacy huge tool results are bounded for both APIs without rewriting audit evidence or status",
         "error": "'listen EPERM: operation not permitted 127.0.0.1'",
         "code": "'EPERM'"
+      },
+      {
+        "name": "list / search / read が基本の読み取りを満たす",
+        "error": "The input did not match the regular expression /src\\/main\\.ts:2/. Input:\n\n'検索 \"const y\": 0 件\\n対象: .gitignore・Gitの除外設定を適用。1 MiB超・バイナリ・読取不可など0件を除外。\\n'\n\n検索 \"const y\": 0 件\n対象: .gitignore・Gitの除外設定を適用。1 MiB超・バイナリ・読取不可など0件を除外。\n\nTestContext.<anonymous> (file:///Users/dkc/Sites/Src/mdkh/test/tools.guard.test.ts:193:12)\nasync Test.run (node:internal/test_runner/test:1409:7)\nasync Test.processPendingSubtests (node:internal/test_runner/test:974:7)",
+        "code": "'ERR_ASSERTION'"
       },
       {
         "name": "occupied callback port fails before showing a browser URL",
@@ -212,11 +227,6 @@
         "name": "opencode reaches its configured OpenAI-compatible endpoint with the exact model/key",
         "error": "'listen EPERM: operation not permitted 127.0.0.1'",
         "code": "'EPERM'"
-      },
-      {
-        "name": "pool reuses one server per key and caps concurrent servers",
-        "error": "'write EPIPE'",
-        "code": "'EPIPE'"
       },
       {
         "name": "provider reasoning is forwarded as its own event, separate from the answer text",
@@ -247,6 +257,11 @@
         "name": "reasoning-only stream reports activity and ends on user Stop without replay",
         "error": "'listen EPERM: operation not permitted 127.0.0.1'",
         "code": "'EPERM'"
+      },
+      {
+        "name": "search bounds excerpts from giant single lines while keeping the actual match visible",
+        "error": "The input did not match the regular expression /large.json:1:/. Input:\n\n'検索 \"NEEDLE\": 0 件\\n対象: .gitignore・Gitの除外設定を適用。1 MiB超・バイナリ・読取不可など0件を除外。\\n'\n\n検索 \"NEEDLE\": 0 件\n対象: .gitignore・Gitの除外設定を適用。1 MiB超・バイナリ・読取不可など0件を除外。\n\nTestContext.<anonymous> (file:///Users/dkc/Sites/Src/mdkh/test/harness.context.test.ts:40:10)\nasync Test.run (node:internal/test_runner/test:1409:7)\nasync Test.processPendingSubtests (node:internal/test_runner/test:974:7)",
+        "code": "'ERR_ASSERTION'"
       },
       {
         "name": "the agent reads a failing check as a result and repairs the code",
@@ -341,8 +356,8 @@
   },
   "after": {
     "summary": {
-      "tests": 435,
-      "pass": 369,
+      "tests": 438,
+      "pass": 372,
       "fail": 58,
       "skipped": 8
     },
@@ -676,20 +691,26 @@
   "newFailures": [],
   "removedFailures": [
     {
-      "name": "pool reuses one server per key and caps concurrent servers",
-      "error": "'write EPIPE'",
-      "code": "'EPIPE'"
+      "name": "installer compatibility fallback rejects missing recommendation and cleans staging",
+      "error": "\"ENOENT: no such file or directory, open '/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/current-mac/tmp/modkh-ts-install-MUlvQL/calls.jsonl'\"",
+      "code": "'ENOENT'"
+    },
+    {
+      "name": "installer compatibility fallback publishes only after checks",
+      "error": "\"ENOENT: no such file or directory, open '/Users/dkc/Sites/Src/mdkh/.dkh-feasibility/current-mac/tmp/modkh-ts-install-rBxk1g/calls.jsonl'\"",
+      "code": "'ENOENT'"
+    },
+    {
+      "name": "search bounds excerpts from giant single lines while keeping the actual match visible",
+      "error": "The input did not match the regular expression /large.json:1:/. Input:\n\n'検索 \"NEEDLE\": 0 件\\n対象: .gitignore・Gitの除外設定を適用。1 MiB超・バイナリ・読取不可など0件を除外。\\n'\n\n検索 \"NEEDLE\": 0 件\n対象: .gitignore・Gitの除外設定を適用。1 MiB超・バイナリ・読取不可など0件を除外。\n\nTestContext.<anonymous> (file:///Users/dkc/Sites/Src/mdkh/test/harness.context.test.ts:40:10)\nasync Test.run (node:internal/test_runner/test:1409:7)\nasync Test.processPendingSubtests (node:internal/test_runner/test:974:7)",
+      "code": "'ERR_ASSERTION'"
+    },
+    {
+      "name": "list / search / read が基本の読み取りを満たす",
+      "error": "The input did not match the regular expression /src\\/main\\.ts:2/. Input:\n\n'検索 \"const y\": 0 件\\n対象: .gitignore・Gitの除外設定を適用。1 MiB超・バイナリ・読取不可など0件を除外。\\n'\n\n検索 \"const y\": 0 件\n対象: .gitignore・Gitの除外設定を適用。1 MiB超・バイナリ・読取不可など0件を除外。\n\nTestContext.<anonymous> (file:///Users/dkc/Sites/Src/mdkh/test/tools.guard.test.ts:193:12)\nasync Test.run (node:internal/test_runner/test:1409:7)\nasync Test.processPendingSubtests (node:internal/test_runner/test:974:7)",
+      "code": "'ERR_ASSERTION'"
     }
   ],
   "changedCauses": [],
-  "appliedRepository": {
-    "path": "/Users/dkc/Sites/Src/mdkh",
-    "summary": {
-      "tests": 435,
-      "pass": 369,
-      "fail": 58,
-      "skipped": 8
-    },
-    "failureNamesAndCausesMatchIsolatedRun": true
-  }
+  "previousReported58Match": true
 }
