@@ -43,8 +43,16 @@ export const COMMANDS: readonly Choice[] = [
   { value: '/help', label: '/help', detail: '操作ガイド' },
   { value: '/exit', label: '/exit', detail: '終了' },
 ];
-const LOGO = ['██████╗  ██╗  ██╗ ██╗  ██╗', '██╔══██╗ ██║ ██╔╝ ██║  ██║',
-  '██║  ██║ █████╔╝  ███████║', '██║  ██║ ██╔═██╗  ██╔══██║', '██████╔╝ ██║  ██╗ ██║  ██║', '╚═════╝  ╚═╝  ╚═╝ ╚═╝  ╚═╝'];
+const LOGO = [
+  '███╗   ███╗        ██████╗  ██╗  ██╗ ██╗  ██╗',
+  '████╗ ████║        ██╔══██╗ ██║ ██╔╝ ██║  ██║',
+  '██╔████╔██║ ████╗  ██║  ██║ █████╔╝  ███████║',
+  '██║╚██╔╝██║██╔═██╗ ██║  ██║ ██╔═██╗  ██╔══██║',
+  '██║ ╚═╝ ██║╚████╔╝ ██████╔╝ ██║  ██╗ ██║  ██║',
+  '╚═╝     ╚═╝ ╚═══╝  ╚═════╝  ╚═╝  ╚═╝ ╚═╝  ╚═╝',
+];
+const logoForWidth = (width: number): readonly string[] =>
+  width >= Math.max(...LOGO.map(textWidth)) ? LOGO : ['MoDKH'];
 const ACCENT = '34'; // Use the terminal theme's blue; NO_COLOR is respected by paint().
 /** Every term must appear in any order, so "seek deep" finds deepseek. Pinned rows always survive. */
 function matching(choices: readonly Choice[], query: string): Choice[] {
@@ -429,7 +437,7 @@ export class TerminalUI implements ChatTerminal {
     // 会話が始まった瞬間、ウェルカム(ロゴ+案内)を一度だけ本文へ流し込む。
     if (this.started && !this.bootFlushed) {
       this.bootFlushed = true;
-      const banner = ['MoDKH  ·  Coding Harness', ...LOGO];
+      const banner = ['MoDKH  ·  Coding Harness', ...logoForWidth(width)];
       stream.unshift(...banner.map(l => this.paint(l, l.startsWith('MoDKH') ? '1' : ACCENT)),
         ...this.bootLines.flatMap(l => wrap(l, width)));
       this.bootLines = [];
@@ -517,7 +525,7 @@ export class TerminalUI implements ChatTerminal {
       };
       const welcome: { text: string; style: string }[] = [
         { text: widthCenter('MoDKH  ·  Coding Harness'), style: '1' },
-        ...LOGO.map(line => ({ text: widthCenter(line), style: ACCENT })),
+        ...logoForWidth(width).map(line => ({ text: widthCenter(line), style: ACCENT })),
         ...this.bootLines.slice(-8).flatMap(line => wrap(line, width).map(text => ({ text, style: '' }))),
       ];
       // ロゴと入力欄は一つのまとまり。余白を両者の間に入れない。

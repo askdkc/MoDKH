@@ -57,12 +57,13 @@ test('the welcome block stays compact, and a conversation widens to ~85% of the 
     // 余白(margin)を除いた本文は80列以内。
     const used = Math.max(...welcome.map(line => textWidth(line.trim())));
     assert.ok(used <= 80, `welcome stays compact: ${used}`);
-    const margins = welcome.filter(line => line.trim().startsWith('█'))
-      .map(line => line.length - line.trimStart().length);
-    // 余白(画面中央寄せ) + ロゴの中央寄せ(80列幅の中) = 60 + 27
-    const expectedPad = Math.floor((200 - 80) / 2) + Math.floor((80 - 26) / 2);
-    assert.ok(margins.length > 0 && margins.every(pad => Math.abs(pad - expectedPad) <= 2),
-      `welcome content is centered on the 200-column screen: ${JSON.stringify(margins)}`);
+    const logoRows = welcome.filter(line => line.trim().startsWith('█'));
+    assert.ok(logoRows.some(line => line.includes('███╗   ███╗')), 'wordmark includes M');
+    for (const line of logoRows) {
+      const left = line.length - line.trimStart().length;
+      const right = 200 - left - textWidth(line.trim());
+      assert.ok(Math.abs(left - right) <= 1, 'each logo row is centered');
+    }
 
     t.ui.write('▶ You: 作業を始めます\n');
     const conversation = screenFrom(t.raw(), 40);
@@ -81,6 +82,8 @@ test('a narrow terminal never widens past its own width', async () => {
   const t = terminal(40, 14);
   try {
     const input = t.ui.next();
+    assert.ok(t.text().includes('MoDKH'), 'narrow welcome keeps the full brand');
+    assert.ok(!t.text().includes('███╗'), 'oversized wordmark is replaced, not clipped');
     t.ui.write('▶ You: 狭い画面\n');
     assert.ok(t.text().split('\n').every(line => textWidth(line) <= 40), 'no line may exceed the terminal');
     t.key('return');
