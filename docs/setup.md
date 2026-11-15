@@ -71,6 +71,8 @@ sbcl --version
 
 CL-LSPのREADMEにある `ros install lem-project/lem cxxxr/cl-lsp` は、このMacでLemの導入途中に失敗しました。成功確認済みの手順として扱わないでください。`System "micros" not found` はLemの依存環境が不完全、または現在のQuicklisp/ASDFから見えていないことを示します。Lemを取得しただけでは依存解決は完了しません。
 
+macOSではインストール済みHomebrew OpenSSLのペアを実ロードし、CL+SSLが必要とする `ASN1_STRING_data` などを確認します。互換のあるものを専用プロセスで明示指定し、標準のOpenSSLリンクは変更しません。互換ライブラリがなければ導入を拒否します。Qlotの失敗ログは `language/servers/commonlisp/last-failure.json` の `diagnostics` に保存します（通常の設定ディレクトリは `~/.config/modkh`）。
+
 MoDKH側は取得したLemの `qlfile` を専用領域で `qlot install --no-deps` に渡し、`QUICKLISP_HOME` をCL-LSPと内部プロセスで共有します。生成lock、段階別結果、ASDFの解決先を記録します。実ダウンロード・LSP応答の検証は未完了です。QlotやSBCLの導入成功だけでCL-LSPの動作成功とはしません。
 
 既に動くCL-LSPがある場合は `~/.config/modkh/config.json` の既存設定に次を統合します。

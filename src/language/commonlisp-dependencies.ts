@@ -5,7 +5,7 @@ import { sha256 } from '../lisp/runtime.ts';
 type RunStage = (name: string, command: string, args: string[], cwd?: string) => Promise<string>;
 
 /** Resolve the upstream manifest in an owned prefix, without touching the user's Quicklisp. */
-export async function installLemDependencies(root: string, lem: string, ros: string, rosHome: string, run: RunStage) {
+export async function installLemDependencies(root: string, lem: string, ros: string, rosHome: string, run: RunStage, tlsFile?: string) {
   const directory = path.join(root, 'dependencies');
   fs.mkdirSync(directory, { mode: 0o700 });
   const manifest = fs.readFileSync(path.join(lem, 'qlfile'));
@@ -20,11 +20,16 @@ export async function installLemDependencies(root: string, lem: string, ros: str
 (assert (fboundp (find-symbol "QLOT-COMMAND" "QLOT/CLI")))
 (format t "MODKH_QLOT_READY ~A~%" (asdf:component-version (asdf:find-system "qlot")))
 `, { flag: 'wx' });
-  const output = await run('qlot-capability', ros, ['-Q', '-e', '(ros:ensure-asdf)', '-l', probe, '-q']);
+  const bootstrap = ['-Q', '-e', '(ros:ensure-asdf)', ...(tlsFile ? ['-l', tlsFile] : [])];
+  const output = await run('qlot-capability', ros, [...bootstrap, '-l', probe, '-q']);
   const evidence = output.split(/\r?\n/).filter(line => /^MODKH_QLOT_READY \S+$/.test(line));
   if (evidence.length !== 1) throw new Error('Qlot capability missing completion evidence');
   const version = evidence[0].slice('MODKH_QLOT_READY '.length);
-  await run('lem-dependencies', qlot, ['install', '--no-deps'], directory);
+  if (tlsFile) {
+    await run('lem-dependencies', ros, [...bootstrap, '-l', probe, '-e', '(qlot/cli:qlot-command "install" "--no-deps")', '-q'], directory);
+  } else {
+    await run('lem-dependencies', qlot, ['install', '--no-deps'], directory);
+  }
   const home = path.join(directory, '.qlot');
   // Exit 0 alone is insufficient. Loading and ASDF resolution are checked by the next stage.
   const setupDigest = sha256(fs.readFileSync(path.join(home, 'setup.lisp')));

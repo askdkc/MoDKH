@@ -78,3 +78,18 @@ test('an incomplete or modified managed CL prefix cannot be reused',async()=>{
   fs.appendFileSync(command,'modified');assert.equal(reusableCommonLisp(command,digest),false);
  } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('failed installation preserves Qlot stack trace before removing the attempt', async () => {
+ const root=temporaryDirectory('modkh-cl-evidence-'), oldFetch=globalThis.fetch;
+ globalThis.fetch=async()=>{
+  const attempt=fs.readdirSync(root).find(n=>n.startsWith('attempt-'))!;
+  fs.writeFileSync(path.join(root,attempt,'home/qlot-error-test.log'),'fixture stack trace: ASN1_STRING_data');
+  throw new Error('fixture install failure');
+ };
+ try {
+  await assert.rejects(installCommonLisp(root), /fixture install failure/);
+  const receipt=JSON.parse(fs.readFileSync(path.join(root,'last-failure.json'),'utf8'));
+  assert.equal(receipt.diagnostics['qlot-error-test.log'],'fixture stack trace: ASN1_STRING_data');
+  assert.equal(fs.readdirSync(root).some(n=>n.startsWith('attempt-')),false);
+ } finally {globalThis.fetch=oldFetch; fs.rmSync(root,{recursive:true,force:true});}
+});

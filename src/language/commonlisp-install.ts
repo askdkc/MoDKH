@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { prepareDarwinTls } from './commonlisp-tls.ts';
 import path from 'node:path';
 import { download } from './native.ts';
 import { commonLispRegistry, commonLispSystemProbe } from './commonlisp-systems.ts';
@@ -102,8 +103,10 @@ export async function installCommonLisp(target: string, signal?: AbortSignal) {
       await run(`source:${repo}`, 'git', ['-c', 'protocol.file.allow=never', 'clone', '--depth=1', `https://github.com/${repo}.git`, destination]);
       revisions[repo] = (await run(`revision:${repo}`, 'git', ['rev-parse', 'HEAD'], destination)).trim();
     }
+    const tls = platform.os === 'darwin' ? await stage('tls-library-selection', () => prepareDarwinTls(root, run)) : undefined;
+    report.tls = tls;
     const dependencies = await stage('lem-dependency-environment', () =>
-      installLemDependencies(root, path.join(projects, 'lem'), ros, rosHome, run));
+      installLemDependencies(root, path.join(projects, 'lem'), ros, rosHome, run, tls?.file));
     report.dependencies = dependencies;
     // Roswell consumes QUICKLISP_HOME before -s loads. Its backend children inherit it too.
     env.QUICKLISP_HOME = dependencies.home;
@@ -124,7 +127,7 @@ export async function installCommonLisp(target: string, signal?: AbortSignal) {
     if (!fs.existsSync(path.join(prefix, 'lib', library))) throw new Error(`Native library missing: ${library}`);
     // Fixed host bootstrap, never a project ASDF file. No GUI frontend is loaded.
     const startup = path.join(root, 'startup.lisp');
-    fs.writeFileSync(startup, `(setf *debugger-hook* (lambda (condition hook) (declare (ignore hook)) (princ condition *error-output*) (sb-ext:exit :code 1)))\n(ros:ensure-asdf)\n(require :asdf)\n(asdf:clear-source-registry)\n(asdf:initialize-source-registry '${registry})\n(ql:quickload :cffi :silent t)\n(push #P${JSON.stringify(prefix + '/lib/')} cffi:*foreign-library-directories*)\n(ql:quickload '(\"cl-lsp\" \"swank\" \"micros\") :silent t)\n`);
+    fs.writeFileSync(startup, `(setf *debugger-hook* (lambda (condition hook) (declare (ignore hook)) (princ condition *error-output*) (sb-ext:exit :code 1)))\n(ros:ensure-asdf)\n(require :asdf)\n(asdf:clear-source-registry)\n(asdf:initialize-source-registry '${registry})\n${tls ? `(load ${JSON.stringify(tls.file)})\n` : ''}(ql:quickload :cffi :silent t)\n(push #P${JSON.stringify(prefix + '/lib/')} cffi:*foreign-library-directories*)\n(ql:quickload '(\"cl-lsp\" \"swank\" \"micros\") :silent t)\n`);
     const capability = '(progn (assert (fboundp (find-symbol "ADD-PACKAGE-LOCAL-NICKNAME" "SB-EXT"))) (assert (fboundp (find-symbol "RUN-PROGRAM" "UIOP"))) (assert (fboundp (find-symbol "MAIN" "CL-LSP"))) (format t "SBCL=~A ASDF=~A~%" (lisp-implementation-version) (asdf:asdf-version)) (write-line "MODKH_CL_READY"))';
     const warmed = await run('runtime-warmup', ros, ['-Q', '-l', startup, '-e', capability, '-q']);
     if (!warmed.split(/\r?\n/).includes('MODKH_CL_READY')) throw new Error('Warmup exit0 without dedicated completion marker');
@@ -155,6 +158,15 @@ export async function installCommonLisp(target: string, signal?: AbortSignal) {
   } finally {
     if (!succeeded) {
       report.status='failed';report.finishedAt=new Date().toISOString();record();
+      // Keep diagnostic evidence before deleting this failed attempt's private caches.
+      const diagnostics: Record<string, string> = {};
+      for (const name of fs.readdirSync(home)) {
+        if (!/^qlot-error-[A-Za-z0-9_-]+\.log$/.test(name)) continue;
+        const file = path.join(home, name), stat = fs.lstatSync(file);
+        if (stat.isFile() && stat.size <= 2 * 1024 * 1024) diagnostics[name] = fs.readFileSync(file, 'utf8');
+      }
+      report.diagnostics = diagnostics;
+      record();
       fs.copyFileSync(path.join(root,'install-receipt.json'),path.join(target,'last-failure.json'));
       if (settled) fs.rmSync(root,{recursive:true,force:true});
     }

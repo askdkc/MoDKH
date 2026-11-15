@@ -120,3 +120,23 @@ test('real SBCL: Qlot version exits 255 but capability probe loads CLI and requi
     }).then(result => assert.equal(result.version, '0.0.0')).finally(() => fs.rmSync(root, { recursive: true, force: true }));
   } catch (error) { fs.rmSync(root, { recursive: true, force: true }); throw error; }
 });
+
+test('Darwin TLS configuration loads before Qlot in both capability and install processes', async () => {
+  const root = temporaryDirectory('modkh-qlot-tls-');
+  try {
+    const lem = path.join(root, 'lem'); fs.mkdirSync(lem); fs.writeFileSync(path.join(lem, 'qlfile'), '');
+    const tls = path.join(root, 'tls.lisp');
+    const stages: string[] = [];
+    await installLemDependencies(root, lem, '/private/ros', root, async (name, command, args, cwd) => {
+      stages.push(name);
+      if (name === 'qlot-bootstrap') return '';
+      assert.equal(command, '/private/ros');
+      assert.deepEqual(args.slice(0, 5), ['-Q', '-e', '(ros:ensure-asdf)', '-l', tls]);
+      if (name === 'qlot-capability') return 'MODKH_QLOT_READY fixture';
+      assert.ok(args.includes('(qlot/cli:qlot-command "install" "--no-deps")'));
+      fs.mkdirSync(path.join(cwd!, '.qlot')); fs.writeFileSync(path.join(cwd!, '.qlot/setup.lisp'), '');
+      fs.writeFileSync(path.join(cwd!, 'qlfile.lock'), ''); return '';
+    }, tls);
+    assert.deepEqual(stages, ['qlot-bootstrap', 'qlot-capability', 'lem-dependencies']);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
