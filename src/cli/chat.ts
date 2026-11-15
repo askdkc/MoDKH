@@ -13,7 +13,7 @@ import { parseAgentSettings } from '../subagents/settings.ts';
 import { ToolRegistry, defaultToolsWithJobs } from '../tools/registry.ts';
 import { JobRegistry } from '../tools/jobs.ts';
 import { runAgentLoop } from '../agent/loop.ts';
-import { parseModelRef } from '../model/factory.ts';
+import { parseModelRef, providerKeyEnv } from '../model/factory.ts';
 import { selectModel } from './models.ts';
 import { loginChatGpt, type LoginOptions } from '../model/chatgpt/login.ts';
 import { loadChatGptTokens } from '../model/chatgpt/tokens.ts';
@@ -143,7 +143,14 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       modelId = candidate;
     } catch (e) {
       if (args['model']) throw e;
+      // 保存済みのモデルは毎回の /connect を省くためのもの。復元できない原因(キー未保存など)を
+      // 伝え、同じモデルを選び直す手間を減らす。/models からの再選択だけで復旧できる。
       ui.write(`(モデル ${candidate} を復元できません: ${(e as Error).message})\n`);
+      const provider = parseModelRef(candidate).provider;
+      const keyEnv = providerKeyEnv(provider);
+      if (keyEnv && !process.env[keyEnv] && !sessionKeys.has(provider)) {
+        ui.write(`(保存済みキーが無いため復元できません。/connect ${provider} でキーを保存すると次回から自動で復元します)\n`);
+      }
     }
   }
   if (modelId?.startsWith('hermes/') && !await confirmRemoteAgent(ui)) { model = null; modelId = null; }

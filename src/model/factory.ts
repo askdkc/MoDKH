@@ -56,6 +56,15 @@ export function knownProviders(): string[] {
 }
 
 /**
+ * プロバイダーが要求するAPIキーの環境変数名。キー不要なら null、未知のプロバイダーは undefined。
+ * 起動時の復元で「保存済みキーがあるか」を環境変数と突き合わせるために使う。
+ */
+export function providerKeyEnv(provider: string): string | null | undefined {
+  const preset = PRESETS[provider];
+  return preset === undefined ? undefined : preset.env;
+}
+
+/**
  * 接続先を組み立てる。キーが無ければ明示的に失敗する。
  * 認証失敗や通信エラーで別の接続先へ切り替えることはしない(PLAN.md の方針)。
  */
