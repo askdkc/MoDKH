@@ -65,7 +65,7 @@ export function define() {
 }
 ```
 
-`define()` は同期関数です。実行用の状態・プロセスを作らず、定義データを返してください。公開型は `import type { LocalPlugin, ExternalPlugin } from 'dkh/plugin-api'` で利用できます。
+`define()` は同期関数です。実行用の状態・プロセスを作らず、定義データを返してください。公開型は `import type { LocalPlugin, ExternalPlugin } from 'modkh/plugin-api'` で利用できます。
 
 IDは英小文字始まりの小文字英数字・ハイフンで64文字まで。`dkh-` は予約済み。API版は整数 `1` のみ。未知フィールド、範囲外entry、シンボリックリンクは拒否します。entryはパッケージ内の `.js` または `.mjs` です。
 

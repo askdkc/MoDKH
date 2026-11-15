@@ -1,5 +1,5 @@
 #!/bin/sh
-# dkh tarball 受け入れスクリプト。
+# MoDKH tarball 受け入れスクリプト。
 # npm pack → 隔離ディレクトリへインストール → 固定応答モデルで
 # 読む → 承認して編集 → テスト実行 → 再起動して再開 を確認する。
 # 不正引数・ルート外・承認拒否・二重実行防止も確認する。
@@ -14,14 +14,14 @@ export npm_config_cache="$WORK/npm-cache"
 # 1) tarball を作る
 cd "$ROOT"
 npm pack --pack-destination "$WORK" >/dev/null
-TARBALL=$(ls "$WORK"/dkh-*.tgz)
+TARBALL=$(ls "$WORK"/modkh-*.tgz)
 
 # 2) 隔離ディレクトリへ正規の方法で導入
 mkdir -p "$WORK/install"
 cd "$WORK/install"
 npm init -y >/dev/null
 npm install --no-audit --no-fund --loglevel=error "$TARBALL" >/dev/null
-CLI="$WORK/install/node_modules/dkh/dist/index.js"
+CLI="$WORK/install/node_modules/modkh/dist/index.js"
 test -f "$CLI" || { echo "FAIL: dist/index.js が tarball に含まれていない"; exit 1; }
 "$CLI" --version >/dev/null || { echo "FAIL: --version が動かない"; exit 1; }
 
@@ -103,7 +103,7 @@ echo "$OUTUNCONNECTED" | grep -q 'Connect an integration' || { echo "FAIL: 未�
 OUTMODELS=$(printf '/models ScRiPt\n1\n/connect\n\n/exit\n' | "$CLI" --cwd "$PROJ3")
 echo "$OUTMODELS" | grep -q '1. fixed/scripted' || { echo 'FAIL: 検索候補がない'; exit 1; }
 echo "$OUTMODELS" | grep -q '接続中: fixed/scripted' || { echo 'FAIL: モデル選択が反映されない'; exit 1; }
-DKH_TEST_ENTRY="$CLI" DKH_TEST_CHAT="$WORK/install/node_modules/dkh/dist/cli/chat.js" DKH_TEST_TERMINAL="$WORK/install/node_modules/dkh/dist/cli/terminal.js" node --test --test-reporter=tap \
+DKH_TEST_ENTRY="$CLI" DKH_TEST_CHAT="$WORK/install/node_modules/modkh/dist/cli/chat.js" DKH_TEST_TERMINAL="$WORK/install/node_modules/modkh/dist/cli/terminal.js" node --test --test-reporter=tap \
   "$ROOT/test/cli.interactive.test.ts" "$ROOT/test/cli.safety.test.ts" \
   "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.memory.test.ts" "$ROOT/test/cli.tui.test.ts" \
   "$ROOT/test/plugins.entry.test.ts" "$ROOT/test/composer.flow.test.ts" "$ROOT/test/cli.harness.test.ts"
@@ -116,9 +116,9 @@ printf 'export const value: number = "oops";\n' > "$PROJLANG/src/bad.ts"
 python3 "$ROOT/scripts/language-acceptance.py" "$CLI" "$WORK" "$PROJLANG"
 
 # Verify the exported SDK from the installed package, not the source checkout.
-node --input-type=module -e 'await import("dkh/plugin-api")'
-test -f node_modules/dkh/dist/plugins/api.d.ts
-printf 'import type { LocalPlugin } from "dkh/plugin-api"; const plugin: LocalPlugin = { define: () => ({ system: "Review", tools: ["read_file"] }) }; void plugin;\n' > sdk-consumer.ts
+node --input-type=module -e 'await import("modkh/plugin-api")'
+test -f node_modules/modkh/dist/plugins/api.d.ts
+printf 'import type { LocalPlugin } from "modkh/plugin-api"; const plugin: LocalPlugin = { define: () => ({ system: "Review", tools: ["read_file"] }) }; void plugin;\n' > sdk-consumer.ts
 node "$ROOT/node_modules/typescript/bin/tsc" --noEmit --strict --skipLibCheck --target es2023 --module nodenext sdk-consumer.ts
 
 echo "ACCEPTANCE_OK"

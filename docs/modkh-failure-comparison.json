@@ -1,9 +1,10 @@
 {
-  "baseRevision": "a82a9d447fa8ca85a8d1b289770e22f7b211f81c",
+  "baseRevision": "55c4aab",
+  "baselineOrigin": "Previous recorded final suite, not a new pre-edit run. Qlot dependency change compared by test name/error/code.",
   "before": {
     "summary": {
-      "tests": 440,
-      "pass": 374,
+      "tests": 442,
+      "pass": 376,
       "fail": 58,
       "skipped": 8
     },
@@ -334,11 +335,10 @@
       }
     ]
   },
-  "baselineOrigin": "Previous final recorded run; not rerun before this turn source changes",
   "after": {
     "summary": {
-      "tests": 442,
-      "pass": 376,
+      "tests": 446,
+      "pass": 380,
       "fail": 58,
       "skipped": 8
     },
@@ -352,76 +352,6 @@
         "name": "30 round trips complete under the default limit instead of being truncated",
         "error": "'listen EPERM: operation not permitted 127.0.0.1'",
         "code": "'EPERM'"
-      },
-      {
-        "name": "AI SDK does not turn length into completion",
-        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
-        "code": "'EPERM'"
-      },
-      {
-        "name": "AI SDK does not turn missing finish into completion",
-        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
-        "code": "'EPERM'"
-      },
-      {
-        "name": "AI SDK does not turn tool_calls into completion",
-        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
-        "code": "'EPERM'"
-      },
-      {
-        "name": "CLI approval Stop preserves the next instruction through the real model adapter",
-        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
-        "code": "'EPERM'"
-      },
-      {
-        "name": "CLI error stays error after EOF and original user whitespace is retained",
-        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
-        "code": "'EPERM'"
-      },
-      {
-        "name": "CLI footer shows provider-reported usage only (omitted)",
-        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
-        "code": "'EPERM'"
-      },
-      {
-        "name": "CLI footer shows provider-reported usage only (reported)",
-        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
-        "code": "'EPERM'"
-      },
-      {
-        "name": "CLIの記憶検索結果はモデル入力に届き、過去の参考データを履歴へ積み増さない",
-        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
-        "code": "'EPERM'"
-      },
-      {
-        "name": "OAuth cancellation and timeout release the exact callback port without persisting",
-        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
-        "code": "'EPERM'"
-      },
-      {
-        "name": "OAuth ignores wrong state/path, saves before browser success, and exchanges once",
-        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
-        "code": "'EPERM'"
-      },
-      {
-        "name": "OpenAI互換アダプターが偽SSEサーバでストリーミング+ツール往復を完走する",
-        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
-        "code": "'EPERM'"
-      },
-      {
-        "name": "Responses API のHTTPエラーは error としてループに伝わる",
-        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
-        "code": "'EPERM'"
-      },
-      {
-        "name": "Responses API アダプターが偽SSEでストリーミング+関数往復を完走する",
-        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
-        "code": "'EPERM'"
-      },
-      {
-        "name": "Stop escalates for a descendant that ignores TERM after shell exit",
-        "error": "'EMFILE: too many open files, watch'",
-        "code": "'EMFILE'"
       },
       {
         "name": "a command that overruns its deadline keeps running and reports back through a job",
@@ -449,6 +379,21 @@
         "code": "'EPERM'"
       },
       {
+        "name": "AI SDK does not turn length into completion",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "AI SDK does not turn missing finish into completion",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "AI SDK does not turn tool_calls into completion",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
         "name": "an invalid maxTurns falls back to the default with a diagnostic",
         "error": "'listen EPERM: operation not permitted 127.0.0.1'",
         "code": "'EPERM'"
@@ -464,12 +409,37 @@
         "code": "'EPERM'"
       },
       {
+        "name": "CLI approval Stop preserves the next instruction through the real model adapter",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLI error stays error after EOF and original user whitespace is retained",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLI footer shows provider-reported usage only (omitted)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLI footer shows provider-reported usage only (reported)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
         "name": "clipboard image and multiline text reach the real chat API and journal (success)",
         "error": "'listen EPERM: operation not permitted 127.0.0.1'",
         "code": "'EPERM'"
       },
       {
         "name": "clipboard image and multiline text reach the real chat API and journal (success)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLIの記憶検索結果はモデル入力に届き、過去の参考データを履歴へ積み増さない",
         "error": "'listen EPERM: operation not permitted 127.0.0.1'",
         "code": "'EPERM'"
       },
@@ -529,6 +499,16 @@
         "code": "'EPERM'"
       },
       {
+        "name": "OAuth cancellation and timeout release the exact callback port without persisting",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "OAuth ignores wrong state/path, saves before browser success, and exchanges once",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
         "name": "occupied callback port fails before showing a browser URL",
         "error": "'listen EPERM: operation not permitted 127.0.0.1'",
         "code": "'EPERM'"
@@ -540,6 +520,11 @@
       },
       {
         "name": "ollama-cloud reaches its configured OpenAI-compatible endpoint with the exact model/key",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "OpenAI互換アダプターが偽SSEサーバでストリーミング+ツール往復を完走する",
         "error": "'listen EPERM: operation not permitted 127.0.0.1'",
         "code": "'EPERM'"
       },
@@ -577,6 +562,21 @@
         "name": "reasoning-only stream reports activity and ends on user Stop without replay",
         "error": "'listen EPERM: operation not permitted 127.0.0.1'",
         "code": "'EPERM'"
+      },
+      {
+        "name": "Responses API アダプターが偽SSEでストリーミング+関数往復を完走する",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "Responses API のHTTPエラーは error としてループに伝わる",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "Stop escalates for a descendant that ignores TERM after shell exit",
+        "error": "'EMFILE: too many open files, watch'",
+        "code": "'EMFILE'"
       },
       {
         "name": "the agent reads a failing check as a result and repairs the code",

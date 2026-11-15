@@ -1,13 +1,14 @@
 {
-  "name": "dkh",
+  "name": "modkh",
   "version": "0.1.0",
-  "description": "単独で動く最小コーディングハーネス",
+  "description": "MoDKH — Common Lispで担当を定義できるコーディングハーネス",
   "type": "module",
   "license": "MIT",
   "engines": {
     "node": ">=24.16.0"
   },
   "bin": {
+    "modkh": "dist/index.js",
     "dkh": "dist/index.js"
   },
   "files": [

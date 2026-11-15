@@ -1,3 +1,33 @@
+# Lem/Qlot依存環境の修正（2026-11-15）
+
+**PLAN全体は未完了。実CL-LSPの起動は未検証。** 対象 /Users/dkc/Sites/Src/mdkh、開始HEAD 55c4aab、開始時clean。AGENTS.md/PLAN.mdは現在のcheckoutに存在せず、本会話の指示を継承。グローバル設定、既存Roswell/Quicklisp、commit/pushは変更なし。
+
+## 変更
+
+- src/language/commonlisp-dependencies.ts: 専用RoswellへQlotを導入し、取得済みLemのqlfileを専用dependenciesディレクトリへコピーして公式の install --no-deps を実行。上流の過去lockをコピーせず現在のmanifestを解決し、生成lock本文・hash、setup hash、Qlot版出力を記録。終了0だけでなくsetup/lockの存在と後続ASDF discoveryを要求。
+- src/language/commonlisp-install.ts: 手書きの依存Git一覧をLemのmanifest解決へ置換。QUICKLISP_HOMEと明示CL_SOURCE_REGISTRYをfrontend/backendの両方へ渡す。async-processのnative buildはASDFが選択した専用領域内のソースを使用。領域外・symlinkによる逸脱は拒否。
+- test/language.commonlisp-dependencies.test.ts: 段階順序、依存失敗、不完全出力、元lock保持、native source境界の3試験。Qlot runnerはscripted。
+- test/language.commonlisp-systems.test.ts: 実SBCLでmicros不在を確認してからregistry修復後のloadを確認する1試験追加。microsは最小fixtureであり実サーバーではない。
+
+## 最終ソースの検証
+
+TMPDIRは .dkh-feasibility/qlot-recovery/tmp。
+
+- npm run typecheck: 成功。
+- npm run build: 成功。現在のdistを再生成（既存12文法、17スキル）。CL/Svelte実文法を追加したとは主張しない。
+- npm test: 446件、380成功、58失敗、8skip。前回記録の442件と名前/error/codeを照合し新規失敗0、原因変更0。変更前suiteの再実行はしていない。
+- node --test test/language.commonlisp-*.test.ts: 15成功、失敗・skipなし。
+- git diff --check: 成功。
+- packed artifactの既存試験は全体suiteで実行。Qlot実導入をpacked artifactから確認したものではない。
+
+## ブロッカー
+
+この実行環境から git ls-remote https://github.com/fukamachi/qlot.git HEAD を実行しexit128、Could not resolve host: github.com。Qlotの実取得・manifest解決・CL-LSP initialize/didOpen/definition/診断は未実行。ユーザーの通常端末で成功したLem/CL-LSP取得とは別の結果。ネットワークへ到達できる許可済み環境で今回のprivate installerを実行する必要がある。OS設定・権限を変更していない。
+
+Lem最初の323行目での失敗理由はユーザーログに具体的conditionがなく未確定。今回の修正がそのエラー自体を解消したとは主張しない。既存導入の自動再利用・中断cache再開、他のPLAN残件は引き続き未完了。source/distのdigestとこの試行の範囲は modkh-qlot-evidence.json に記録。
+
+---
+
 # MoDKH CL依存の再調査と修正（2026-11-15）
 
 **PLAN全体は未完了。** 現在のMacリポジトリを直接編集。基準HEAD `a82a9d447fa8ca85a8d1b289770e22f7b211f81c`、開始時clean。既存PLAN.mdはこの開始時点では存在しなかった。削除・再作成・上書きはしていない。本会話の要求と既存検証記録を継承した。commit/push/グローバル変更なし。

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { download } from './native.ts';
 import { commonLispRegistry, commonLispSystemProbe } from './commonlisp-systems.ts';
+import { installLemDependencies, resolvedDependencyDirectory } from './commonlisp-dependencies.ts';
 import { hostPlatform, type HostPlatform, type ReleaseAsset } from './platform.ts';
 import { executeBounded, privateEnvironment, sha256, type ExecutionReceipt } from '../lisp/runtime.ts';
 import { LspServer } from './lsp/client.ts';
@@ -26,7 +27,7 @@ export function roswellAsset(assets: ReleaseAsset[], platform: HostPlatform, gli
 }
 
 interface Stage { name: string; state: 'running' | 'passed' | 'failed'; receipt?: ExecutionReceipt; detail?: string }
-const repositories = ['lem-project/lem', 'cxxxr/cl-lsp', 'lem-project/async-process', 'lem-project/micros', 'lem-project/lem-mailbox', 'lem-project/lem-extension-manager', 'cxxxr/jsonrpc'] as const;
+const repositories = ['lem-project/lem', 'cxxxr/cl-lsp'] as const;
 const failure = (error: unknown): string => {
   if (!(error instanceof Error)) return String(error);
   const cause = error.cause as { code?: string; message?: string } | undefined;
@@ -43,7 +44,7 @@ export async function installCommonLisp(target: string, signal?: AbortSignal) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(target, 'attempt-')));
   const home = path.join(root, 'home'), rosHome = path.join(root, 'roswell-home'), prefix = path.join(root, 'runtime');
   for (const dir of [home, rosHome, prefix]) fs.mkdirSync(dir, { mode: 0o700 });
-  const env = { ...privateEnvironment(home), ROSWELL_HOME: rosHome, PATH: `${prefix}/bin:${rosHome}/bin:${process.env.PATH ?? '/usr/bin:/bin'}`,
+  const env: NodeJS.ProcessEnv = { ...privateEnvironment(home), ROSWELL_HOME: rosHome, PATH: `${prefix}/bin:${rosHome}/bin:${process.env.PATH ?? '/usr/bin:/bin'}`,
     CL_SOURCE_REGISTRY: `(:source-registry (:tree ${JSON.stringify(path.join(rosHome, 'local-projects') + '/')}) :inherit-configuration)`,
     GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' };
   const stages: Stage[] = [], revisions: Record<string, string> = {};
@@ -90,13 +91,19 @@ export async function installCommonLisp(target: string, signal?: AbortSignal) {
       await run(`source:${repo}`, 'git', ['-c', 'protocol.file.allow=never', 'clone', '--depth=1', `https://github.com/${repo}.git`, destination]);
       revisions[repo] = (await run(`revision:${repo}`, 'git', ['rev-parse', 'HEAD'], destination)).trim();
     }
+    const dependencies = await stage('lem-dependency-environment', () =>
+      installLemDependencies(root, path.join(projects, 'lem'), ros, rosHome, run));
+    report.dependencies = dependencies;
+    // Roswell consumes QUICKLISP_HOME before -s loads. Its backend children inherit it too.
+    env.QUICKLISP_HOME = dependencies.home;
     const registry = commonLispRegistry(projects);
+    env.CL_SOURCE_REGISTRY = registry;
     const discoveryFile = path.join(root, 'discover-systems.lisp');
     fs.writeFileSync(discoveryFile, '(require :asdf)\n' + commonLispSystemProbe(registry));
     const discovery = await run('asdf-system-discovery', ros, ['-Q', '-l', discoveryFile, '-q']);
     if (!discovery.split(/\r?\n/).includes('MODKH_ASDF_DISCOVERY_OK')) throw new Error('ASDF discovery exited without completion evidence');
     report.asdfDiscovery = discovery;
-    const native = path.join(projects, 'async-process');
+    const native = resolvedDependencyDirectory(discovery, 'async-process', root);
     await run('native-build', 'make', [`PREFIX=${prefix}`], native);
     await run('native-install', 'make', [`PREFIX=${prefix}`, 'install'], native);
     const library = platform.os === 'darwin' ? 'libasyncprocess.dylib' : 'libasyncprocess.so';

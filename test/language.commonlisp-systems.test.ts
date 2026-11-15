@@ -38,3 +38,27 @@ test('dependency registry ignores symlinks and Git metadata', () => {
     assert.match(registry,/source/);assert.doesNotMatch(registry,/linked|\.git/);
   } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('real SBCL reports missing micros and loads it after dependency registry repair', async () => {
+  const root = temporaryDirectory('modkh-micros-');
+  try {
+    const source = path.join(root, 'micros'); fs.mkdirSync(source);
+    fs.writeFileSync(path.join(source, 'micros.asd'), '(asdf:defsystem "micros" :components ((:file "server")))');
+    fs.writeFileSync(path.join(source, 'server.lisp'), '(defpackage :micros (:use :cl) (:export :create-server))\n(in-package :micros)\n(defun create-server () :fixture)');
+    const driver = `(require :asdf)
+(asdf:initialize-source-registry '(:source-registry :ignore-inherited-configuration))
+(handler-case (progn (asdf:load-system "micros") (error "unexpected dependency"))
+  (asdf:missing-component () (write-line "MICROS_MISSING")))
+(asdf:clear-source-registry)
+(asdf:initialize-source-registry '${commonLispRegistry(root)})
+(asdf:load-system "micros")
+(assert (eq :fixture (uiop:symbol-call :micros :create-server)))
+(write-line "MICROS_LOADED")`;
+    fs.writeFileSync(path.join(root, 'probe.lisp'), driver);
+    const result = await executeBounded('sbcl', ['--noinform', '--no-sysinit', '--no-userinit', '--disable-debugger', '--script', 'probe.lisp'],
+      { cwd: root, env: privateEnvironment(root), inputDigest: sha256(driver), timeoutMs: 10000 });
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(result.cleanup, 'settled');
+    assert.match(result.stdout, /MICROS_MISSING/); assert.match(result.stdout, /MICROS_LOADED/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

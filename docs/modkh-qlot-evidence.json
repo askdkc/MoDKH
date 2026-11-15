@@ -1,0 +1,37 @@
+{
+  "date": "2026-11-15",
+  "baseRevision": "55c4aab",
+  "platform": "darwin",
+  "arch": "arm64",
+  "identity": {
+    "source": {
+      "sha256": "92c5e73fff37cbf9f7a09614d841db28f7ed0c853a81991ba9d9ffa6fc6e9da5",
+      "files": 150
+    },
+    "artifact": {
+      "sha256": "af772e277d520b078eabf24e2faedc5e71d9b79edd78ca9d38b87169ab98e6c0",
+      "files": 174
+    }
+  },
+  "status": "partial; real Qlot installation and CL-LSP startup blocked",
+  "network": {
+    "command": "git ls-remote https://github.com/fukamachi/qlot.git HEAD",
+    "exitCode": 128,
+    "error": "Could not resolve host: github.com"
+  },
+  "checks": {
+    "typecheck": "passed",
+    "build": "passed; 12 bundled grammars, 17 skills",
+    "suite": {
+      "tests": 446,
+      "pass": 380,
+      "fail": 58,
+      "skip": 8
+    },
+    "failureComparison": "same names/error/code as previous recorded final suite; not a fresh pre-edit run",
+    "realLsp": "not run",
+    "qlotStageTests": "scripted runner; not real Qlot",
+    "microsTest": "real SBCL with minimal fixture; not real micros server"
+  },
+  "globalEnvironment": "unchanged"
+}
