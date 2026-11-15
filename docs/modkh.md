@@ -1,6 +1,6 @@
 # MoDKH: trusted Common Lisp microagents
 
-MoDKH (Mixture of DKH) is distributed as `modkh`, with the `modkh` command and the compatible `dkh` alias. `DKH_HOME`, configuration location and session format remain compatible. No npm publication or global installation is required to test this checkout.
+MoDKH (Mixture of DKH) is distributed as `modkh`, exposing only the `modkh` command so an existing `dkh` installation is not overwritten. `DKH_HOME`, configuration location and session format remain compatible. No npm publication or global installation is required to test this checkout.
 
 ## Run
 

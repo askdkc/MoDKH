@@ -8,8 +8,7 @@
     "node": ">=24.16.0"
   },
   "bin": {
-    "modkh": "dist/index.js",
-    "dkh": "dist/index.js"
+    "modkh": "dist/index.js"
   },
   "files": [
     "dist",

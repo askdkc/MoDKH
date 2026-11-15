@@ -2,7 +2,7 @@
 
 **Mixture of DKH** — Common Lispで専門担当を定義し、ヘッドモデルから調査・編集・検証を委譲できるコーディングハーネス。
 
-npmパッケージ名・コマンド名は `modkh`。互換用に `dkh` コマンドも使えます。設定先は `~/.config/dkh`（変更する場合は `DKH_HOME`）です。
+npmパッケージ名・コマンド名は `modkh`。既存の `dkh` コマンドとは別にインストールします。設定先は `~/.config/dkh`（変更する場合は `DKH_HOME`）です。
 
 ## インストール
 
@@ -35,9 +35,10 @@ node dist/index.js
 
 ```sh
 archive=$(npm pack --silent)
-npm install -g "./$archive"
-modkh
+npm install -g "./$archive" && modkh
 ```
+
+旧tarballで `/bin/dkh` の `EEXIST` が出た場合は、修正済みのこのリポジトリから上記の `npm pack` をやり直してください。既存の `dkh` を削除したり、`--force` で上書きする必要はありません。
 
 初回は `/connect` で接続先とモデルを選択します。ChatGPT認証やAPIキーに対応し、Ollama Local以外はローカルモデルの導入不要です。[プロバイダー設定](docs/models.md)
 
