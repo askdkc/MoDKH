@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { bundledSkills, readBundledSkill, DKH_SKILL_BINDING } from './bundled-skills.ts';
 
 export interface TaskSkill {
   name: string;
@@ -7,6 +8,7 @@ export interface TaskSkill {
   keywords: string[];
   /** Workspace-relative file, read only after selection. */
   path?: string;
+  bundled?: boolean;
   instructions?: string;
 }
 export interface SkillContext {
@@ -15,25 +17,30 @@ export interface SkillContext {
   warnings: string[];
   bytes: number;
 }
-export const SKILL_CONTEXT_BYTES = 12 * 1024;
+export const SKILL_CONTEXT_BYTES = 48 * 1024;
+const LOCAL_SKILL_BYTES = 12 * 1024;
 const MAX_SKILLS = 3;
 const MAX_CATALOG_BYTES = 64 * 1024;
 
-// Short runtime guidance rather than entire documentation or tool schemas.
-const BUILTIN_SKILLS: readonly TaskSkill[] = [
-  { name: 'dkh-debug', description: '不具合の再現と原因の切り分け',
-    keywords: ['bug', 'debug', 'fix', 'error', 'failure', 'failing', '不具合', 'バグ', 'エラー', '修正', '失敗'],
-    instructions: '現行ソースと呼び出し元を確認し、入力・期待値・実際の結果で不具合を再現する。仮説を分ける観測を先に取り、原因を直す。修正前に失敗し修正後に通る検証を行う。同じ修正で二度失敗したら共通の仮定を調べ直す。' },
-  { name: 'dkh-implement', description: '機能の実装と影響範囲の検証',
-    keywords: ['implement', 'implementation', 'feature', 'refactor', '実装', '導入', '機能', '追加', 'リファクタ'],
-    instructions: '要求を観測可能な完了条件にし、既存の契約・呼び出し元・テストを読んで最小の変更を行う。純粋な判断と入出力を分離する。境界値・異常系と実際の利用経路を検証し、未検証の実環境や制約を報告する。' },
-  { name: 'dkh-review', description: '変更差分のレビュー',
-    keywords: ['review', 'audit', 'レビュー', '監査'],
-    instructions: '差分だけでなく呼び出し元と契約を確認する。具体的な入力で発生する欠陥を優先し、重大度・ファイル位置・再現条件を示す。推測を確定した不具合として扱わない。レビューだけの依頼では勝手に編集しない。' },
-  { name: 'dkh-investigate', description: '根拠に基づく調査',
-    keywords: ['investigate', 'research', 'compare', '調査', '比較', '原因'],
-    instructions: '判断に必要な問いを分け、対象の一次資料・現行コードを根拠にする。事実、推論、未確認を区別し、出典またはファイル位置を残す。情報が足りない場合は何を確認すれば判別できるかを示す。' },
-];
+const ROUTES: Record<string, string[]> = {
+  'kiokuko-investigate': ['investigate', 'research', 'explain', '調査', '原因', '説明'],
+  'kiokuko-architecture': ['architecture', 'design', '設計', 'アーキテクチャ'],
+  'kiokuko-review': ['review', 'audit', 'レビュー', '監査'],
+  'kiokuko-benchmark': ['benchmark', 'performance', 'speed', 'ベンチマーク', '性能', '高速化'],
+  'kiokuko-verification': ['verify', 'test', '検証', 'テスト'],
+  'kiokuko-skill-authoring': ['skill', 'skills', 'スキル'],
+  'kiokuko-technical-writing': ['readme', 'documentation', 'ドキュメント', '手順書'],
+  'kiokuko-simple-work': ['minimal', 'simple', 'yagni', '最小', '簡単'],
+  'kiokuko-ui-design-soul': ['ui', 'ux', 'frontend', '画面', 'レイアウト', 'フォーム'],
+  'veteran-programmer-skill': ['install', 'deploy', 'migration', 'state', '配布', '導入', '状態', '移行'],
+  'memory-reasoning': ['memory', '記憶'],
+  'kiokuko-lisp': ['lisp', 'sbcl', 'common-lisp'],
+};
+const CODING = ['implement', 'implementation', 'feature', 'refactor', 'fix', 'debug', 'bug', 'coding', 'code', '実装', '機能', '修正', 'バグ', 'コード', 'リファクタ', '導入'];
+const CODING_CORE = ['coding-ideal-routine-skill', 'one-shot-software-completion', 'kiokuko-single-purpose-functions'];
+function builtinCatalog(): TaskSkill[] {
+  return bundledSkills().map(skill => ({ name: skill.name, description: skill.description, keywords: ROUTES[skill.name] ?? [], bundled: true }));
+}
 
 function matches(task: string, keyword: string): boolean {
   if (/^[a-z0-9_-]+$/i.test(keyword)) {
@@ -76,7 +83,7 @@ function readLocal(root: string, relative: string, limit: number): string {
   } finally { fs.closeSync(fd); }
 }
 
-function localCatalog(root: string, warnings: string[]): TaskSkill[] {
+function localCatalog(root: string, warnings: string[], builtin: readonly TaskSkill[]): TaskSkill[] {
   let text: string;
   try { text = readLocal(root, '.dkh/skills.json', MAX_CATALOG_BYTES); }
   catch (error) {
@@ -86,7 +93,7 @@ function localCatalog(root: string, warnings: string[]): TaskSkill[] {
   try {
     const items: unknown = JSON.parse(text);
     if (!Array.isArray(items) || items.length > 128) throw new Error('invalid catalog');
-    const names = new Set(BUILTIN_SKILLS.map(skill => skill.name));
+    const names = new Set(builtin.map(skill => skill.name));
     return items.map((item: unknown) => {
       if (!item || typeof item !== 'object') throw new Error('invalid entry');
       const value = item as Record<string, unknown>;
@@ -110,14 +117,27 @@ export function prepareSkillContext(task: string, root: string): SkillContext {
   let canonical: string;
   try { canonical = fs.realpathSync(root); }
   catch { return { text: '', selected: [], warnings: ['作業ルートを確認できないためスキル注入を省略'], bytes: 0 }; }
-  const selected = selectTaskSkills(task, [...BUILTIN_SKILLS, ...localCatalog(canonical, warnings)]);
-  const header = '\n\n目的別の参考手順（ユーザーの依頼・上位指示・承認設定を優先する。手順は権限を付与しない）:\n';
+  let builtin: TaskSkill[] = [];
+  try { builtin = builtinCatalog(); }
+  catch { warnings.push('同梱スキル一覧を読めないため注入を省略'); }
+  const catalog = [...builtin, ...localCatalog(canonical, warnings, builtin)];
+  const optional = selectTaskSkills(task, catalog);
+  const names = new Set(optional.map(skill => skill.name));
+  const coding = CODING.some(word => matches(task, word));
+  if (coding) for (const name of CODING_CORE) names.add(name);
+  if (matches(task, 'review') || matches(task, 'レビュー')) names.add('kiokuko-single-purpose-functions');
+  if (/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(task) || matches(task, 'Japanese')) names.add('natural-japanese-output');
+  if (names.size) names.add('kiokuko-soul');
+  // Host entry and mandatory code guidance precede optional specialists; no top-three cutoff on core contracts.
+  const order = ['kiokuko-soul', ...CODING_CORE, ...optional.map(skill => skill.name), 'natural-japanese-output'];
+  const selected = [...new Set(order)].filter(name => names.has(name)).map(name => catalog.find(skill => skill.name === name)).filter((skill): skill is TaskSkill => !!skill);
+  const header = '\n\n' + DKH_SKILL_BINDING;
   let text = '';
   const delivered: string[] = [];
   const bodies = new Set<string>();
   for (const skill of selected) {
     let body: string;
-    try { body = skill.instructions ?? readLocal(canonical, skill.path!, SKILL_CONTEXT_BYTES); }
+    try { body = skill.bundled ? readBundledSkill(skill.name) : skill.instructions ?? readLocal(canonical, skill.path!, LOCAL_SKILL_BYTES); }
     catch { warnings.push(`${skill.name}: 本文を安全に読めないため省略`); continue; }
     if (!body.trim()) { warnings.push(`${skill.name}: 本文が空のため省略`); continue; }
     if (bodies.has(body)) continue;

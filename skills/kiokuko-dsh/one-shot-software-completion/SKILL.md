@@ -1,0 +1,113 @@
+---
+name: one-shot-software-completion
+description: Complete repository code changes through requirement discovery, integration, and verification. Use when writing or changing code; scale to the task and load detailed guidance only for the current risk or failure.
+---
+
+<!-- KIOKUKO MANAGED STANDARD SKILL: one-shot-software-completion -->
+
+<!-- kiokuko:runtime contract -->
+# One-Shot Software Completion
+
+Deliver observable requirements with reachable integration and evidence.
+"One-shot" is a goal, not a one-turn guarantee or extra authority. Repository
+defaults never override intent, permissions or host integrity checks.
+
+## Credo
+
+**本当に、それを全部計算・保存・検索する必要があるのか？**
+
+Before implementation, remove unnecessary computation, persistence and search;
+justify exhaustive work by a required outcome. Stop when evidence suffices.
+Verify that omissions preserve behavior, integration, recovery and checks.
+
+## Read economically
+
+Read this index completely. For unresolved risks, read matching references one
+at a time, usually one or two per work unit. Do not preload or reread merely for
+a phase change. Deferring references never waives core obligations.
+
+| Read when | Reference |
+| --- | --- |
+| Requirements, callers, scope or integration are unclear | [Discovery and scope](references/discovery-and-scope.md) |
+| Inputs, effects, resource lifetime or compatibility change | [Boundaries and lifecycle](references/boundaries-and-lifecycle.md) |
+| Choosing evidence, reviewing the diff or checking delivery | [Verification and completion](references/verification-and-completion.md) |
+| A check fails or progress stalls | [Failure recovery](references/failure-recovery.md) |
+
+Use the current agent unless delegation is required. Widen reads for new evidence,
+failures or lost context. Token budgets use host usage, not bytes or capacity.
+
+## Completion contract
+
+Coding: carry out the authorized work and verify the current user entry. Coding records are advisory and observed results are captured by the host. Optionally add notes with coding_workflow_apply annotate. Lisp ON coding preparation requires an actual successful prototype and inspection of its saved result. Resume exact task and operation identities. Report missing evidence as unverified.
+
+Bind behavior, required method, preserved contracts and evidence before editing.
+No unapproved proxy: raster for required geometry, hardcoded output, mocks or
+disconnected helpers. Tests are evidence, not specification; expectation changes
+need independent contract evidence. Review diff and callers for dead code, empty
+branches, stale comments, duplication and weakened checks; justify intentional
+no-ops and dynamic registration. Map requirements to implementation and evidence:
+executed, source-inspected, environment-blocked or unverified. Rerun checks
+invalidated by review edits; repeating a checklist proves nothing.
+
+1. **Frame:** State "when X, Y becomes observable." Resolve routine choices from
+   current analogs and project conventions. Ask only when unresolved intent,
+   compatibility or authorization materially changes the result; do not guess
+   consequential choices or treat every omission as a blocker.
+2. **Trace:** Follow the real entry point through the target to consumers and
+   effects. Inspect callers, helpers, nearby tests and verification commands.
+   Identify required registrations, exports, schemas, docs and delivery steps
+   from that path. Read enough surrounding code to avoid duplicate mechanisms.
+3. **Bound:** Plan the affected files, each intended behavior and its proving
+   check. Include necessary adjacent repairs; preserve unrelated user work.
+   Reuse local primitives, layering, error shapes and style. A minimal patch
+   must still complete the requested behavior.
+4. **Implement:** Define accepted inputs, failures, effects and compatibility.
+   Cover relevant boundaries, ownership, cleanup and safe retry semantics.
+   Write concrete expected results before the implementation drives the tests.
+   Add regression tests for material behavior; reuse adequate checks for small
+   changes instead of creating tests that merely mirror wording or code.
+5. **Verify:** Establish relevant baseline evidence when needed to attribute
+   failures. Run required repository checks and the smallest meaningful check
+   through the changed user entry point. Broaden for affected shared contracts.
+   Keep source, package, deployed copy and active runtime evidence separate.
+6. **Review and finish:** Read the complete changed diff, including new files;
+   reconcile it with requirements and necessary integration. Remove accidental
+   placeholders, debug effects and weakened checks. After edits, rerun affected
+   checks. Report completion only within observed evidence; name blockers and
+   unverified paths explicitly.
+
+## Composition and stopping
+
+In Kiokuko, enter through `kiokuko-soul`; also apply
+`kiokuko-single-purpose-functions` for code and the applicable UI/workflow Skills.
+Reuse their contract, plan and evidence rather than generating duplicate plans
+or checklists. In DSH, Kiokuko owns the model/tool loop and preserves native
+session and tool contracts. Complete the observable request within the user's
+scope and permissions. This Skill does not authorize extra agents, retries,
+publication or deployment. Passing an intermediate check is not final acceptance.
+
+For admitted Lisp, follow its Skill, with prototype-driven-planning for
+coding/plans: native reads, scratch → proposals → host confirmation → durable
+results; allowed verifiers only. Distinguish execution, verification and
+APPLIED/UNCHANGED/NOT_APPLIED/UNKNOWN. No replay of RUNNING/UNKNOWN effects or
+native fallback after protection failure. Only the host finalizes runs.
+
+Continue authorized work while evidence supports a next step. On failure, read
+the recovery reference before changing strategy. Do not retry an unchanged
+failed operation or hide failures by weakening checks. Stop on completion or a
+specific blocker requiring unavailable access, evidence or user action.
+
+
+## Repository verification entry
+
+When the target repository defines `npm run verify`, read `npm run verify:plan`
+(or `npm run verify -- --plan --profile <profile>`) and use that declared scope.
+Run the same profile locally and in CI; do not reconstruct independent checks
+from CI YAML. `npm test` and focused commands are partial evidence. The JSON
+result records each required check, prerequisite failure, platform exclusion,
+and source/artifact identity. Only a current full-scope `completionReady: true`
+result supports full verification. Recheck saved results with
+`npm run verify -- --status <result.json>` after related edits or artifact changes.
+Never derive skip permissions or expected failures from observed test output.
+
+<!-- /kiokuko:runtime -->
