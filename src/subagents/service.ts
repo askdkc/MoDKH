@@ -150,6 +150,9 @@ export class SubagentService {
         const outcome = await runAgentLoop(child.messages, {
           model, registry: new ToolRegistry(effectiveTools), root: this.opts.root,
           system: definition.system, signal, approval, checkpoint: () => child!.persistFrom(0),
+          hooks: { onSkillContext: context => {
+            for (const warning of context.warnings) this.opts.progress?.(`[${descriptor.id}] スキル: ${warning}`);
+          } },
         });
         const last = [...child.messages].reverse().find(m => m.role === 'assistant');
         result.text = resultText(last?.role === 'assistant' ? last.content : '');

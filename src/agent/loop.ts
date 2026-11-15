@@ -1,8 +1,11 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { AgentMessage, Model, ToolCall, ToolResult, ToolSpec } from './types.ts';
 import { ToolRegistry } from '../tools/registry.ts';
+import { prepareSkillContext, type SkillContext } from './skills.ts';
 
 export interface LoopHooks {
+  /** Selected guidance and byte size, not a provider token/cost measurement. */
+  onSkillContext?(context: SkillContext): void;
   /** Input passed to the adapter, not proof of provider receipt or memory application. */
   onModelRequest?(): void;
   onModelActivity?(stage: 'reasoning' | 'tool-input'): void;
@@ -20,6 +23,8 @@ export interface AgentLoopOptions {
   registry: ToolRegistry;
   root: string;
   system?: string;
+  /** Embedders can disable automatic purpose-specific guidance. */
+  skills?: boolean;
   /** このターンでの推論レベル(/reasoning で指定)。省略はプロバイダーの初期値。 */
   reasoning?: import('./types.ts').ReasoningLevel;
   signal: AbortSignal;
@@ -68,6 +73,11 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
   const maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS;
   const toolSpecs: ToolSpec[] = opts.registry.specs();
   const ledger = previousCalls(messages);
+  if (opts.signal.aborted) return { outcome: 'interrupted' };
+  const task = messages.findLast(message => message.role === 'user');
+  const skills = opts.skills === false ? undefined : prepareSkillContext(task?.content ?? '', opts.root);
+  if (skills) opts.hooks?.onSkillContext?.(skills);
+  const system = skills?.text ? (opts.system ?? '') + skills.text : opts.system;
   const append = (message: AgentMessage) => {
     messages.push(message);
     opts.checkpoint?.();
@@ -85,7 +95,7 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
     try {
       opts.hooks?.onModelRequest?.();
       for await (const ev of opts.model.stream({
-        messages, tools: toolSpecs, system: opts.system,
+        messages, tools: toolSpecs, system,
         ...(opts.reasoning ? { reasoning: opts.reasoning } : {}),
       }, opts.signal)) {
         if (opts.signal.aborted) break;
