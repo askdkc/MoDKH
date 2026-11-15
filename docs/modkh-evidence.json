@@ -1,0 +1,391 @@
+{
+  "baseRevision": "0285cd0ddace3ab317b76953586e3f7c839fe0f3",
+  "identity": {
+    "source": {
+      "sha256": "c4e32bc7d426a2d602f429be414a3c99d79e1cfe78e762772ca45c6d344e0810",
+      "files": 147
+    },
+    "artifact": {
+      "sha256": "75d885d0bd7e8996f46ec1f291adf889d31cd606d261bd6a32337e490fba8d54",
+      "files": 168
+    }
+  },
+  "environment": {
+    "os": "Darwin",
+    "arch": "arm64",
+    "node": "26.13.0",
+    "npm": "9.6.7",
+    "sbcl": "2.6.10"
+  },
+  "baseline": {
+    "tests": 373,
+    "pass": 315,
+    "fail": 58,
+    "skip": 0
+  },
+  "finalSuite": {
+    "tests": 427,
+    "pass": 361,
+    "fail": 58,
+    "skip": 8,
+    "newFailingTestNames": [],
+    "failureNamesAndCausesMatchCurrentBaseline": true,
+    "comparisonFile": "modkh-failure-comparison.json"
+  },
+  "typecheck": "passed",
+  "build": "passed",
+  "builtChatEntry": "passed",
+  "mutations": [
+    {
+      "name": "acceptance-reuse",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "acceptance is single-use and closes edit access even after a failed check"
+      ]
+    },
+    {
+      "name": "restored-verifier",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "rewriting and restoring an original verifier invalidates its snapshot"
+      ]
+    },
+    {
+      "name": "pull-report-shape",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "malformed/unchanged pull reports do not invent clean diagnostics; valid empty report is observed"
+      ]
+    },
+    {
+      "name": "typescript-semantic-api",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "real installed TypeScript produces a semantic diagnostic; a placeholder API is rejected"
+      ]
+    },
+    {
+      "name": "typescript-fallback",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "installer compatibility fallback publishes only after checks"
+      ]
+    },
+    {
+      "name": "child-language-tools",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "real chat entry: trusted Lisp head delegates bounded edit and receives independent Node receipt"
+      ]
+    },
+    {
+      "name": "target-allowlist",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "real Node acceptance fails before edit and passes after; verifier immutable and source applied"
+      ]
+    },
+    {
+      "name": "exit-zero",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "no-op is verified only by a successful fixed check",
+        "fixed checker nonzero with forged success text never passes or applies source"
+      ]
+    },
+    {
+      "name": "tsserver-api",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "autoInstall=false creates no prefix; TypeScript requires actual tsserver capability"
+      ]
+    },
+    {
+      "name": "lean-unverified",
+      "status": "detected",
+      "exitCode": 1,
+      "failedTests": [
+        "compiler exit0 remains unverified: empty (wrapper test with fake compiler)",
+        "compiler exit0 remains unverified: true (wrapper test with fake compiler)",
+        "compiler exit0 remains unverified: different goal (wrapper test with fake compiler)",
+        "compiler exit0 remains unverified: sorry (wrapper test with fake compiler)",
+        "compiler exit0 remains unverified: generated axiom (wrapper test with fake compiler)"
+      ]
+    }
+  ],
+  "completion": "partial",
+  "installedToUserRuntime": false,
+  "committed": false,
+  "pushed": false,
+  "diffCheck": "passed",
+  "copiedSourceIdentityMatched": true,
+  "typecheckAfterSourceCopy": "passed",
+  "typescriptFollowup": {
+    "tests": 4,
+    "pass": 4,
+    "realTypescriptSemanticAPI": "passed",
+    "npmAndLspTransport": "fixtures",
+    "realRegistryInstall": "not run; registry DNS unavailable",
+    "command": "node --test test/language.typescript-capability.test.ts test/language.install-fallback.test.ts"
+  },
+  "previousIterationIdentity": {
+    "source": {
+      "sha256": "87d83aa376a0af9b589f9b1f7e3b7339774bf4d0639e5be6b0524bd384ab7863",
+      "files": 146
+    },
+    "artifact": {
+      "sha256": "264e5853ac412a5fa24188f528d2abbc8e61420fa6d8b6409ece57691f0e7141",
+      "files": 166
+    }
+  },
+  "currentIterationBaseline": {
+    "tests": 414,
+    "pass": 353,
+    "fail": 58,
+    "skip": 3
+  },
+  "relatedSuite": {
+    "tests": 86,
+    "pass": 77,
+    "fail": 1,
+    "skip": 8,
+    "failure": "existing language.integration HTTP listener EPERM"
+  },
+  "currentIterationChangedFiles": [
+    "scripts/modkh-language-probe.mjs",
+    "scripts/modkh-mutation-check.mjs",
+    "src/language/commonlisp-reader.ts",
+    "src/language/lsp/client.ts",
+    "src/subagents/verification.ts",
+    "src/tools/language.ts",
+    "test/fixtures/fake-lsp.mjs",
+    "test/formal.lean-real.test.ts",
+    "test/language.commonlisp-reader.test.ts",
+    "test/language.lsp.test.ts",
+    "test/lisp.edit-service.test.ts"
+  ],
+  "currentIterationRealTypeScript": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "id": "typescript",
+    "binary": "/usr/local/lib/node_modules/typescript-language-server/lib/cli.mjs",
+    "binarySha256": "f314b7e050232a1b619f21955718e2259f685b7e8f85def3149e5b28c7737ca0",
+    "sourceSha256": "4aa3fe450c06cafeebb654ff7df7a3fac2be81c334b0881798fc7a21391650ae",
+    "initialized": true,
+    "status": "passed",
+    "startedAt": "2026-11-15T12:33:00.349Z",
+    "capabilities": {
+      "textDocumentSync": 2,
+      "completionProvider": {
+        "triggerCharacters": [
+          ".",
+          "\"",
+          "'",
+          "/",
+          "@",
+          "<"
+        ],
+        "resolveProvider": true
+      },
+      "codeActionProvider": true,
+      "codeLensProvider": {
+        "resolveProvider": true
+      },
+      "definitionProvider": true,
+      "documentFormattingProvider": true,
+      "documentRangeFormattingProvider": true,
+      "documentHighlightProvider": true,
+      "documentSymbolProvider": true,
+      "executeCommandProvider": {
+        "commands": [
+          "_typescript.applyWorkspaceEdit",
+          "_typescript.applyCodeAction",
+          "_typescript.applyRefactoring",
+          "_typescript.configurePlugin",
+          "_typescript.organizeImports",
+          "_typescript.applyRenameFile",
+          "_typescript.goToSourceDefinition"
+        ]
+      },
+      "hoverProvider": true,
+      "inlayHintProvider": true,
+      "linkedEditingRangeProvider": false,
+      "renameProvider": true,
+      "referencesProvider": true,
+      "selectionRangeProvider": true,
+      "signatureHelpProvider": {
+        "triggerCharacters": [
+          "(",
+          ",",
+          "<"
+        ],
+        "retriggerCharacters": [
+          ")"
+        ]
+      },
+      "workspaceSymbolProvider": true,
+      "implementationProvider": true,
+      "typeDefinitionProvider": true,
+      "foldingRangeProvider": true,
+      "semanticTokensProvider": {
+        "documentSelector": null,
+        "legend": {
+          "tokenTypes": [
+            "class",
+            "enum",
+            "interface",
+            "namespace",
+            "typeParameter",
+            "type",
+            "parameter",
+            "variable",
+            "enumMember",
+            "property",
+            "function",
+            "member"
+          ],
+          "tokenModifiers": [
+            "declaration",
+            "static",
+            "async",
+            "readonly",
+            "defaultLibrary",
+            "local"
+          ]
+        },
+        "full": true,
+        "range": true
+      },
+      "workspace": {
+        "fileOperations": {
+          "willRename": {
+            "filters": [
+              {
+                "scheme": "file",
+                "pattern": {
+                  "glob": "**/*.{ts,js,jsx,tsx,mjs,mts,cjs,cts}",
+                  "matches": "file"
+                }
+              },
+              {
+                "scheme": "file",
+                "pattern": {
+                  "glob": "**",
+                  "matches": "folder"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "logs": [
+      "Using Typescript version (bundled) 5.3.3 from path \"/usr/local/lib/node_modules/typescript/lib/tsserver.js\""
+    ],
+    "diagnostics": {
+      "status": "observed",
+      "diagnostics": [
+        {
+          "path": "/private/var/folders/ny/r9_lhz_j37334k1vrp1f0pgm0000gn/T/modkh-real-lsp-jA8Grf/input.ts",
+          "line": 1,
+          "column": 7,
+          "endLine": 1,
+          "endColumn": 13,
+          "severity": "error",
+          "message": "Type 'string' is not assignable to type 'number'.",
+          "source": "typescript",
+          "server": "typescript"
+        }
+      ],
+      "version": 1
+    },
+    "hover": "\n```typescript\nfunction add(a: number, b: number): number\n```\n",
+    "definition": [
+      {
+        "file": "/private/var/folders/ny/r9_lhz_j37334k1vrp1f0pgm0000gn/T/modkh-real-lsp-jA8Grf/input.ts",
+        "line": 2,
+        "character": 10
+      }
+    ],
+    "cleanup": "settled",
+    "finishedAt": "2026-11-15T12:33:01.325Z"
+  },
+  "currentIterationBlockers": {
+    "CL": "no CL-LSP/Roswell; npm registry DNS unavailable; no cold install or CL-LSP definition/diagnostic measurement",
+    "grammars": "no CL/Svelte WASM, Emscripten, tree-sitter CLI or wasm-ld; actual grammar paths remain unimplemented",
+    "isolation": "sandbox-exec rejected sandbox_apply: Operation not permitted; no strong OS isolation implemented",
+    "formal": "Lean absent; java exists but no Java Runtime; real Lean/TLC tests skipped",
+    "linux": "no Linux execution environment used",
+    "model": "scripted model only; autonomous real model delegation not run"
+  },
+  "previousFocused": {
+    "tests": 37,
+    "pass": 34,
+    "fail": 0,
+    "skip": 3
+  },
+  "previousRealServers": [
+    {
+      "id": "typescript",
+      "platform": "darwin",
+      "arch": "arm64",
+      "binarySha256": "f314b7e050232a1b619f21955718e2259f685b7e8f85def3149e5b28c7737ca0",
+      "sourceSha256": "4aa3fe450c06cafeebb654ff7df7a3fac2be81c334b0881798fc7a21391650ae",
+      "status": "passed",
+      "initialized": true,
+      "startedAt": "2026-11-15T12:08:55.834Z",
+      "finishedAt": "2026-11-15T12:08:56.524Z",
+      "cleanup": "settled",
+      "packageVersion": "4.3.3"
+    },
+    {
+      "id": "tailwind",
+      "platform": "darwin",
+      "arch": "arm64",
+      "binarySha256": "7ce7728c88a5282019034f0a0f1971f653d1392bec8190cafb1e9563c8d3dc40",
+      "sourceSha256": "0026a9bbb0a5ee4363ee054929d249a83f58a908a0197db26a660e8f78515e44",
+      "status": "unverified",
+      "initialized": true,
+      "startedAt": "2026-11-15T12:08:55.829Z",
+      "finishedAt": "2026-11-15T12:08:57.296Z",
+      "cleanup": "settled",
+      "packageVersion": "0.14.29",
+      "blocker": "Bundled watcher failed: Error starting FSEvents stream; no matching Tailwind project and hover=null"
+    },
+    {
+      "id": "svelte",
+      "platform": "darwin",
+      "arch": "arm64",
+      "binarySha256": "8a443ea5f74b175785a3d3bdf45e85c4c2055e910864e0bd44ae48f9d887c402",
+      "sourceSha256": "b453c6617b0d0489f7a1d8638d5e81f6d20c1a747b7863ddd2841b9c6047eb94",
+      "status": "initialized-only",
+      "initialized": true,
+      "startedAt": "2026-11-15T12:08:55.848Z",
+      "finishedAt": "2026-11-15T12:08:57.459Z",
+      "cleanup": "settled",
+      "packageVersion": "0.16.5"
+    },
+    {
+      "id": "php",
+      "platform": "darwin",
+      "arch": "arm64",
+      "binarySha256": "d037cdf09782404cd8becdb969d106f0689d90959e08ff5040ca4b5f33fe3bd5",
+      "sourceSha256": "5ef72d0ac218ed65e70b8ab3077c238931001d4f63f4e42d3b65d699c6c22c23",
+      "status": "initialized-only",
+      "initialized": true,
+      "startedAt": "2026-11-15T12:08:55.889Z",
+      "finishedAt": "2026-11-15T12:08:56.009Z",
+      "cleanup": "settled"
+    }
+  ],
+  "previousBuiltIndexRoleDiscovery": "passed"
+}

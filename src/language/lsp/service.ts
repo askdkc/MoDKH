@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { detectLanguage, type LanguageSettings } from '../detect.ts';
-import type { LanguageDefinition } from '../catalog.ts';
+import { languageById, type LanguageDefinition } from '../catalog.ts';
 import { ensureInstalled, resolveServer } from '../install.ts';
 import { ServerPool, aggregate, realRoot, type Aggregate } from './pool.ts';
 import type { ServerDiagnostic } from './client.ts';
@@ -47,32 +47,33 @@ export class LanguageService {
 
   get poolSize(): number { return this.pool.size; }
   /** The already-running server for a file, if its language/root was analyzed before. */
-  poolFor(file: string): import('./client.ts').LspServer | undefined {
+  poolFor(file: string, selector?: 'tailwind'): import('./client.ts').LspServer | undefined {
     const detection = this.detect(file);
     if (!detection) return undefined;
-    const configured = this.settings.servers[detection.language.id];
-    return this.pool.find(realRoot(detection.root), detection.language.id, JSON.stringify(configured ?? null));
+    const id = selector ?? detection.language.id;
+    const configured = this.settings.servers[id];
+    return this.pool.find(realRoot(detection.root), id, JSON.stringify(configured ?? null));
   }
   detect(file: string) { return detectLanguage(file, this.root); }
 
   /** Analyze a file after a read or a successful write. Never throws. */
-  async analyze(file: string, text: string, signal?: AbortSignal): Promise<AnalyzeResult> {
-    try { return await this.analyzeGuarded(file, text, signal); }
+  async analyze(file: string, text: string, signal?: AbortSignal, selector?: 'tailwind'): Promise<AnalyzeResult> {
+    try { return await this.analyzeGuarded(file, text, signal, selector); }
     catch (e) { return { status: 'unavailable', detail: `解析できない: ${e instanceof Error ? e.message : String(e)}` }; }
   }
 
-  private async analyzeGuarded(file: string, text: string, signal?: AbortSignal): Promise<AnalyzeResult> {
+  private async analyzeGuarded(file: string, text: string, signal?: AbortSignal, selector?: 'tailwind'): Promise<AnalyzeResult> {
     if (this.disposed) return { status: 'unavailable', detail: '言語サービスは終了済みです' };
     if (Buffer.byteLength(text) > MAX_ANALYZED_FILE_BYTES) {
       return { status: 'unavailable', detail: '2 MiBを超えるファイルは解析しない（本文の操作は可能）' };
     }
     const detection = this.detect(file);
     if (!detection) return { status: 'unavailable', detail: '対応言語ではない' };
-    const language = detection.language;
+    const language = selector ? languageById(selector)! : detection.language;
     if (this.settings.disabled.includes(language.id)) {
       return { status: 'unavailable', language: language.id, detail: `${language.id} は設定で無効` };
     }
-    const key = `${realRoot(detection.root)}::${language.id}::${file}`;
+    const key = `${realRoot(detection.root)}::${language.id}::${file}::${text}`;
     const running = this.inflight.get(key);
     if (running) return running;
     const work = this.analyzeOnce(language, detection.root, file, text, signal).finally(() => this.inflight.delete(key));
@@ -80,7 +81,7 @@ export class LanguageService {
     return work;
   }
 
-  private async analyzeOnce(language: LanguageDefinition, root: string, file: string, text: string, signal?: AbortSignal): Promise<AnalyzeResult> {
+  private async analyzeOnce(language: LanguageDefinition, root: string, file: string, text: string, signal?: AbortSignal, selector?: 'tailwind'): Promise<AnalyzeResult> {
     const configured = this.settings.servers[language.id];
     const resolved = resolveServer(language, { disabled: false, ...(configured ? { server: configured } : {}) });
     let launch = resolved.status === 'ready' && resolved.command

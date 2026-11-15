@@ -1,4 +1,4 @@
-export interface DelegationRequest { pluginId: string; task: string; context?: string }
+export interface DelegationRequest { pluginId: string; task: string; context?: string; targetPaths?: string[] }
 export interface SubagentResult {
   agentId: string;
   runId: string;
@@ -6,6 +6,8 @@ export interface SubagentResult {
   text: string;
   cleanup: 'settled' | 'unknown';
   diagnostic?: string;
+  verification?: import('./verification.ts').Verification;
+  formalEvidence?: unknown[];
 }
 export interface DelegationRecord {
   runId: string;

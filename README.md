@@ -1,4 +1,4 @@
-# MoDKH(Mixture of DKH)
+# MoDKH (Mixture of DKH)
 
 ## インストール
 
@@ -14,7 +14,7 @@ dkh
 
 ## AIプロバイダーの設定
 
-DKHを起動して `/connect` を入力し、プロバイダーとモデルを選びます。
+MoDKHを起動して `/connect` を入力し、プロバイダーとモデルを選びます。
 選択したモデルと接続先URLは次回起動でも復元します。`--resume` は対象セッションの接続先を優先し、`--model` で明示的に変更できます。
 `fixed/scripted` は依頼を解釈しない検証専用モデルです。明示指定時のみ使い、通常の接続設定に保存・自動復元しません。以前の設定にこれだけが残っている場合は、`/connect` で実際に使うモデルを選び直してください。
 対話画面の起動時はロゴと入力欄を中央にまとめ、依頼送信後は入力欄を下部へ移します。起動説明は行入力モードのみ表示します。
@@ -37,7 +37,7 @@ export OLLAMA_API_KEY="your-api-key"
 dkh
 ```
 
-DKH内で直接選ぶこともできます。
+MoDKH内で直接選ぶこともできます。
 
 ```text
 /connect openai          # ChatGPT認証 / APIキーを選択
@@ -112,7 +112,7 @@ Ollama Cloudのキーは[こちら](https://ollama.com/settings/keys)で作成�
 
 **これは承認を求めるかどうかの設定で、OSレベルの隔離ではありません。** `all` でもコマンドは通常のユーザー権限で動きます。停止（Ctrl+C）はどの設定でも有効です。
 
-Hermes Agentはサーバー側でツールを実行するため、DKHの個別承認・Stopの保証対象外です。
+Hermes Agentはサーバー側でツールを実行するため、MoDKHの個別承認・Stopの保証対象外です。
 
 その他の接続先やURLの変更方法は[プロバイダー設定の詳細](<docs/models.md>)を参照してください。
 
@@ -183,3 +183,7 @@ Hermes Agentはサーバー側でツールを実行するため、DKHの個別�
 LSP・tree-sitterによる構造解析と編集後の診断は自動で行われます。対応状況と設定は[言語解析](<docs/languages.md>)を参照してください。
 Web検索と外部URLの取得は[Web検索](<docs/web.md>)を参照してください。
 kiokuko-dshの17スキルと参照資料を同梱し、目的に応じた自動注入・必要時の読み取りに対応しています。反復ログの可逆圧縮・長い出力の先頭末尾保持は既定で有効です。[スキル設定と入力節約](<docs/context-efficiency.md>)を参照してください。
+
+## Lispマイクロエージェント
+
+信頼したCommon Lisp設定による担当登録、ヘッドからの委譲、限定編集と固定検証を追加しました。[使い方と制約](docs/modkh.md)、[実装・検証状況](docs/modkh-verification.md)を参照してください。PLAN.md全体の受入条件は未達で、CL-LSPの自動構築・CL/Svelte文法の同梱などが残っています。

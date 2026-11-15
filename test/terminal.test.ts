@@ -25,7 +25,7 @@ test('TUI shows DKH once, completes /conn, searches and selects providers by key
   try {
     const command = t.ui.next();
     t.input.emit('keypress', '/conn', {});
-    assert.match(t.text(), /DKH  ·  Coding Harness/);
+    assert.match(t.text(), /MoDKH  ·  Coding Harness/);
     assert.match(t.text(), /\/connect/);
     t.key('return'); assert.equal(await command, '/connect');
     const select = t.ui.choose('Connect an integration', CONNECT_PROVIDERS);
@@ -72,7 +72,7 @@ test('startup clears the screen and centers the welcome like the old design', ()
     // 幅120・80列分のコンテンツを画面中央に: 余りは左右ほぼ均等
     assert.ok(pad > 10, `the banner is centered on screen, left pad=${pad}`);
     const title = rows[padRows - 1] ?? '';
-    assert.match(title.trim(), /DKH  ·  Coding Harness/, 'the title rides directly above the logo');
+    assert.match(title.trim(), /MoDKH  ·  Coding Harness/, 'the title rides directly above the logo');
   } finally { t.ui.close(); }
 });
 

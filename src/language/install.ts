@@ -1,7 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { executeBounded, privateEnvironment } from '../lisp/runtime.ts';
+import { installPhpantom } from './native.ts';
+import { hostPlatform } from './platform.ts';
+import { probeTypescript, recommendedTypescript } from './typescript-capability.ts';
+import { LspServer } from './lsp/client.ts';
 import type { LanguageDefinition } from './catalog.ts';
 import { languageHome } from './detect.ts';
 
@@ -18,7 +22,7 @@ interface StateFile {
   version: 1;
   servers: Record<string, InstalledServer>;
   /** Recorded reasons for languages that failed and must not be retried within the same turn. */
-  failures?: Record<string, { reason: string; at: string }>;
+  failures?: Record<string, { reason: string; at: string; retryable?: boolean }>;
 }
 
 const LOCK_STALE_MS = 10 * 60_000;
@@ -89,22 +93,25 @@ async function withLock<T>(target: string, action: () => Promise<T>): Promise<T>
   finally { fs.rmSync(lock, { recursive: true, force: true }); }
 }
 
-function run(command: string, args: readonly string[], signal?: AbortSignal): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
-    let stdout = '', stderr = '';
-    const timer = setTimeout(() => { child.kill('SIGKILL'); }, MAKE_TIMEOUT_MS);
-    const abort = () => child.kill('SIGTERM');
-    signal?.addEventListener('abort', abort, { once: true });
-    child.stdout.on('data', data => { stdout = (stdout + data).slice(-16_384); });
-    child.stderr.on('data', data => { stderr = (stderr + data).slice(-16_384); });
-    child.on('error', error => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(error); });
-    child.on('close', code => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', abort);
-      resolve({ code: code ?? -1, stdout, stderr });
-    });
-  });
+async function run(command: string, args: readonly string[], signal?: AbortSignal): Promise<{ code: number; stdout: string; stderr: string }> {
+  const home = path.join(languageHome(), 'runtime-home');
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  const result = await executeBounded(command, [...args], { cwd: home, env: privateEnvironment(home),
+    inputDigest: createHash('sha256').update(JSON.stringify([command,args])).digest('hex'), signal, timeoutMs: MAKE_TIMEOUT_MS, maxOutputBytes: 1024 * 1024 });
+  if (result.state !== 'exited') throw new Error(`Installer ${result.state}: ${result.stderr.slice(-1000)}`);
+  return { code: result.exitCode ?? -1, stdout: result.stdout, stderr: result.stderr };
+}
+
+export function verifyTsserver(prefix: string): void {
+  const api = path.join(prefix, 'node_modules', 'typescript', 'lib', 'tsserver.js');
+  if (!fs.existsSync(api) || !fs.statSync(api).isFile()) throw new Error('TypeScript dependency lacks required typescript/lib/tsserver.js API');
+}
+
+async function initializeProbe(language: LanguageDefinition, command: string, args: string[], root: string, signal?: AbortSignal): Promise<void> {
+  const server = new LspServer({ id: language.id, command, args, root, requestTimeoutMs: 10000,
+    env: privateEnvironment(root) as Record<string,string>, inheritEnv: false });
+  try { await server.start(signal); }
+  finally { await server.dispose(); }
 }
 
 /** Install into a private prefix with a private npm cache; never touch the project or the user cache. */
@@ -113,38 +120,69 @@ async function installNpm(language: LanguageDefinition, signal?: AbortSignal): P
   if (recipe?.kind !== 'npm') throw new Error('npm 導入レシピがありません');
   const target = serverRoot(language);
   await withLock(target, async () => {
+    if (readState().servers[language.id] && resolveServer(language, {}).status === 'ready') return;
     const staging = `${target}.staging-${process.pid}-${Date.now()}`;
     fs.rmSync(staging, { recursive: true, force: true });
     fs.mkdirSync(staging, { recursive: true });
-    const cache = path.join(languageHome(), 'npm-cache');
-    fs.mkdirSync(cache, { recursive: true });
-    const result = await run('npm', [
-      'install', '--prefix', staging, '--cache', cache, '--no-audit', '--no-fund', '--ignore-scripts',
-      ...recipe.packages,
-    ], signal);
-    if (result.code !== 0) {
-      fs.rmSync(staging, { recursive: true, force: true });
-      throw new Error(`npm 導入に失敗: ${result.stderr.trim().split('\n').slice(-3).join(' ').slice(0, 400)}`);
-    }
-    // Only publish a prefix that actually contains the expected entry point.
-    if (!isExecutable(path.join(staging, 'node_modules', '.bin', recipe.entry))) {
-      fs.rmSync(staging, { recursive: true, force: true });
-      throw new Error(`導入後に ${recipe.entry} が見つかりません`);
-    }
-    fs.rmSync(target, { recursive: true, force: true });
-    fs.renameSync(staging, target);
-    const binary = path.join(target, 'node_modules', '.bin', recipe.entry);
-    const manifest = path.join(target, 'node_modules', recipe.entry.replace(/^.*\.bin\//, ''), 'package.json');
-    const state = readState();
-    state.servers[language.id] = {
-      command: binary,
-      args: [...(language.lsp?.args ?? [])],
-      digest: fs.existsSync(manifest) ? digestOf(manifest) : digestOf(binary),
-      version: fs.existsSync(manifest) ? versionOf(manifest) : 'unknown',
-      installedAt: new Date().toISOString(),
-    };
-    delete state.failures?.[language.id];
-    writeState(state);
+    try {
+      const space = fs.statfsSync(staging);
+      if (space.bavail * space.bsize < 512 * 1024 * 1024) throw new Error('Insufficient disk space for server install (512 MiB reserve)');
+      const cache = path.join(languageHome(), 'npm-cache');
+      fs.mkdirSync(cache, { recursive: true });
+      const result = await run('npm', [
+        'install', '--prefix', staging, '--cache', cache, '--no-audit', '--no-fund', '--ignore-scripts', '--registry', 'https://registry.npmjs.org',
+        ...recipe.packages,
+      ], signal);
+      if (result.code !== 0) {
+        fs.rmSync(staging, { recursive: true, force: true });
+        throw new Error(`npm 導入に失敗: ${result.stderr.trim().split('\n').slice(-3).join(' ').slice(0, 400)}`);
+      }
+      let typescript: { version: string; apiSha256: string; selection: string; recommendationSha256?: string } | undefined;
+      if (['typescript', 'javascript', 'tsx'].includes(language.id)) {
+        let selection = 'typescript@latest';
+        let recommendationSha256: string | undefined;
+        // Missing JS tsserver is the compatibility trigger, not a numeric version gate.
+        try { verifyTsserver(staging); }
+        catch {
+          if (signal?.aborted) throw new Error('TypeScript installation aborted');
+          const readme = fs.readFileSync(path.join(staging, 'node_modules/typescript-language-server/README.md'), 'utf8');
+          const recommended = recommendedTypescript(readme);
+          if (!recommended) throw new Error('Missing tsserver API and no unambiguous official compatibility recommendation');
+          selection = recommended;
+          recommendationSha256 = createHash('sha256').update(readme).digest('hex');
+          const fallback = await run('npm', ['install', '--prefix', staging, '--cache', cache, '--no-audit', '--no-fund', '--ignore-scripts', '--registry', 'https://registry.npmjs.org', recommended], signal);
+          if (fallback.code !== 0) throw new Error(`TypeScript compatibility install failed: ${fallback.stderr.slice(-400)}`);
+          verifyTsserver(staging);
+        }
+        typescript = { ...await probeTypescript(staging, signal), selection, recommendationSha256 };
+      }
+      // Only publish a prefix that actually contains the expected entry point.
+      if (!isExecutable(path.join(staging, 'node_modules', '.bin', recipe.entry))) {
+        fs.rmSync(staging, { recursive: true, force: true });
+        throw new Error(`導入後に ${recipe.entry} が見つかりません`);
+      }
+      await initializeProbe(language, path.join(staging, 'node_modules', '.bin', recipe.entry), [...(language.lsp?.args ?? [])], staging, signal);
+      fs.rmSync(target, { recursive: true, force: true });
+      fs.renameSync(staging, target);
+      const binary = path.join(target, 'node_modules', '.bin', recipe.entry);
+      const manifest = path.join(target, 'node_modules', recipe.packages[0].replace(/@[^@/]+$/, ''), 'package.json');
+      const lockfile = path.join(target, 'package-lock.json');
+      fs.writeFileSync(path.join(target, 'install-receipt.json'), JSON.stringify({
+        typescript, platform: hostPlatform(), packages: recipe.packages, packageName: recipe.packages[0].replace(/@[^@/]+$/, ''), binary: recipe.entry,
+        lockfileSha256: fs.existsSync(lockfile) ? digestOf(lockfile) : null,
+        binarySha256: digestOf(binary), initialized: true, finishedAt: new Date().toISOString(),
+      }, null, 2));
+      const state = readState();
+      state.servers[language.id] = {
+        command: binary,
+        args: [...(language.lsp?.args ?? [])],
+        digest: fs.existsSync(manifest) ? digestOf(manifest) : digestOf(binary),
+        version: fs.existsSync(manifest) ? versionOf(manifest) : 'unknown',
+        installedAt: new Date().toISOString(),
+      };
+      delete state.failures?.[language.id];
+      writeState(state);
+    } finally { fs.rmSync(staging, { recursive: true, force: true }); }
   });
 }
 
@@ -187,24 +225,34 @@ export interface InstallOutcome { status: 'ready' | 'unavailable' | 'error'; det
 
 /** Idempotent: a verified install is reused, and a failed install is reported without retrying. */
 export async function ensureInstalled(language: LanguageDefinition, options: { autoInstall: boolean; disabled?: boolean; server?: { command: string; args?: string[] }; signal?: AbortSignal }): Promise<InstallOutcome> {
+  if (!hostPlatform()) return { status: 'unavailable', detail: `Unsupported OS/CPU: ${process.platform}/${process.arch}` };
   const existing = resolveServer(language, options);
   if (existing.status === 'ready') return { status: 'ready' };
   if (existing.status === 'disabled') return { status: 'unavailable', detail: existing.detail };
-  if (language.install?.kind === 'host') {
+  if (language.install?.kind === 'host' && language.id !== 'php') {
     return { status: 'unavailable', detail: `${language.install.requirement ?? 'サーバーがありません'}（自動取得は行いません）` };
   }
   if (!options.autoInstall) return { status: 'unavailable', detail: '自動導入は無効です' };
   const remembered = readState().failures?.[language.id];
-  if (remembered) return { status: 'unavailable', detail: `前回の導入失敗: ${remembered.reason}` };
+  if (remembered && (remembered.retryable === false || Date.now() - Date.parse(remembered.at) < 60000)) return { status: 'unavailable', detail: `前回の導入失敗: ${remembered.reason}` };
   try {
-    await installNpm(language, options.signal);
+    if (language.id === 'php') {
+      const target = serverRoot(language);
+      await withLock(target, async () => {
+        if (resolveServer(language, {}).status === 'ready') return;
+        const result = await installPhpantom(target, options.signal);
+        const state = readState();
+        state.servers[language.id] = { command: result.command, args: [], version: result.version, digest: result.digest, installedAt: new Date().toISOString() };
+        delete state.failures?.[language.id]; writeState(state);
+      });
+    } else await installNpm(language, options.signal);
     return { status: 'ready' };
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
     // Remembering the failure is best effort: an unwritable home must not escape as a crash.
     try {
       const state = readState();
-      state.failures = { ...(state.failures ?? {}), [language.id]: { reason: reason.slice(0, 500), at: new Date().toISOString() } };
+      state.failures = { ...(state.failures ?? {}), [language.id]: { reason: reason.slice(0, 500), at: new Date().toISOString(), retryable: !/ENOSPC|Insufficient disk|unknown/.test(reason) } };
       writeState(state);
     } catch { /* the caller still receives the original reason below */ }
     return { status: 'error', detail: reason };

@@ -8,7 +8,12 @@ export interface PluginManifest {
   kind: 'local' | 'external';
   entry: string;
 }
-export interface LocalDefinition { system: string; tools: string[] }
+export interface LocalDefinition {
+  system: string; tools: string[];
+  skillPolicy?: 'none'; maxTurns?: number; requireAllTools?: boolean;
+  languageServer?: 'tailwind'; workflow?: 'edit-verify'; verificationCommand?: string;
+  verificationManifest?: { sources: string[]; protected: string[] };
+}
 export interface ExternalRequest { task: string; context?: string }
 export interface ProcessRequest { command: string; args: string[] }
 export interface ProcessResult {
@@ -29,6 +34,9 @@ export interface ExternalPlugin {
   start(request: ExternalRequest, host: ExternalHost): ExternalRun | Promise<ExternalRun>;
 }
 export interface PluginDescriptor extends PluginManifest {
+  capabilities?: string[];
+  language?: string;
+  taskKind?: string;
   digest: string;
   enabled: boolean;
   builtin: boolean;

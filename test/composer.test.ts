@@ -30,12 +30,12 @@ test('composer starts with three input rows, grows in both directions, and wraps
     const input = f.ui.next();
     const initial = f.frame();
     const top = initial.lines.findIndex(s => s.includes('何を調べますか'));
-    const status = initial.lines.findIndex(s => s.includes('│ DKH'));
+    const status = initial.lines.findIndex(s => s.includes('│ MoDKH'));
     assert.equal(status - top, 3);
     f.input.emit('keypress', 'one\ntwo\nthree\nfour\nfive\nsix\nseven', {});
     const grown = f.frame();
     const grownTop = grown.lines.findIndex(s => s.includes('│ one'));
-    const grownStatus = grown.lines.findIndex(s => s.includes('│ DKH'));
+    const grownStatus = grown.lines.findIndex(s => s.includes('│ MoDKH'));
     assert.equal(grownStatus - grownTop, 7);
     assert.ok(grownTop < top, 'the input expands upward as lines are added');
     // 最下部のブロックは下端固定。伸びた分は上向きに消費される。
@@ -72,7 +72,7 @@ test('large drafts scroll inside the viewport and vertical movement keeps the cu
     const bottom = f.frame();
     // 自分が管理するライブブロック(状態行とその下)は縮小後の幅に収まる。既に出力済みの
     // 履歴行はスクロールバック確定済みで、リフローはしない。
-    const statusIdx = bottom.lines.map(s => s.includes('│ DKH')).lastIndexOf(true);
+    const statusIdx = bottom.lines.map(s => s.includes('│ MoDKH')).lastIndexOf(true);
     assert.ok(statusIdx >= 0, 'the status line is on screen');
     assert.ok(bottom.lines.slice(Math.max(0, statusIdx - 1)).every(s => textWidth(s) <= 24));
     assert.match(bottom.lines[bottom.cursorRow - 1], /line-39/);

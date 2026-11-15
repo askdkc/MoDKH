@@ -192,3 +192,15 @@ test('a file without a language is reported as unsupported rather than clean', a
     assert.match(result.detail ?? '', /対応言語ではない/);
   } finally { await service.close(); }
 });
+
+test('malformed/unchanged pull reports do not invent clean diagnostics; valid empty report is observed', async () => {
+  for (const mode of ['pull-invalid', 'pull-empty']) {
+    const live=server(mode);
+    try {
+      await live.start();
+      const result=await live.synchronize(path.join(root,`${mode}.ts`),'BROKEN');
+      assert.equal(result.status,mode==='pull-empty'?'observed':'waiting');
+      assert.deepEqual(live.diagnosticEvidence,{pushNotifications:0,pullRequests:1,pullReports:mode==='pull-empty'?1:0,pullSupported:true});
+    } finally { await live.dispose(); }
+  }
+});

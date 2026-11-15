@@ -1,0 +1,605 @@
+{
+  "before": {
+    "summary": {
+      "tests": 414,
+      "pass": 353,
+      "fail": 58,
+      "skipped": 3
+    },
+    "failures": [
+      {
+        "name": "/connect chatgpt はログイン処理を通り、モデル選択に進む",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "30 round trips complete under the default limit instead of being truncated",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "AI SDK does not turn length into completion",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "AI SDK does not turn missing finish into completion",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "AI SDK does not turn tool_calls into completion",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLI approval Stop preserves the next instruction through the real model adapter",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLI error stays error after EOF and original user whitespace is retained",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLI footer shows provider-reported usage only (omitted)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLI footer shows provider-reported usage only (reported)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLIの記憶検索結果はモデル入力に届き、過去の参考データを履歴へ積み増さない",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "OAuth cancellation and timeout release the exact callback port without persisting",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "OAuth ignores wrong state/path, saves before browser success, and exchanges once",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "OpenAI互換アダプターが偽SSEサーバでストリーミング+ツール往復を完走する",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "Responses API のHTTPエラーは error としてループに伝わる",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "Responses API アダプターが偽SSEでストリーミング+関数往復を完走する",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "Stop escalates for a descendant that ignores TERM after shell exit",
+        "error": "'EMFILE: too many open files, watch'",
+        "code": "'EMFILE'"
+      },
+      {
+        "name": "a command that overruns its deadline keeps running and reports back through a job",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "a configured maxTurns caps the turn and says the work can be continued",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "a long command runs as a job, the turn continues, and the result reaches the model",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "a real TUI conversation uses 85% of the width and shows provider reasoning",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "a streaming response that keeps producing survives longer than the timeout budget",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "an invalid maxTurns falls back to the default with a diagnostic",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "an unresponsive model reports an idle timeout instead of hanging forever",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "auth login chatgpt は認可URL→ローカル受信→交換→保存まで通る",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "clipboard image and multiline text reach the real chat API and journal (success)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "clipboard image and multiline text reach the real chat API and journal (success)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "compatible providers carry reasoning_effort on the wire",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "fetch_url はHTMLを本文テキストにして返す",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "fetch_url はテキストでない応答を本文として表示しない",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "fetch_url はバイト上限で打ち切り、打ち切ったことを明示する",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "fetch_url は制限時間を超えたら TIMEOUT として返す",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "fetch_url は毎回 outsideWorkspace で承認を求め、拒否されたら取得しない",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "fetch_url は転送先ごとに承認を求め、拒否すれば転送先へは行かない",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "hermes reaches its configured OpenAI-compatible endpoint with the exact model/key",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "image input reaches the OpenAI-compatible API as an image, not a text placeholder",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "infron reaches its configured OpenAI-compatible endpoint with the exact model/key",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "legacy huge tool results are bounded for both APIs without rewriting audit evidence or status",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "occupied callback port fails before showing a browser URL",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "ollama reaches its configured OpenAI-compatible endpoint with the exact model/key",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "ollama-cloud reaches its configured OpenAI-compatible endpoint with the exact model/key",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "opencode reaches its configured OpenAI-compatible endpoint with the exact model/key",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "provider reasoning is forwarded as its own event, separate from the answer text",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "public CLI researches, edits with approval and runs a real test (ignored replay archive)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "public CLI researches, edits with approval and runs a real test (legacy oversized history)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "public CLI terminal path: logo → completion → seven providers → connect → response → Stop → recover → exit",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "reasoning-only stream reports activity and ends on deadline without replay",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "reasoning-only stream reports activity and ends on user Stop without replay",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "the agent reads a failing check as a result and repairs the code",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "the public CLI wires analysis into read_file without any extra flag",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "token failure does not overwrite saved credentials or expose endpoint response bodies",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "web_search はキーが無ければ通信せずに理由を返す",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "web_search は承認を拒否されたら通信しない",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "web_search は承認後にだけクエリを送り、タイトルとURLだけを返す",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "システムプロンプトは意図不明時にツールより先に一度だけ聞き返す規則を持つ",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "ツールを呼ばない応答は打ち切りではなく通常終了として扱う",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "トークン交換は認可コードと code_verifier を送る",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "メモリerrorでも実CLIから主作業のモデル応答に到達する",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "メモリhangでも実CLIから主作業のモデル応答に到達する",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      }
+    ]
+  },
+  "after": {
+    "summary": {
+      "tests": 427,
+      "pass": 361,
+      "fail": 58,
+      "skipped": 8
+    },
+    "failures": [
+      {
+        "name": "/connect chatgpt はログイン処理を通り、モデル選択に進む",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "30 round trips complete under the default limit instead of being truncated",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "AI SDK does not turn length into completion",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "AI SDK does not turn missing finish into completion",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "AI SDK does not turn tool_calls into completion",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLI approval Stop preserves the next instruction through the real model adapter",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLI error stays error after EOF and original user whitespace is retained",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLI footer shows provider-reported usage only (omitted)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLI footer shows provider-reported usage only (reported)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "CLIの記憶検索結果はモデル入力に届き、過去の参考データを履歴へ積み増さない",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "OAuth cancellation and timeout release the exact callback port without persisting",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "OAuth ignores wrong state/path, saves before browser success, and exchanges once",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "OpenAI互換アダプターが偽SSEサーバでストリーミング+ツール往復を完走する",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "Responses API のHTTPエラーは error としてループに伝わる",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "Responses API アダプターが偽SSEでストリーミング+関数往復を完走する",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "Stop escalates for a descendant that ignores TERM after shell exit",
+        "error": "'EMFILE: too many open files, watch'",
+        "code": "'EMFILE'"
+      },
+      {
+        "name": "a command that overruns its deadline keeps running and reports back through a job",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "a configured maxTurns caps the turn and says the work can be continued",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "a long command runs as a job, the turn continues, and the result reaches the model",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "a real TUI conversation uses 85% of the width and shows provider reasoning",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "a streaming response that keeps producing survives longer than the timeout budget",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "an invalid maxTurns falls back to the default with a diagnostic",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "an unresponsive model reports an idle timeout instead of hanging forever",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "auth login chatgpt は認可URL→ローカル受信→交換→保存まで通る",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "clipboard image and multiline text reach the real chat API and journal (success)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "clipboard image and multiline text reach the real chat API and journal (success)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "compatible providers carry reasoning_effort on the wire",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "fetch_url はHTMLを本文テキストにして返す",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "fetch_url はテキストでない応答を本文として表示しない",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "fetch_url はバイト上限で打ち切り、打ち切ったことを明示する",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "fetch_url は制限時間を超えたら TIMEOUT として返す",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "fetch_url は毎回 outsideWorkspace で承認を求め、拒否されたら取得しない",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "fetch_url は転送先ごとに承認を求め、拒否すれば転送先へは行かない",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "hermes reaches its configured OpenAI-compatible endpoint with the exact model/key",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "image input reaches the OpenAI-compatible API as an image, not a text placeholder",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "infron reaches its configured OpenAI-compatible endpoint with the exact model/key",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "legacy huge tool results are bounded for both APIs without rewriting audit evidence or status",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "occupied callback port fails before showing a browser URL",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "ollama reaches its configured OpenAI-compatible endpoint with the exact model/key",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "ollama-cloud reaches its configured OpenAI-compatible endpoint with the exact model/key",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "opencode reaches its configured OpenAI-compatible endpoint with the exact model/key",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "provider reasoning is forwarded as its own event, separate from the answer text",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "public CLI researches, edits with approval and runs a real test (ignored replay archive)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "public CLI researches, edits with approval and runs a real test (legacy oversized history)",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "public CLI terminal path: logo → completion → seven providers → connect → response → Stop → recover → exit",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "reasoning-only stream reports activity and ends on deadline without replay",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "reasoning-only stream reports activity and ends on user Stop without replay",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "the agent reads a failing check as a result and repairs the code",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "the public CLI wires analysis into read_file without any extra flag",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "token failure does not overwrite saved credentials or expose endpoint response bodies",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "web_search はキーが無ければ通信せずに理由を返す",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "web_search は承認を拒否されたら通信しない",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "web_search は承認後にだけクエリを送り、タイトルとURLだけを返す",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "システムプロンプトは意図不明時にツールより先に一度だけ聞き返す規則を持つ",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "ツールを呼ばない応答は打ち切りではなく通常終了として扱う",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "トークン交換は認可コードと code_verifier を送る",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "メモリerrorでも実CLIから主作業のモデル応答に到達する",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      },
+      {
+        "name": "メモリhangでも実CLIから主作業のモデル応答に到達する",
+        "error": "'listen EPERM: operation not permitted 127.0.0.1'",
+        "code": "'EPERM'"
+      }
+    ]
+  },
+  "newFailures": [],
+  "removedFailures": [],
+  "changedCauses": []
+}

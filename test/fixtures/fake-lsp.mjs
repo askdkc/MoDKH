@@ -18,10 +18,12 @@ connection.onRequest('initialize', () => ({
     hoverProvider: true,
     definitionProvider: true,
     referencesProvider: true,
+    ...(mode.startsWith('pull-') ? { diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false } } : {}),
   },
   serverInfo: { name: 'fake', version: '1' },
 }));
 connection.onNotification('initialized', () => {});
+connection.onRequest('textDocument/diagnostic', () => mode === 'pull-empty' ? { kind: 'full', items: [] } : { kind: 'unchanged', resultId: 'unknown' });
 connection.onNotification('textDocument/didOpen', params => deliver(params));
 connection.onNotification('textDocument/didChange', params => deliver(params));
 connection.onNotification('textDocument/didSave', () => {});
@@ -50,7 +52,7 @@ function deliver(params) {
   const text = params.contentChanges?.[0]?.text ?? params.textDocument?.text ?? '';
   const version = params.textDocument?.version;
   if (typeof uri === 'string') documents.set(uri, { text, version });
-  if (mode === 'silent') return;
+  if (mode === 'silent' || mode.startsWith('pull-')) return;
   if (mode === 'crash') { process.exit(0); }
   if (mode === 'stale') {
     connection.sendNotification('textDocument/publishDiagnostics', {

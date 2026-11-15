@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { configDir } from '../cli/config.ts';
 import { fields, inspectPackage, object, pluginId } from './package.ts';
 import type { PackageSnapshot } from './package.ts';
+import type { SessionDefinition } from '../lisp/config.ts';
 import type { PluginDescriptor } from './api.ts';
 import { SubagentRegistry } from './registry.ts';
 
@@ -31,6 +32,16 @@ export class PluginManager {
   constructor(home = configDir(), builtinDir = fileURLToPath(new URL('../../plugins/', import.meta.url))) {
     this.home = path.resolve(home);
     this.builtinDir = builtinDir;
+  }
+  private sessionEntries: SessionDefinition[] | undefined;
+  registerSessionDefinitions(entries: SessionDefinition[], sourceDigest: string): void {
+    if (this.sessionEntries) throw new Error('Session definitions already registered; no implicit reload');
+    const registry = new SubagentRegistry();
+    for (const entry of entries) {
+      if (entry.descriptor.digest !== sourceDigest || !entry.descriptor.id.startsWith('micro-')) throw new Error('Invalid session definition');
+      registry.register(entry.descriptor);
+    }
+    this.sessionEntries = structuredClone(entries);
   }
   private base(): string { return path.join(this.home, 'plugins'); }
   private packagePath(id: string, digest: string): string { return path.join(this.base(), 'packages', id, digest); }
@@ -70,6 +81,10 @@ export class PluginManager {
   discover(): { registry: SubagentRegistry; diagnostics: string[] } {
     const registry = new SubagentRegistry();
     const diagnostics: string[] = [];
+    if (this.sessionEntries) {
+      for (const entry of this.sessionEntries) registry.register(structuredClone(entry.descriptor));
+      return { registry, diagnostics };
+    }
     let catalog: Catalog;
     try { catalog = this.catalog(); }
     catch (e) { return { registry, diagnostics: [`Plugin settings unavailable: ${String(e)}`] }; }
@@ -157,6 +172,11 @@ export class PluginManager {
   async acquire(id: string, digest: string, signal?: AbortSignal): Promise<PluginLease> {
     signal?.throwIfAborted();
     pluginId(id);
+    if (this.sessionEntries) {
+      const entry = this.sessionEntries.find(e => e.descriptor.id === id);
+      if (!entry?.descriptor.enabled || entry.descriptor.digest !== digest) throw new Error('Session agent unavailable or digest mismatch');
+      return { descriptor: structuredClone(entry.descriptor), module: { define: () => structuredClone(entry.definition) }, release() {} };
+    }
     const admitted = this.transaction(() => {
       const descriptor = this.discover().registry.get(id);
       if (!descriptor?.enabled) throw new Error(`Plugin unavailable or disabled: ${id}`);

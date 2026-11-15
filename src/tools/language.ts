@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { commonLispReader } from '../language/commonlisp-reader.ts';
 import path from 'node:path';
 import { ToolError, type Tool } from '../agent/types.ts';
 import { resolveInRoot, assertRealInRoot } from './guard.ts';
@@ -7,6 +8,11 @@ import { formatDiagnostics, type LanguageService } from '../language/lsp/service
 import { outline, verifyGrammar, type SyntaxResult } from '../language/syntax/parser.ts';
 import { offsetToPosition, positionToOffset } from '../language/positions.ts';
 import type { ServerDiagnostic } from '../language/lsp/client.ts';
+
+function selector(value: unknown): 'tailwind' | undefined {
+  if (value !== undefined && value !== 'tailwind') throw new ToolError('INVALID_ARGS', 'Unknown server selector');
+  return value;
+}
 
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 
@@ -41,6 +47,7 @@ export function languageTools(service: LanguageService): Tool[] {
     description: 'tree-sitterで構造(関数・クラス・メソッド等)を取得する。行・桁は1開始。構文上の同名を意味上の同一参照とは扱わない。',
     parameters: { type: 'object', properties: {
       path: { type: 'string', description: '対象ファイル(ルート相対)' },
+      server: { type: 'string', enum: ['tailwind'], description: 'Explicit semantic overlay' },
     }, required: ['path'] },
     async execute(args, ctx) {
       const rel = requireString(args.path, 'path');
@@ -64,6 +71,7 @@ export function languageTools(service: LanguageService): Tool[] {
     description: '構文上の定義を検索して名前と範囲を返す。意味上の参照ではない。',
     parameters: { type: 'object', properties: {
       path: { type: 'string', description: '対象ファイル(ルート相対)' },
+      server: { type: 'string', enum: ['tailwind'], description: 'Explicit semantic overlay' },
       query: { type: 'string', description: '名前の部分一致(空なら全件)' },
     }, required: ['path'] },
     async execute(args, ctx) {
@@ -87,11 +95,18 @@ export function languageTools(service: LanguageService): Tool[] {
     description: '現在のファイル内容をLSPへ同期し、診断を取得する。診断0件・未通知・古い版を区別して返す。',
     parameters: { type: 'object', properties: {
       path: { type: 'string', description: '対象ファイル(ルート相対)' },
+      server: { type: 'string', enum: ['tailwind'], description: 'Explicit semantic overlay' },
     }, required: ['path'] },
     async execute(args, ctx) {
       const rel = requireString(args.path, 'path');
       const { text } = readSource(ctx.root, rel);
-      const result = await service.analyze(resolveInRoot(ctx.root, rel), text, ctx.signal);
+      const result = await service.analyze(resolveInRoot(ctx.root, rel), text, ctx.signal, selector(args.server));
+      if (result.status !== 'ok') {
+        const supplemental = detectLanguage(resolveInRoot(ctx.root, rel), ctx.root)?.language.id === 'commonlisp'
+          ? await commonLispReader(text, { signal: ctx.signal }) : undefined;
+        // Readable input is not a clean LSP diagnostic result. Keep the tool unverified.
+        throw new ToolError('LSP_UNVERIFIED', `${formatDiagnostics(result)}${supplemental ? `\nSupplemental ${supplemental.provider}: ${supplemental.status}; ${supplemental.scope}\n${supplemental.line ?? '?'}:${supplemental.column ?? '?'} ${supplemental.detail}` : ''}`);
+      }
       return `${formatDiagnostics(result)}\n${renderDiagnostics(result.diagnostics ?? [], ctx.root)}`;
     },
   };
@@ -102,6 +117,7 @@ export function languageTools(service: LanguageService): Tool[] {
     description,
     parameters: { type: 'object', properties: {
       path: { type: 'string', description: '対象ファイル(ルート相対)' },
+      server: { type: 'string', enum: ['tailwind'], description: 'Explicit semantic overlay' },
       line: { type: 'number', description: '1開始の行' },
       column: { type: 'number', description: '1開始の桁(UTF-16)' },
     }, required: ['path', 'line', 'column'] },
@@ -116,18 +132,18 @@ export function languageTools(service: LanguageService): Tool[] {
       const detection = detectLanguage(abs, ctx.root);
       if (!detection) throw new ToolError('UNSUPPORTED', `対応言語ではない: ${rel}`);
       // Ensure the server has the current text before asking about a position.
-      await service.analyze(abs, text, ctx.signal);
+      await service.analyze(abs, text, ctx.signal, selector(args.server));
       const position = offsetToPosition(text, offset);
       const root = detection.root;
       const configured = service.detect(abs);
       if (!configured) throw new ToolError('UNSUPPORTED', `対応言語ではない: ${rel}`);
       try {
         if (name === 'code_hover') {
-          const answer = await withServer(service, abs, text, ctx.signal, server => server.hover(abs, position));
+          const answer = await withServer(service, abs, text, ctx.signal, server => server.hover(abs, position), selector(args.server));
           return answer ?? '型情報は得られなかった';
         }
         const locations = await withServer(service, abs, text, ctx.signal, server =>
-          name === 'code_definition' ? server.definition(abs, position) : server.references(abs, position));
+          name === 'code_definition' ? server.definition(abs, position) : server.references(abs, position), selector(args.server));
         if (locations.length === 0) return `${name}: 該当なし。この結果は未取得ではなく、サーバーが空を返した`;
         return locations.map(location => `${path.relative(root, location.file) || location.file}:${location.line}:${location.character}`).join('\n');
       } catch (e) {
@@ -149,9 +165,10 @@ async function withServer<T>(
   text: string,
   signal: AbortSignal | undefined,
   action: (server: import('../language/lsp/client.ts').LspServer) => Promise<T>,
+  selector?: 'tailwind',
 ): Promise<T> {
-  const server = service.poolFor(file);
-  if (!server) throw new Error('言語サーバーが起動していません。先に code_diagnostics を使ってください');
+  const server = service.poolFor(file, selector);
+  if (!server) throw new Error('言語サーバーを初期化できませんでした');
   void text; void signal;
   return action(server);
 }

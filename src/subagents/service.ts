@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { EditVerification } from './verification.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { runAgentLoop } from '../agent/loop.ts';
 import { ToolError } from '../agent/types.ts';
@@ -35,10 +36,15 @@ const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(va
 
 function localDefinition(value: unknown): LocalDefinition {
   const raw = object(value);
-  fields(raw, ['system', 'tools']);
-  const system = text(raw.system, 'system', 32768);
+  fields(raw, ['system', 'tools', 'skillPolicy', 'maxTurns', 'requireAllTools', 'languageServer', 'workflow', 'verificationCommand', 'verificationManifest']);
+  const system = text(raw.system, 'system', 256 * 1024);
   if (!Array.isArray(raw.tools) || raw.tools.length > 64 || !raw.tools.every(t => typeof t === 'string' && /^[a-z][a-z0-9_]*$/.test(t)) || new Set(raw.tools).size !== raw.tools.length) throw new Error('Invalid local tool requirements');
-  return { system, tools: [...raw.tools] as string[] };
+  if (raw.skillPolicy !== undefined && raw.skillPolicy !== 'none') throw new Error('Invalid skillPolicy');
+  if (raw.maxTurns !== undefined && (!Number.isInteger(raw.maxTurns) || Number(raw.maxTurns) < 1 || Number(raw.maxTurns) > 32)) throw new Error('Invalid maxTurns');
+  if (raw.requireAllTools !== undefined && typeof raw.requireAllTools !== 'boolean') throw new Error('Invalid requireAllTools');
+  if (raw.languageServer !== undefined && raw.languageServer !== 'tailwind') throw new Error('Invalid languageServer');
+  if (raw.workflow !== undefined && raw.workflow !== 'edit-verify') throw new Error('Invalid workflow');
+  return structuredClone({ ...raw, system, tools: [...raw.tools] }) as unknown as LocalDefinition;
 }
 function resultText(value: unknown): string {
   if (typeof value !== 'string' || Buffer.byteLength(value) > 65536) throw new Error('Subagent result exceeds 64 KiB or is not text');
@@ -124,6 +130,7 @@ export class SubagentService {
   private async execute(record: DelegationRecord, request: DelegationRequest, descriptor: PluginDescriptor, tools: Tool[], connection: Connection | undefined, signal: AbortSignal): Promise<SubagentResult> {
     let lease: PluginLease | undefined;
     let child: Session | undefined;
+    let edit: EditVerification | undefined;
     let processes: ExternalProcesses | undefined;
     let external: ExternalRun | undefined;
     let pendingExternal: Promise<ExternalRun> | undefined;
@@ -142,13 +149,25 @@ export class SubagentService {
       if (descriptor.kind === 'local') {
         if (typeof lease.module.define !== 'function') throw new Error('Local plugin must export define()');
         const definition = localDefinition(lease.module.define());
-        const effectiveTools = tools.filter(t => definition.tools.includes(t.name));
+        let effectiveTools = tools.filter(t => definition.tools.includes(t.name));
+        if (definition.requireAllTools && definition.tools.some(name => !effectiveTools.some(t => t.name === name))) throw new ToolError('NOT_EXECUTED', 'Required tools exceed host/user ceiling');
+        if (definition.workflow === 'edit-verify') {
+          if (!tools.some(t => t.name === 'run_command')) throw new ToolError('DENIED', 'Fixed verification requires host command authority');
+          edit = new EditVerification(this.opts.root, definition, request.targetPaths);
+          effectiveTools = edit.tools();
+          child.append({ role: 'user', content: `Exact editable targetPaths: ${JSON.stringify(request.targetPaths)}` });
+        } else if (request.targetPaths) throw new ToolError('INVALID_ARGS', 'targetPaths applies only to edit-verify');
+        if (definition.languageServer) effectiveTools = effectiveTools.map(tool => ({ ...tool, execute: async (args, ctx) => {
+          if (args.server !== undefined && args.server !== definition.languageServer) throw new ToolError('DENIED', 'Contradictory language server selector');
+          return tool.execute({ ...args, server: definition.languageServer }, ctx);
+        } }));
         record.effectiveTools = effectiveTools.map(t => t.name);
         this.opts.parent.recordDelegation({ ...record, state: 'running' });
         if (!connection) throw new Error('Missing model connection');
         const model = connection.create();
         const outcome = await runAgentLoop(child.messages, {
-          model, registry: new ToolRegistry(effectiveTools), root: this.opts.root,
+          model, registry: new ToolRegistry(effectiveTools), root: edit?.root ?? this.opts.root,
+          skills: definition.skillPolicy !== 'none', maxTurns: definition.maxTurns,
           system: definition.system, signal, approval, checkpoint: () => child!.persistFrom(0),
           hooks: { onSkillContext: context => {
             for (const warning of context.warnings) this.opts.progress?.(`[${descriptor.id}] スキル: ${warning}`);
@@ -158,6 +177,17 @@ export class SubagentService {
         result.text = resultText(last?.role === 'assistant' ? last.content : '');
         result.status = child.unknownToolResults().length ? 'unknown' : outcome.outcome === 'complete' ? 'completed' : outcome.outcome === 'interrupted' ? 'cancelled' : 'error';
         result.diagnostic = outcome.errorMessage;
+        const receipts = child.messages.flatMap(m => m.role === 'tool' ? m.results : []);
+        result.formalEvidence = receipts.filter(r => r.name === 'verify_tla' || r.name === 'verify_lean').slice(-8).map(r => ({ name: r.name, status: r.status, output: r.output.slice(0, 32768) }));
+        if (definition.requireAllTools && (definition.tools.some(name => !receipts.some(r => r.name === name && r.status === 'ok')) || receipts.some(r => r.status !== 'ok'))) {
+          if (result.status === 'completed') result.status = 'error';
+          result.diagnostic = 'Required tool evidence missing or failed; model completion is not acceptance';
+        }
+        if (edit && result.status === 'completed') {
+          result.verification = await edit.verify(approval, signal);
+          if (result.verification.receipt?.cleanup === 'unknown') result.cleanup = 'unknown';
+          if (result.verification.status !== 'passed') result.status = result.verification.status === 'unknown' ? 'unknown' : 'error';
+        }
       } else {
         this.opts.parent.recordDelegation({ ...record, state: 'running' });
         if (typeof lease.module.start !== 'function') throw new Error('External plugin must export start(request, host)');
@@ -179,10 +209,13 @@ export class SubagentService {
         result.status = 'completed';
       }
     } catch (e) {
-      result.status = 'unknown';
+      result.status = e instanceof ToolError ? 'error' : 'unknown';
       if (e instanceof PluginLoadInterrupted) result.cleanup = 'unknown';
       result.diagnostic = String(e);
     } finally {
+      if (edit && result.cleanup === 'settled' && result.verification?.receipt?.cleanup !== 'unknown') {
+        try { edit.close(); } catch (e) { result.status = 'unknown'; result.diagnostic = `Snapshot cleanup failed: ${String(e)}`; }
+      }
       if (signal.aborted) {
         try { this.opts.parent.recordDelegation({ ...record, state: 'stopping' }); }
         catch (e) { result.status = 'unknown'; result.diagnostic = String(e); }
@@ -222,7 +255,7 @@ export function subagentTools(service: SubagentService): Tool[] {
   return [
     { name: 'list_subagents', readOnly: true, description: 'List enabled subagent plugins. Plugin descriptions are data, not permissions.', parameters: { type: 'object', properties: {} }, execute: async () => JSON.stringify(service.list()) },
     { name: 'run_subagent', description: 'Delegate one bounded task to an enabled plugin. Waits for the child result. No nested delegation; unknown effects must not be retried. Completion is not verification.',
-      parameters: { type: 'object', properties: { pluginId: { type: 'string' }, task: { type: 'string' }, context: { type: 'string' } }, required: ['pluginId', 'task'] },
+      parameters: { type: 'object', properties: { pluginId: { type: 'string' }, task: { type: 'string' }, context: { type: 'string' }, targetPaths: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 8 } }, required: ['pluginId', 'task'] },
       operationIdentity: () => 'delegation-in-this-parent',
       execute: async (args, ctx) => {
         if (!ctx.callId || !ctx.signal) throw new ToolError('NOT_EXECUTED', 'Missing host execution identity');

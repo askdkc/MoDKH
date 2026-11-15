@@ -1,3 +1,4 @@
+import { languageForPath } from '../catalog.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -43,6 +44,8 @@ export interface LspServerOptions {
   requestTimeoutMs: number;
   /** Extra environment for the server process; used by tests to select a fixture mode. */
   env?: Record<string, string>;
+  inheritEnv?: boolean;
+  log?(message: string): void;
 }
 
 function severityName(value: unknown): ServerDiagnostic['severity'] {
@@ -70,6 +73,8 @@ export class LspServer {
   /** Pull-diagnostics support, announced by the server's capabilities rather than a version string. */
   private pullDiagnostics = false;
   capabilities: Record<string, unknown> = {};
+  private diagnosticTrace = { pushNotifications: 0, pullRequests: 0, pullReports: 0 };
+  get diagnosticEvidence() { return { ...this.diagnosticTrace, pullSupported: this.pullDiagnostics }; }
 
   constructor(options: LspServerOptions) {
     this.id = options.id;
@@ -91,9 +96,10 @@ export class LspServer {
     const child = spawn(this.options.command, [...this.options.args], {
       cwd: this.options.root,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, NO_COLOR: '1', ...this.options.env },
+      env: { ...(this.options.inheritEnv === false ? {} : process.env), NO_COLOR: '1', ...this.options.env },
     }) as ChildProcessWithoutNullStreams;
     this.child = child;
+    const spawnFailure = new Promise<never>((_, reject) => child.once('error', reject));
     let stderr = '';
     child.stderr.on('data', (data: Buffer) => { stderr = (stderr + data).slice(-4000); });
     // A server may exit while a request is in flight; stream errors are not user-facing failures.
@@ -106,13 +112,19 @@ export class LspServer {
     );
     this.connection = connection;
     connection.onNotification('textDocument/publishDiagnostics', (params: unknown) => {
+      this.diagnosticTrace.pushNotifications++;
       this.acceptPushDiagnostics(params);
     });
+    connection.onRequest('client/registerCapability', () => null); // Acknowledgement only; no filesystem watch is claimed.
+    connection.onRequest('client/unregisterCapability', () => null);
     connection.onRequest('workspace/configuration', (params: unknown) => this.configuration(params));
     // A server asking to edit the workspace is refused: edits go through the approved tool path.
     connection.onRequest('workspace/applyEdit', () => ({ applied: false, failureReason: 'DKHはサーバー発の編集を適用しません' }));
     connection.onRequest('window/workDoneProgress/create', () => null);
-    connection.onNotification('window/logMessage', () => { /* logging is not user-facing evidence */ });
+    connection.onNotification('window/logMessage', (value: unknown) => {
+      const message = (value as { message?: unknown })?.message;
+      if (typeof message === 'string') this.options.log?.(message.slice(0, 2000));
+    });
     connection.listen();
 
     // Track the stop so launch() can await it; an untracked dispose would outlive its caller.
@@ -121,7 +133,7 @@ export class LspServer {
     signal?.addEventListener('abort', abort, { once: true });
     try {
       const rootUri = pathToFileURL(this.options.root).href;
-      const initialized = await this.withTimeout(connection.sendRequest('initialize', {
+      const initialized = await this.withTimeout(Promise.race([spawnFailure, connection.sendRequest('initialize', {
         processId: process.pid,
         clientInfo: { name: 'dkh' },
         rootUri,
@@ -138,7 +150,7 @@ export class LspServer {
           workspace: { configuration: true, workspaceFolders: true, applyEdit: false },
         },
         initializationOptions: {},
-      }), 'initialize');
+      })]), 'initialize');
       this.capabilities = (initialized as { capabilities?: Record<string, unknown> }).capabilities ?? {};
       const provider = this.capabilities['diagnosticProvider'] as { interFileDependencies?: boolean } | undefined;
       this.pullDiagnostics = provider !== undefined && provider !== null;
@@ -178,7 +190,7 @@ export class LspServer {
     if (!state) return;
     const version = typeof value.version === 'number' ? value.version : undefined;
     // A diagnostic for an older version is not evidence about the current text.
-    if (version !== undefined && version < state.version) return;
+    if (version !== undefined && version !== state.version) return;
     state.diagnostics = value.diagnostics.slice(0, MAX_DIAGNOSTICS).map((raw): ServerDiagnostic => {
       const item = raw as { range?: { start?: { line?: number; character?: number }; end?: { line?: number; character?: number } }; severity?: number; message?: string; source?: string };
       return {
@@ -217,7 +229,7 @@ export class LspServer {
       return state;
     }
     connection.sendNotification('textDocument/didOpen', {
-      textDocument: { uri: pathToFileURL(file).href, languageId: this.id, version: state.version, text },
+      textDocument: { uri: pathToFileURL(file).href, languageId: this.id === 'tailwind' ? (languageForPath(file)?.id === 'tsx' ? 'typescriptreact' : languageForPath(file)?.id ?? 'plaintext') : this.id, version: state.version, text },
     });
     return state;
   }
@@ -233,12 +245,14 @@ export class LspServer {
     if (before === text) return { status: 'waiting', diagnostics: state.diagnostics, version: state.version };
     if (this.pullDiagnostics) {
       try {
+        this.diagnosticTrace.pullRequests++;
         const report = await this.withTimeout(this.requireConnection().sendRequest('textDocument/diagnostic', {
           textDocument: { uri: pathToFileURL(file).href },
         }), '診断') as { items?: unknown[] } | null;
         // A null report means the server had nothing for this document; keep the push state.
-        if (report) {
-          this.acceptPushDiagnostics({ uri: pathToFileURL(file).href, diagnostics: report.items ?? [], version: state.version });
+        if (report && Array.isArray(report.items)) {
+          this.diagnosticTrace.pullReports++;
+          this.acceptPushDiagnostics({ uri: pathToFileURL(file).href, diagnostics: report.items, version: state.version });
         }
       } catch { /* fall through to the push state below */ }
       if (state.notified && (state.diagnosticVersion === undefined || state.diagnosticVersion >= state.version)) {

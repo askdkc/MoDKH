@@ -49,7 +49,7 @@ export interface LanguageDefinition {
 const TYPESCRIPT: LanguageDefinition = {
   id: 'typescript', extensions: ['ts', 'mts', 'cts'], manifests: ['tsconfig.json', 'package.json'],
   grammar: 'typescript',
-  install: { kind: 'npm', packages: ['typescript-language-server@6.1.0', 'typescript@5.9.3'], entry: 'typescript-language-server' },
+  install: { kind: 'npm', packages: ['typescript-language-server@latest', 'typescript@latest'], entry: 'typescript-language-server' },
   lsp: { bin: 'typescript-language-server', args: ['--stdio'] },
 };
 
@@ -57,32 +57,32 @@ export const LANGUAGES: readonly LanguageDefinition[] = [
   TYPESCRIPT,
   {
     id: 'javascript', extensions: ['js', 'mjs', 'cjs'], manifests: ['package.json'],
-    grammar: 'javascript', install: { kind: 'npm', packages: ['typescript-language-server@6.1.0', 'typescript@5.9.3'], entry: 'typescript-language-server' },
+    grammar: 'javascript', install: { kind: 'npm', packages: ['typescript-language-server@latest', 'typescript@latest'], entry: 'typescript-language-server' },
     lsp: { bin: 'typescript-language-server', args: ['--stdio'] },
   },
   {
     id: 'tsx', extensions: ['tsx'], manifests: ['tsconfig.json', 'package.json'],
-    grammar: 'tsx', install: { kind: 'npm', packages: ['typescript-language-server@6.1.0', 'typescript@5.9.3'], entry: 'typescript-language-server' },
+    grammar: 'tsx', install: { kind: 'npm', packages: ['typescript-language-server@latest', 'typescript@latest'], entry: 'typescript-language-server' },
     lsp: { bin: 'typescript-language-server', args: ['--stdio'] },
   },
   {
     id: 'svelte', extensions: ['svelte'], manifests: ['svelte.config.js', 'svelte.config.ts', 'package.json'],
-    grammar: 'svelte', install: { kind: 'npm', packages: ['svelte-language-server@0.17.10'], entry: 'svelteserver' },
+    grammar: 'svelte', install: { kind: 'npm', packages: ['svelte-language-server@latest'], entry: 'svelteserver' },
     lsp: { bin: 'svelteserver', args: ['--stdio'] },
   },
   {
     id: 'html', extensions: ['html', 'htm'], manifests: [],
-    grammar: 'html', install: { kind: 'npm', packages: ['vscode-langservers-extracted@4.10.0'], entry: 'vscode-html-language-server' },
+    grammar: 'html', install: { kind: 'npm', packages: ['vscode-langservers-extracted@latest'], entry: 'vscode-html-language-server' },
     lsp: { bin: 'vscode-html-language-server', args: ['--stdio'] },
   },
   {
     id: 'css', extensions: ['css', 'pcss'], manifests: [],
-    grammar: 'css', install: { kind: 'npm', packages: ['vscode-langservers-extracted@4.10.0'], entry: 'vscode-css-language-server' },
+    grammar: 'css', install: { kind: 'npm', packages: ['vscode-langservers-extracted@latest'], entry: 'vscode-css-language-server' },
     lsp: { bin: 'vscode-css-language-server', args: ['--stdio'] },
   },
   {
     id: 'tailwind', extensions: ['css', 'pcss', 'html', 'svelte', 'tsx', 'jsx'], manifests: ['tailwind.config.js', 'tailwind.config.ts', 'tailwind.config.cjs'],
-    install: { kind: 'npm', packages: ['@tailwindcss/language-server@0.14.16'], entry: 'tailwindcss-language-server' },
+    install: { kind: 'npm', packages: ['@tailwindcss/language-server@latest'], entry: 'tailwindcss-language-server' },
     lsp: { bin: 'tailwindcss-language-server', args: ['--stdio'] },
   },
   {
@@ -93,7 +93,7 @@ export const LANGUAGES: readonly LanguageDefinition[] = [
   },
   {
     id: 'python', extensions: ['py', 'pyi'], manifests: ['pyproject.toml', 'setup.py', 'requirements.txt'],
-    grammar: 'python', install: { kind: 'npm', packages: ['basedpyright@1.31.4'], entry: 'basedpyright-langserver' },
+    grammar: 'python', install: { kind: 'npm', packages: ['basedpyright@latest'], entry: 'basedpyright-langserver' },
     lsp: { bin: 'basedpyright-langserver', args: ['--stdio'] },
   },
   {

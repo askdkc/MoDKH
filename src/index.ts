@@ -1,17 +1,19 @@
 #!/usr/bin/env node
-// dkh — 単独で動く最小コーディングハーネス
+// dkh — MoDKH (Mixture of DKH)
 
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const VERSION = '0.1.0';
 
-const HELP = `dkh ${VERSION} — 単独で動く最小コーディングハーネス
+const HELP = `dkh ${VERSION} — MoDKH (Mixture of DKH)
 
 使い方:
   dkh [--model <provider>/<model>] [--cwd <dir>] [--resume <id>] [--base-url <url>]
       (サブコマンドなしで起動すると対話ハーネスを開く)
   dkh chat --model <provider>/<model> [--cwd <dir>] [--resume <id>] [--base-url <url>]
+  dkh chat --lisp-config agents.lisp --trust-lisp-sha256 SHA256 [--sbcl PATH]
+      [--routing auto] [--lean PATH] [--java PATH --tla-jar PATH]
   dkh auth login chatgpt
   dkh session list
   dkh plugin list | add <directory> | enable <id> | disable <id> | remove <id>

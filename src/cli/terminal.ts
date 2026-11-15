@@ -429,8 +429,8 @@ export class TerminalUI implements ChatTerminal {
     // 会話が始まった瞬間、ウェルカム(ロゴ+案内)を一度だけ本文へ流し込む。
     if (this.started && !this.bootFlushed) {
       this.bootFlushed = true;
-      const banner = ['DKH  ·  Coding Harness', ...LOGO];
-      stream.unshift(...banner.map(l => this.paint(l, l.startsWith('DKH') ? '1' : ACCENT)),
+      const banner = ['MoDKH  ·  Coding Harness', ...LOGO];
+      stream.unshift(...banner.map(l => this.paint(l, l.startsWith('MoDKH') ? '1' : ACCENT)),
         ...this.bootLines.flatMap(l => wrap(l, width)));
       this.bootLines = [];
     }
@@ -482,7 +482,7 @@ export class TerminalUI implements ChatTerminal {
       lines.push({ text: `│ ${line || placeholder}`, style: '' });
     }
     const attachments = composer && this.images.length ? ` · 画像${this.images.length}枚 (Ctrl+Xで削除)` : '';
-    const status = this.inputNotice && !this.pending?.secret ? this.inputNotice : `DKH  ·  ${this.model ?? '未接続 — /connect'}${attachments}`;
+    const status = this.inputNotice && !this.pending?.secret ? this.inputNotice : `MoDKH  ·  ${this.model ?? '未接続 — /connect'}${attachments}`;
     lines.push({ text: `│ ${status}`, style: ACCENT });
     const hints = !this.pending ? 'Ctrl+C 中止（入力は応答完了後）' : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
       : composer ? 'Enter 送信  Ctrl+J 改行  Ctrl+V 画像  Cmd+V テキスト' : 'Enter 決定  Ctrl+C 中止';
@@ -516,7 +516,7 @@ export class TerminalUI implements ChatTerminal {
         return ' '.repeat(pad) + line;
       };
       const welcome: { text: string; style: string }[] = [
-        { text: widthCenter('DKH  ·  Coding Harness'), style: '1' },
+        { text: widthCenter('MoDKH  ·  Coding Harness'), style: '1' },
         ...LOGO.map(line => ({ text: widthCenter(line), style: ACCENT })),
         ...this.bootLines.slice(-8).flatMap(line => wrap(line, width).map(text => ({ text, style: '' }))),
       ];

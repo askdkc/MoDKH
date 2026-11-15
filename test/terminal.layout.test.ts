@@ -139,6 +139,6 @@ test('reasoning and transcript stream into the scrollback instead of being erase
     // 現在の画面の最下部にはライブブロック(入力欄)が残る。
     t.ui.write('▶ You: 続き\n');
     const view = t.text();
-    assert.match(view, /│ DKH/, 'the live status block stays on screen');
+    assert.match(view, /│ MoDKH/, 'the live status block stays on screen');
   } finally { t.ui.close(); }
 });

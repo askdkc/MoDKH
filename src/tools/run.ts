@@ -146,3 +146,15 @@ export const runCommandTool: Tool = {
     return describeShellResult(outcome.result);
   },
 };
+
+/** Host-only acceptance path: same command authorization, no job promotion, no stdout parsing. */
+export async function executeAcceptance(command: string, root: string, approval: import('../agent/types.ts').ApprovalGate,
+  signal: AbortSignal, inputDigest: string, env: NodeJS.ProcessEnv): Promise<import('../lisp/runtime.ts').ExecutionReceipt> {
+  const { executeBounded } = await import('../lisp/runtime.ts');
+  try {
+    const prepared = await authorize({ command, cwd: '.', shell: 'sh' }, { root, approval, signal });
+    return await executeBounded('/bin/sh', ['-c', prepared.command], { cwd: prepared.cwd, env, inputDigest, signal, timeoutMs: 30000 });
+  } catch (e) {
+    return { state: 'not-started', exitCode: null, signal: null, stdout: '', stderr: String(e), inputDigest, cleanup: 'settled' };
+  }
+}
