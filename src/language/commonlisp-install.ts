@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { download } from './native.ts';
 import { commonLispRegistry, commonLispSystemProbe } from './commonlisp-systems.ts';
-import { installLemDependencies, resolvedDependencyDirectory } from './commonlisp-dependencies.ts';
+import { installLemDependencies, resolvedNativeBuildDirectory } from './commonlisp-dependencies.ts';
 import { hostPlatform, type HostPlatform, type ReleaseAsset } from './platform.ts';
 import { executeBounded, privateEnvironment, sha256, type ExecutionReceipt } from '../lisp/runtime.ts';
 import { LspServer } from './lsp/client.ts';
@@ -72,7 +72,7 @@ export async function installCommonLisp(target: string, signal?: AbortSignal) {
   const run = (name: string, command: string, args: string[], cwd = root) => stage(name, async entry => {
     const receipt = await executeBounded(command, args, { cwd, env, inputDigest: sha256(JSON.stringify([command,args])), timeoutMs: 20 * 60_000, maxOutputBytes: 512 * 1024, signal: deadline });
     entry.receipt = receipt; settled &&= receipt.cleanup === 'settled';
-    if (receipt.state !== 'exited' || receipt.exitCode !== 0) throw new Error(`${receipt.state}/${receipt.exitCode}: ${receipt.stderr.slice(-1000)}`);
+    if (receipt.state !== 'exited' || receipt.exitCode !== 0 || receipt.cleanup !== 'settled') throw new Error(`${receipt.state}/${receipt.exitCode} cleanup=${receipt.cleanup}: stderr=${receipt.stderr.slice(-1500)} stdout=${receipt.stdout.slice(-1500)}`);
     return receipt.stdout;
   });
   try {
@@ -114,7 +114,10 @@ export async function installCommonLisp(target: string, signal?: AbortSignal) {
     const discovery = await run('asdf-system-discovery', ros, ['-Q', '-l', discoveryFile, '-q']);
     if (!discovery.split(/\r?\n/).includes('MODKH_ASDF_DISCOVERY_OK')) throw new Error('ASDF discovery exited without completion evidence');
     report.asdfDiscovery = discovery;
-    const native = resolvedDependencyDirectory(discovery, 'async-process', root);
+    const native = resolvedNativeBuildDirectory(discovery, root);
+    for (const tool of ['autoconf', 'automake', 'aclocal', 'autoheader', platform.os === 'darwin' ? 'glibtoolize' : 'libtoolize']) {
+      await run(`native-tool:${tool}`, tool, ['--version']);
+    }
     await run('native-build', 'make', [`PREFIX=${prefix}`], native);
     await run('native-install', 'make', [`PREFIX=${prefix}`, 'install'], native);
     const library = platform.os === 'darwin' ? 'libasyncprocess.dylib' : 'libasyncprocess.so';
@@ -134,7 +137,7 @@ export async function installCommonLisp(target: string, signal?: AbortSignal) {
       await stage('lsp-initialize', async()=>{await server.start(deadline);report.capabilities=server.capabilities;});
       await stage('lsp-synchronize', async()=>{report.synchronization=await server.synchronize(fixture,text);});
       await stage('lexical-definition', async()=>{
-        const definitions=await server.definition(fixture,{line:0,character:16});report.lexicalDefinitions=definitions;
+        const definitions=await server.definition(fixture,{line:0,character:text.lastIndexOf('value')});report.lexicalDefinitions=definitions;
         if (!definitions.some(d=>d.file===fixture&&d.line===1&&d.character===8)) throw new Error('No matching lexical definition response');
       });
       await stage('unevaluated-global-observation', async()=>{

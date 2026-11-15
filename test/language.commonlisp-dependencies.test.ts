@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { installLemDependencies, resolvedDependencyDirectory } from '../src/language/commonlisp-dependencies.ts';
+import { spawnSync } from 'node:child_process';
+import { installLemDependencies, resolvedDependencyDirectory, resolvedNativeBuildDirectory } from '../src/language/commonlisp-dependencies.ts';
 import { temporaryDirectory } from '../src/lisp/runtime.ts';
 
 test('Lem manifest is installed privately before discovery, with resolved lock evidence', async () => {
@@ -17,9 +18,12 @@ test('Lem manifest is installed privately before discovery, with resolved lock e
       calls.push(name);
       if (name === 'qlot-bootstrap') {
         assert.equal(command, '/private/ros'); assert.deepEqual(args, ['install', 'fukamachi/qlot']);
+      } else if (name === 'qlot-capability') {
+        assert.equal(command, '/private/ros');
+        assert.deepEqual(args, ['-Q', '-e', '(ros:ensure-asdf)', '-l', path.join(root, 'dependencies/probe-qlot.lisp'), '-q']);
+        return 'MODKH_QLOT_READY fixture-version\n';
       } else {
         assert.equal(command, '/private/roswell/bin/qlot');
-        if (name === 'qlot-capability') return 'fixture-version';
         assert.equal(cwd, path.join(root, 'dependencies'));
         assert.deepEqual(args, ['install', '--no-deps']);
         assert.equal(fs.readFileSync(path.join(cwd!, 'qlfile'), 'utf8'), manifest);
@@ -39,7 +43,7 @@ test('Lem manifest is installed privately before discovery, with resolved lock e
 });
 
 test('Qlot failure stops the pipeline; exit zero with incomplete output is also rejected', async () => {
-  for (const fails of [true, false]) {
+  for (const outcome of ['bootstrap-failure', 'no-marker', 'no-lock']) {
     const root = temporaryDirectory('modkh-qlot-failure-');
     try {
       const lem = path.join(root, 'lem'); fs.mkdirSync(lem);
@@ -47,10 +51,11 @@ test('Qlot failure stops the pipeline; exit zero with incomplete output is also 
       const calls: string[] = [];
       await assert.rejects(installLemDependencies(root, lem, 'ros', root, async name => {
         calls.push(name);
-        if (fails) throw new Error('dependency fetch failed: micros');
+        if (outcome === 'bootstrap-failure') throw new Error('dependency fetch failed: micros');
+        if (outcome === 'no-lock' && name === 'qlot-capability') return 'MODKH_QLOT_READY fixture-version\n';
         return '';
-      }), fails ? /fetch failed: micros/ : /ENOENT/);
-      assert.equal(calls.length, fails ? 1 : 3);
+      }), outcome === 'bootstrap-failure' ? /fetch failed: micros/ : outcome === 'no-marker' ? /missing completion evidence/ : /ENOENT/);
+      assert.equal(calls.length, outcome === 'bootstrap-failure' ? 1 : outcome === 'no-marker' ? 2 : 3);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   }
 });
@@ -68,4 +73,50 @@ test('native build uses the ASDF-resolved source and rejects missing, duplicate 
     const link = path.join(owned, 'linked.asd'); fs.symlinkSync(external, link);
     assert.throws(() => resolvedDependencyDirectory(`MODKH_ASDF_SYSTEM async-process ${link}`, 'async-process', owned), /outside/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('native build finds upstream src/ASD parent and rejects absent build files', () => {
+  const root = temporaryDirectory('modkh-native-layout-');
+  try {
+    fs.mkdirSync(path.join(root, 'src'));
+    const asd = path.join(root, 'src/async-process.asd'); fs.writeFileSync(asd, '');
+    const discovery = `MODKH_ASDF_SYSTEM async-process ${asd}`;
+    assert.throws(() => resolvedNativeBuildDirectory(discovery, root), /no supported/);
+    for (const name of ['GNUmakefile', 'Makefile.am', 'configure.ac']) fs.writeFileSync(path.join(root, name), '');
+    assert.equal(resolvedNativeBuildDirectory(discovery, root), fs.realpathSync(root));
+    assert.notEqual(resolvedDependencyDirectory(discovery, 'async-process', root), fs.realpathSync(root));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('real SBCL: Qlot version exits 255 but capability probe loads CLI and requires evidence', () => {
+  const available = spawnSync('sbcl', ['--version']);
+  if (available.error) throw available.error;
+  const root = temporaryDirectory('modkh-qlot-probe-');
+  try {
+    // Match upstream qlot-command-toplevel's --version branch, not a successful install.
+    const version = spawnSync('sbcl', ['--noinform', '--non-interactive', '--eval', '(require :asdf)',
+      '--eval', '(progn (format t "Qlot fixture~%") (uiop:quit -1))'], { encoding: 'utf8' });
+    assert.equal(version.status, 255);
+    assert.match(version.stdout, /Qlot fixture/);
+    fs.writeFileSync(path.join(root, 'qlot.asd'), '(asdf:defsystem "qlot" :version "0.0.0")\n(asdf:defsystem "qlot/cli" :components ((:file "cli")))');
+    fs.writeFileSync(path.join(root, 'cli.lisp'), '(defpackage :qlot/cli (:use :cl))\n(in-package :qlot/cli)\n(defun qlot-command () nil)');
+    const lem = path.join(root, 'lem'); fs.mkdirSync(lem);
+    fs.writeFileSync(path.join(lem, 'qlfile'), '');
+    return installLemDependencies(root, lem, 'ros', root, async (name, _command, args, cwd) => {
+      if (name === 'qlot-capability') {
+        const result = spawnSync('sbcl', ['--noinform', '--no-sysinit', '--no-userinit', '--non-interactive', '--load', args[4]], {
+          encoding: 'utf8', env: { ...process.env, HOME: root, XDG_CACHE_HOME: root,
+            CL_SOURCE_REGISTRY: `(:source-registry (:directory "${root}/") :ignore-inherited-configuration)` },
+        });
+        assert.equal(result.status, 0, result.stderr);
+        return result.stdout;
+      }
+      if (name === 'lem-dependencies') {
+        fs.mkdirSync(path.join(cwd!, '.qlot'));
+        fs.writeFileSync(path.join(cwd!, '.qlot/setup.lisp'), '');
+        fs.writeFileSync(path.join(cwd!, 'qlfile.lock'), '');
+      }
+      return '';
+    }).then(result => assert.equal(result.version, '0.0.0')).finally(() => fs.rmSync(root, { recursive: true, force: true }));
+  } catch (error) { fs.rmSync(root, { recursive: true, force: true }); throw error; }
 });

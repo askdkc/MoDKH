@@ -13,7 +13,17 @@ export async function installLemDependencies(root: string, lem: string, ros: str
   // Resolve the current upstream manifest; don't copy Lem's historical lock into a fresh install.
   await run('qlot-bootstrap', ros, ['install', 'fukamachi/qlot']);
   const qlot = path.join(rosHome, 'bin', 'qlot');
-  const version = (await run('qlot-capability', qlot, ['--version'])).trim();
+  // Qlot deliberately quits -1 for --version; test the loadable CLI instead.
+  const probe = path.join(directory, 'probe-qlot.lisp');
+  fs.writeFileSync(probe, `(require :asdf)
+(asdf:load-system "qlot/cli")
+(assert (fboundp (find-symbol "QLOT-COMMAND" "QLOT/CLI")))
+(format t "MODKH_QLOT_READY ~A~%" (asdf:component-version (asdf:find-system "qlot")))
+`, { flag: 'wx' });
+  const output = await run('qlot-capability', ros, ['-Q', '-e', '(ros:ensure-asdf)', '-l', probe, '-q']);
+  const evidence = output.split(/\r?\n/).filter(line => /^MODKH_QLOT_READY \S+$/.test(line));
+  if (evidence.length !== 1) throw new Error('Qlot capability missing completion evidence');
+  const version = evidence[0].slice('MODKH_QLOT_READY '.length);
   await run('lem-dependencies', qlot, ['install', '--no-deps'], directory);
   const home = path.join(directory, '.qlot');
   // Exit 0 alone is insufficient. Loading and ASDF resolution are checked by the next stage.
@@ -35,4 +45,19 @@ export function resolvedDependencyDirectory(discovery: string, system: string, r
     throw new Error(`ASDF source outside owned dependency prefix: ${system}`);
   }
   return path.dirname(source);
+}
+
+/** async-process keeps its ASD in src/, while its Autotools entry lives above it. */
+export function resolvedNativeBuildDirectory(discovery: string, root: string): string {
+  const source = resolvedDependencyDirectory(discovery, 'async-process', root);
+  const owned = fs.realpathSync(root);
+  for (const candidate of [source, path.dirname(source)]) {
+    const relative = path.relative(owned, candidate);
+    if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) continue;
+    if (['GNUmakefile', 'Makefile.am', 'configure.ac'].every(name => {
+      const file = path.join(candidate, name);
+      return fs.existsSync(file) && fs.lstatSync(file).isFile();
+    })) return candidate;
+  }
+  throw new Error('ASDF-resolved async-process has no supported native build entry');
 }

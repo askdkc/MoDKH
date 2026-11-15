@@ -20,7 +20,7 @@ npmの直接依存はAI SDK（`ai`、`@ai-sdk/anthropic`、`deepseek`、`google`
 ```sh
 # 未導入の場合のみ
 xcode-select --install
-brew install node git sbcl curl openssl ca-certificates
+brew install node git sbcl curl openssl ca-certificates autoconf automake libtool
 
 # Roswell/Qlotを手動で使う場合のみ
 brew install roswell
@@ -64,6 +64,8 @@ ros --version
 qlot --version
 sbcl --version
 ```
+
+`qlot --version` は表示後に終了コード255を返す実装があります。これだけで導入失敗とは判断できません。MoDKHはCLIのロード・関数の存在・専用の完了出力を確認します。
 
 `export` は現在のシェルだけに適用します。RoswellはQuicklispを準備し、Qlotはプロジェクトの `qlfile` に記載された依存を解決します。SBCLを直接使う既存環境では、Quicklispは[公式導入手順](https://www.quicklisp.org/beta/#installation)に従います。通常の `~/.quicklisp` とRoswellのQuicklispは別環境です。
 
