@@ -31,6 +31,51 @@ function delta(t: string): FixedStep {
   return [{ type: 'text-delta', text: t }];
 }
 
+test('pinned skill context keeps the system prompt byte-identical across tool steps', async () => {
+  const root = tmpRoot();
+  try {
+    fs.writeFileSync(path.join(root, 'a.txt'), 'hello\n');
+    const model = new FixedModel([
+      [
+        { type: 'tool-call', call: { id: 't1', name: 'read_file', args: { path: 'a.txt' } } },
+        { type: 'finish', stopReason: 'tool-calls' },
+      ],
+      [...delta('done'), { type: 'finish', stopReason: 'stop' }],
+    ]);
+    const pinned = { text: '\n[skill]\n固定本文\n', selected: ['skill'], warnings: [], bytes: 20 };
+    await runAgentLoop([{ role: 'user', content: '何か' }], {
+      model, registry: new ToolRegistry(defaultTools()), root,
+      system: 'STABLE', skillContext: pinned,
+      signal: new AbortController().signal, approval: new RecordingGate([true]),
+    });
+    assert.ok(model.requests.length >= 2, 'the loop issued more than one request');
+    for (const request of model.requests) {
+      assert.equal(request.system, `STABLE${pinned.text}`, 'the provider sees the same prefix every step');
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('without a pinned context the loop derives guidance once for the whole loop', async () => {
+  const root = tmpRoot();
+  try {
+    fs.writeFileSync(path.join(root, 'a.txt'), 'hello\n');
+    const model = new FixedModel([
+      [
+        { type: 'tool-call', call: { id: 't1', name: 'read_file', args: { path: 'a.txt' } } },
+        { type: 'finish', stopReason: 'tool-calls' },
+      ],
+      [...delta('done'), { type: 'finish', stopReason: 'stop' }],
+    ]);
+    await runAgentLoop([{ role: 'user', content: '調査して' }], {
+      model, registry: new ToolRegistry(defaultTools()), root,
+      system: 'STABLE',
+      signal: new AbortController().signal, approval: new RecordingGate([true]),
+    });
+    const systems = new Set(model.requests.map(request => request.system));
+    assert.equal(systems.size, 1, 'one system string for every step of the loop');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('固定応答モデルでストリーミング+ツール往復が完走する', async () => {
   const root = tmpRoot();
   try {

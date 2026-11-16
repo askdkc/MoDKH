@@ -43,6 +43,26 @@ test('oversized nonrepeating output retains header and tail, never partial encod
   assert.equal(messages[0].role === 'tool' && messages[0].results[0].output, output);
 });
 
+test('earlier tool projections are never rewritten when later results arrive', () => {
+  // A rewritten body changes already-sent messages, which invalidates the provider's cache.
+  const big = (n: number) => `HEADER${n}\n` + Array.from({ length: 4000 }, (_, i) => `line ${n}-${i} ${'x'.repeat(40)}\n`).join('') + 'TAIL';
+  const messages: AgentMessage[] = [{ role: 'user', content: 'go' }, { role: 'assistant', content: '' }];
+  const snapshots: Map<string, string>[] = [];
+  for (let step = 0; step < 6; step++) {
+    messages.push({ role: 'tool', results: [{ callId: `c${step}`, name: 'run_command', status: 'ok', output: big(step) }] });
+    snapshots.push(toolContext(messages));
+  }
+  for (let i = 1; i < snapshots.length; i++) {
+    for (const [key, value] of snapshots[i - 1]) {
+      assert.equal(snapshots[i].get(key), value, `${key} must keep the bytes it was first sent with`);
+    }
+  }
+  // The newest step still gets its own full allowance rather than what earlier steps left over.
+  const newest = snapshots.at(-1)!.get(`${messages.length - 1}:0`)!;
+  assert.ok(Buffer.byteLength(snapshots[0].get('2:0')!) <= TOOL_OUTPUT_BYTES, 'each body stays within its own allowance');
+  assert.ok(Buffer.byteLength(newest) <= TOOL_OUTPUT_BYTES);
+});
+
 test('installed AI SDK serializes the compact body and status without opening a network listener', async t => {
   const { resolveModel } = await import('../src/model/factory.ts');
   let sent: { messages: { role: string; content: string }[] } | undefined;

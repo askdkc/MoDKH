@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { prepareSkillContext, selectTaskSkills, SKILL_CONTEXT_BYTES } from '../src/agent/skills.ts';
+import { prepareSkillContext, mergeSkillContext, selectTaskSkills, SKILL_CONTEXT_BYTES } from '../src/agent/skills.ts';
 import { runAgentLoop } from '../src/agent/loop.ts';
 import { FixedModel } from '../src/model/fixed.ts';
 import { ToolRegistry } from '../src/tools/registry.ts';
@@ -68,6 +68,22 @@ test('budget never truncates skill instructions and changed files are refreshed 
   assert.match(prepareSkillContext('$custom', root).text, /FIRST/);
   fs.writeFileSync(path.join(root, 'custom.md'), 'SECOND');
   assert.match(prepareSkillContext('$custom', root).text, /SECOND/);
+});
+
+test('mergeSkillContext appends new guidance and never rewrites the earlier prefix', t => {
+  const root = fixture(t);
+  const first = prepareSkillContext('fix the cache hit rate', root);
+  const second = prepareSkillContext('コミットメッセージを書いて', root);
+  assert.ok(first.text.length > 0 && second.text.length > 0, 'both turns select guidance');
+  const merged = mergeSkillContext(first, second);
+  assert.ok(merged.text.startsWith(first.text), 'previously sent bytes stay verbatim');
+  // Re-merging already delivered guidance is a no-op, so a repeated topic cannot grow the prompt.
+  assert.equal(mergeSkillContext(merged, second).text, merged.text);
+  // An unrelated message must not shrink guidance the session already paid for.
+  const unrelated = prepareSkillContext('what is this repo?', root);
+  assert.equal(mergeSkillContext(merged, unrelated).text, merged.text);
+  assert.equal(mergeSkillContext(undefined, second).text, second.text);
+  t.diagnostic(`first=${first.bytes}B merged=${merged.bytes}B`);
 });
 
 test('real loop injects once per request, keeps stable tool-step prefix and never persists guidance', async t => {

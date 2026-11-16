@@ -26,6 +26,12 @@ export interface AgentLoopOptions {
   system?: string;
   /** Embedders can disable automatic purpose-specific guidance. */
   skills?: boolean;
+  /**
+   * Prepared guidance for this turn. Supplying it pins the text for the whole loop instead of
+   * re-deriving it from the first user message; the CLI renders it once per session turn so the
+   * provider sees a byte-identical prefix on every request and can serve cached input.
+   */
+  skillContext?: SkillContext | null;
   /** このターンでの推論レベル(/reasoning で指定)。省略はプロバイダーの初期値。 */
   reasoning?: import('./types.ts').ReasoningLevel;
   signal: AbortSignal;
@@ -78,7 +84,7 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
   const ledger = previousCalls(messages);
   if (opts.signal.aborted) return { outcome: 'interrupted' };
   const task = messages.findLast(message => message.role === 'user');
-  const skills = opts.skills === false ? undefined : prepareSkillContext(task?.content ?? '', opts.root);
+  const skills = opts.skills === false ? undefined : (opts.skillContext ?? prepareSkillContext(task?.content ?? '', opts.root));
   if (skills) opts.hooks?.onSkillContext?.(skills);
   const system = skills?.text ? (opts.system ?? '') + skills.text : opts.system;
   const append = (message: AgentMessage) => {

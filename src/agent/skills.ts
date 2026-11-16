@@ -112,6 +112,41 @@ function localCatalog(root: string, warnings: string[], builtin: readonly TaskSk
 }
 
 /** Per user turn, not per tool step. Never append instructions to persistent conversation history. */
+/**
+ * Merge freshly selected guidance into the text already sent to the provider.
+ *
+ * The provider caches a byte-identical prefix, so re-deriving the whole block per message
+ * threw away every cached token after the system prompt when the topic changed. Sections are
+ * only ever appended here, keeping the earlier prefix untouched within one session.
+ */
+export function mergeSkillContext(previous: SkillContext | undefined, next: SkillContext): SkillContext {
+  if (previous === undefined || previous.text.length === 0) return next;
+  if (next.text.length === 0) return previous;
+  // A new section starts at the binding header; the body of `next` follows it.
+  const header = '\n\n' + MODKH_SKILL_BINDING;
+  const body = next.text.startsWith(header) ? next.text.slice(header.length) : next.text;
+  const absent = next.selected.filter(name => !previous.selected.includes(name));
+  if (absent.length === 0) return previous;
+  // Keep only the sections for skills that were not already delivered.
+  const kept: string[] = [];
+  const seen = new Set<string>();
+  for (const name of absent) {
+    const marker = `\n[${name}]\n`;
+    const start = body.indexOf(marker);
+    if (start < 0) continue;
+    const end = body.indexOf('\n[', start + marker.length);
+    const section = body.slice(start, end < 0 ? undefined : end);
+    if (seen.has(section)) continue;
+    seen.add(section);
+    kept.push(section);
+  }
+  if (kept.length === 0) return previous;
+  const text = previous.text + kept.join('');
+  if (Buffer.byteLength(text) > SKILL_CONTEXT_BYTES) return previous;
+  const warnings = [...previous.warnings, ...next.warnings];
+  return { text, selected: [...previous.selected, ...absent], warnings, bytes: Buffer.byteLength(text) };
+}
+
 export function prepareSkillContext(task: string, root: string): SkillContext {
   const warnings: string[] = [];
   let canonical: string;
