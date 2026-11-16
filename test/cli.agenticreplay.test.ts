@@ -32,14 +32,14 @@ AGENTICREPLAY_TLS_CA=active exec "$@"
     MODKH_HOME: root, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '1', REPLAY_TEST_CALLS: calls };
   delete env.AGENTICREPLAY_TLS_CA;
   delete env.AGENTICREPLAY_PROXY_URL;
-  const run = (status: string, args: string[], recording = '1') => {
+  const run = (status: string, args: string[], recording = '1', expectedStatus = 0) => {
     fs.rmSync(calls, { force: true });
     const result = spawnSync(process.execPath, [entry, ...args], {
       cwd: root, env: { ...env, MODKH_AGENTICREPLAY: recording, REPLAY_TEST_STATUS: status },
       input: '/exit\n', encoding: 'utf8', timeout: 15_000,
     });
     assert.ifError(result.error);
-    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.status, expectedStatus, result.stdout + result.stderr);
     return fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n') : [];
   };
 
@@ -52,6 +52,36 @@ AGENTICREPLAY_TLS_CA=active exec "$@"
   const sessions = new SessionStore(path.join(root, 'sessions')).list();
   assert.deepEqual(sessions.map(session => session.cwd), [fs.realpathSync(project), fs.realpathSync(project)]);
   assert.deepEqual(run('0', args, '0'), []);
+
+  const profile = path.join(root, 'config.json');
+  env.OLLAMA_API_KEY = 'fixture';
+  delete env.OLLAMA_CLOUD_BASE_URL;
+  const saved = { model: 'ollama/fixture', modelBaseUrl: 'https://saved.example:8443/v1' };
+  const resume = new SessionStore(path.join(root, 'sessions')).create(project, 'compatible/resumed');
+  resume.setConnection('compatible/resumed', 'https://resume.example/v1');
+  const tlsArgs = (chatArgs: string[], modelBaseUrl = saved.modelBaseUrl) => {
+    fs.writeFileSync(profile, JSON.stringify({ ...saved, modelBaseUrl }));
+    const flags = run('0', ['--cwd', path.basename(project), ...chatArgs]);
+    const index = flags.indexOf('--tls-hosts');
+    return index === -1 ? [] : flags.slice(index, index + 2);
+  };
+  assert.deepEqual(tlsArgs([]), ['--tls-hosts', '+saved.example']);
+  assert.deepEqual(tlsArgs(['--model', saved.model]), ['--tls-hosts', '+saved.example']);
+  assert.deepEqual(tlsArgs(['--resume', resume.id]), ['--tls-hosts', '+resume.example']);
+  assert.deepEqual(tlsArgs(['--resume', resume.id, '--base-url', 'https://explicit.example/v1']),
+    ['--tls-hosts', '+explicit.example']);
+  resume.setConnection(saved.model);
+  assert.deepEqual(tlsArgs(['--resume', resume.id]), ['--tls-hosts', '+saved.example']);
+  resume.setConnection('ollama/other');
+  assert.deepEqual(tlsArgs(['--resume', resume.id]), []);
+  assert.deepEqual(tlsArgs([], 'http://saved.example/v1'), []);
+  assert.deepEqual(tlsArgs([], 'https://saved.example,+other.example/v1'), []);
+  assert.deepEqual(tlsArgs([], 'https://*.saved.example/v1'), []);
+  assert.deepEqual(tlsArgs(['--resume', resume.id, '--model', 'ollama-cloud/fixture']),
+    ['--tls-hosts', '+ollama.com']);
+  env.OLLAMA_CLOUD_BASE_URL = 'https://env.example/v1';
+  assert.deepEqual(tlsArgs(['--model', 'ollama-cloud/fixture']), ['--tls-hosts', '+env.example']);
+  assert.deepEqual(run('0', ['--resume', resume.id], '1', 1), ['version']);
 });
 
 test('AgenticReplay records local HTTP model calls after switching providers', {

@@ -1,6 +1,6 @@
 import { emitKeypressEvents, type Key } from 'node:readline';
 import { usageFooter, usageBadgeLine, type UsageTotals } from './usage.ts';
-import { chars, clean, fitText, textWidth, wrap, editorLayout, verticalCursor, lineEdge } from './editor.ts';
+import { chars, clean, fitText, textWidth, wrap, wrapText, editorLayout, verticalCursor, lineEdge } from './editor.ts';
 export { textWidth, fitText } from './editor.ts';
 import { readClipboardImage, type ClipboardReader } from './clipboard.ts';
 import { MAX_IMAGES, parseImage, type ImageAttachment } from '../agent/images.ts';
@@ -44,6 +44,7 @@ export const COMMANDS: readonly Choice[] = [
   { value: '/models', label: '/models', detail: 'モデルを選択' },
   { value: '/reasoning', label: '/reasoning', detail: '推論レベル (off/minimal/low/medium/high)' },
   { value: '/agents', label: '/agents', detail: '子エージェントの一覧・委譲' },
+  { value: '/usage', label: '/usage', detail: 'トークン使用量の内訳' },
   { value: '/allow', label: '/allow', detail: '承認ポリシー (all / workspace / none)' },
   { value: '/keys', label: '/keys', detail: '保存済みAPIキー' },
   { value: '/help', label: '/help', detail: '操作ガイド' },
@@ -259,11 +260,10 @@ export class TerminalUI implements ChatTerminal {
   private columns(): number { return Math.max(12, this.output.columns || 80); }
   private rows(): number { return Math.max(6, this.output.rows || 24); }
 
-  /** 起動直後は80、会話が始まると端末幅に応じて広げる(旧設計と同じ判断)。 */
+  /** 本文の幅。会話中は端末幅いっぱい、起動時は中央寄せ用に80列まで。 */
   private width(): number {
     const columns = this.columns();
-    return this.started ? Math.max(8, Math.min(columns - 2, Math.max(80, Math.floor(columns * 0.85))))
-      : Math.max(8, Math.min(columns - 2, 80));
+    return this.started ? columns : Math.max(8, Math.min(columns - 2, 80));
   }
 
   write(text: string, kind: TranscriptKind = 'system'): void { this.appendTranscript(text, kind); this.render(); }
@@ -294,11 +294,11 @@ export class TerminalUI implements ChatTerminal {
   }
 
   private hasSidePane(): boolean {
-    return !!this.subagent && !this.pending && this.width() >= 80 && this.rows() >= 11;
+    return !!this.subagent && !this.pending && this.columns() >= 80 && this.rows() >= 11;
   }
 
   private editorWidth(): number {
-    return Math.max(5, this.width() - (this.hasSidePane() ? SUBAGENT_PANE_WIDTH + 5 : 3));
+    return Math.max(5, this.columns() - (this.hasSidePane() ? SUBAGENT_PANE_WIDTH + 5 : 3));
   }
 
   setSubagent(activity: SubagentActivity | null): void {
@@ -481,7 +481,7 @@ export class TerminalUI implements ChatTerminal {
       source = source.slice(at + 1);
       // 会話が始まる前の案内行はウェルカムブロックへ(会話開始時に一括で出力する)。
       if (!this.started) this.bootLines.push(logicalLine);
-      else for (const wrapped of wrap(logicalLine, width)) this.queue.push({ text: wrapped, kind: lineKind });
+      else for (const wrapped of wrapText(logicalLine, width)) this.queue.push({ text: wrapped, kind: lineKind });
       lineKind = kind;
     }
   }
@@ -498,10 +498,12 @@ export class TerminalUI implements ChatTerminal {
   private render = (): void => {
     if (this.closed) return;
     const rows = this.rows();
-    const width = this.width();
-    // 画面全体に対してコンテンツを中央に寄せる(ウェルカムも会話中も同じ中央寄せ)。
-    const paintMargin = Math.max(0, Math.floor((this.columns() - width) / 2));
-    const marginPrefix = ' '.repeat(Math.min(paintMargin, Math.max(0, this.columns() - 6)));
+    const columns = this.columns();
+    // 本文・入力欄・ライブブロックは端末の全幅を使う。狭い幅へ折り返して中央寄せすると、
+    // コピーした本文に余白が付き、語の途中で改行される(コピペが壊れる)。
+    const width = this.started ? columns : Math.max(8, Math.min(columns - 4, 80));
+    // 会話開始前だけ中央寄せを残す。会話中は余白を付けず、画面上の位置とコピー結果を一致させる。
+    const marginPrefix = this.started ? '' : ' '.repeat(Math.max(0, Math.floor((columns - width) / 2)));
     const stream = this.queue.splice(0, this.queue.length)
       .map(({ text, kind }) => this.color ? this.colorizer.line(text, this.palette, kind) : text);
     this.colorizerState = this.colorizer.state();
@@ -509,8 +511,10 @@ export class TerminalUI implements ChatTerminal {
     if (this.started && !this.bootFlushed) {
       this.bootFlushed = true;
       const banner = ['MoDKH  ·  Coding Harness', ...logoForWidth(width)];
-      stream.unshift(...banner.map(l => this.paint(l, l.startsWith('MoDKH') ? '1' : ACCENT)),
-        ...this.bootLines.flatMap(l => wrap(l, width)));
+      // 余白を焼き込むと会話開始前の本文にもコピー余白が残る。起動時のみ中央寄せを保つ。
+      const bannerPad = marginPrefix;
+      stream.unshift(...banner.map(l => bannerPad + this.paint(l, l.startsWith('MoDKH') ? '1' : ACCENT)),
+        ...this.bootLines.flatMap(l => wrap(l, width).map(line => bannerPad + line)));
       this.bootLines = [];
     }
 
@@ -536,12 +540,12 @@ export class TerminalUI implements ChatTerminal {
         + `│ ${right}` + ' '.repeat(paneWidth - 3 - textWidth(right)) + '│';
     };
 
-    const partialLines = this.partial ? wrap(this.partial, width)
-      .map(line => marginPrefix + (this.color ? this.fork().line(line, this.palette, this.partialKind) : line)) : [];
+    const partialLines = this.partial ? wrapText(this.partial, width)
+      .map(line => (this.color ? this.fork().line(line, this.palette, this.partialKind) : line)) : [];
     const partialCount = partialLines.length;
     // ライブの推論は見出し含めて表示。はみ出すときは古い行(先頭)から落とす。
     const reasoningText = this.reasoning.trimEnd() === '' ? [] :
-      wrap(`(推論)\n${this.reasoning.trimEnd()}`, width);
+      wrapText(`(推論)\n${this.reasoning.trimEnd()}`, width);
     const reservedForBody = 1 /* divider */ + inputRows + 4 /* status/hints/cwd+footer */ + (options ? 2 : 0) + partialCount;
     const maxReasoning = Math.max(0, Math.min(rows - reservedForBody - 1, 24));
     const liveReasoning = reasoningText.length === 0 ? [] :
@@ -550,7 +554,8 @@ export class TerminalUI implements ChatTerminal {
 
     const optionsLines: { text: string; style: string }[] = [];
     if (options) {
-      const height = Math.max(1, Math.min(options.length || 1, Math.max(2, rows - (partialCount + liveReasoning.length) - 6), 8));
+      const maxOptions = this.pending?.choices ? 8 : COMMANDS.length;
+      const height = Math.max(1, Math.min(options.length || 1, Math.max(2, rows - (partialCount + liveReasoning.length) - 6), maxOptions));
       const start = Math.max(0, Math.min(this.selection - height + 1, options.length - height));
       optionsLines.push({ text: this.pending?.choices ? this.pending.title : 'Commands', style: READABLE_TEXT_STYLE });
       if (!options.length) optionsLines.push({ text: '該当なし — 検索語を変える / Esc で戻る', style: '2' });
@@ -605,8 +610,7 @@ export class TerminalUI implements ChatTerminal {
       }
       return this.paint(fitted, row.style);
     };
-    // 会話が始まる前のウェルカム: ロゴ+案内を縦中央に整える。
-    // paintMargin は両フェーズ共通(画面全体に対する中央寄せ)。
+    // 会話が始まる前のウェルカム: ロゴ+案内を中央に整える。
     const marginStyled = (row: { text: string; style: string }): string => marginPrefix + styled(row);
     let body: string[] = [];
     let editorStartIdx = editorStart;
@@ -633,11 +637,12 @@ export class TerminalUI implements ChatTerminal {
       ];
       editorStartIdx = welcome.length + midPad + partialCount + liveReasoning.length + optionsLines.length + 1;
     } else {
+      // 会話中は余白を付けない: 画面上の位置とコピーした文字列を一致させる。
       body = [
         ...partialLines,
-        ...liveReasoning.map(row => marginPrefix + this.paint(fitText(row.text, width), row.style)),
+        ...liveReasoning.map(row => this.paint(fitText(row.text, width), row.style)),
         // lines にはコマンドメニュー(optionsLines)が含まれる。二重に展開しない。
-        ...lines.map(marginStyled),
+        ...lines.map(styled),
       ];
     }
     // 最下部ブロックは1行以上の余白を残して画面に収める。はみ出すときは上侧から落とす。
@@ -673,7 +678,7 @@ export class TerminalUI implements ChatTerminal {
         out += `\x1b[${rows};1H` + '\n'.repeat(scrolls);
         r -= scrolls;
       }
-      out += `\x1b[${r};1H\x1b[K${marginPrefix}${line}\r\n`;
+      out += `\x1b[${r};1H\x1b[K${line}\r\n`;
       r++;
     }
     this.streamRow = Math.max(1, Math.min(rows, r));
@@ -689,7 +694,7 @@ export class TerminalUI implements ChatTerminal {
       out += `\x1b[${liveStart + i};1H\x1b[K${body[i]}` + (i === liveCount - 1 ? '' : '\r\n');
     }
     const cursorLiveRow = Math.min(rows, liveStart + editorStartIdx + (cursor.row - this.editorScroll));
-    const cursorCol = Math.min(this.columns(), paintMargin + 3 + cursor.column);
+    const cursorCol = Math.min(this.columns(), 3 + cursor.column);
     out += `\x1b[${cursorLiveRow};${cursorCol}H` + (this.pending || editingFollowup ? '\x1b[?25h' : '\x1b[?25l');
     this.cursorRow = cursorLiveRow;
     this.output.write(out);

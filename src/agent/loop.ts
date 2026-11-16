@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import type { AgentMessage, Model, ToolCall, ToolResult, ToolSpec } from './types.ts';
+import type { AgentMessage, Model, TokenUsage, ToolCall, ToolResult, ToolSpec } from './types.ts';
 import { ToolRegistry } from '../tools/registry.ts';
 import { prepareSkillContext, type SkillContext } from './skills.ts';
 
@@ -12,7 +12,7 @@ export interface LoopHooks {
   /** Provider-reported reasoning text, for display only; it never enters the transcript messages. */
   onReasoning?(delta: string): void;
   /** Provider-reported token usage for one completed step; never an estimate. */
-  onUsage?(usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }): void;
+  onUsage?(usage: TokenUsage): void;
   onText?(delta: string): void;
   onToolCall?(call: ToolCall): void;
   onToolStart?(call: ToolCall): void;

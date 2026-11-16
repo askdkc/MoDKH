@@ -5,7 +5,7 @@ import { formalTools } from '../tools/formal.ts';
 import path from 'node:path';
 
 import type { ImageAttachment } from '../agent/images.ts';
-import type { Model } from '../agent/types.ts';
+import type { Model, TokenUsage } from '../agent/types.ts';
 import { buildModelFromRef } from '../model/connection.ts';
 export { buildModelFromRef } from '../model/connection.ts';
 import { PluginManager } from '../plugins/manager.ts';
@@ -24,7 +24,7 @@ import { SessionStore, type Session, type MemoryObservation } from '../session/s
 import { openKiokukoMemory } from '../memory/kiokuko.ts';
 import { createTerminal, type ChatTerminal } from './terminal.ts';
 import { LanguageService, formatDiagnostics } from '../language/lsp/service.ts';
-import { addUsage, EMPTY_USAGE, type UsageTotals } from './usage.ts';
+import { addUsage, EMPTY_USAGE, usageBreakdown } from './usage.ts';
 import { languageTools } from '../tools/language.ts';
 import { parseLanguageSettings, DEFAULT_LANGUAGE_SETTINGS } from '../language/detect.ts';
 import { chooseProvider, chooseProviderModel, confirmRemoteAgent, CONNECT_PROVIDERS } from './providers.ts';
@@ -32,6 +32,7 @@ import { TerminalApprovalGate } from './approval.ts';
 import { DEFAULT_POLICY, describePolicy, parsePermissionPolicy, POLICY_LEVELS } from './permissions.ts';
 import { DEFAULT_MAX_TURNS, MAX_TURNS_CEILING, parseMaxTurns } from './limits.ts';
 import { loadConfig, updateConfig, parseTimeoutMs, type LiteConfig } from './config.ts';
+import { loadResumedSession, selectInitialConnection } from './initial-connection.ts';
 import { keysPath, loadSavedKeys, saveKey, removeKey, savedKeyProviders, resolveApiKey } from './keys.ts';
 import { parseReasoningLevel, REASONING_LEVELS, type ReasoningLevel } from '../model/reasoning.ts';
 import { recordSessionRecord } from '../session/workspace.ts';
@@ -125,15 +126,9 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   const sessionKeys = new Map<string, string>(Object.entries(loadSavedKeys()));
 
   const store = new SessionStore();
-  // 前回使ったモデルを --model 未指定のとき復元する(config は /connect で更新済み)。
-  const savedModelRef = typeof config.model === 'string' ? config.model : undefined;
-  const savedModelBaseUrl = typeof config.modelBaseUrl === 'string' && config.modelBaseUrl.length > 0 ? config.modelBaseUrl : undefined;
   let session: Session;
   if (args['resume']) {
-    session = store.load(args['resume']);
-    if (fs.realpathSync(session.cwd) !== fs.realpathSync(cwd)) {
-      throw new Error(`セッションの作業ルートが異なる: ${session.cwd} → ${cwd}。元のルートで再開するか新規セッションを使う`);
-    }
+    session = loadResumedSession(store, args['resume'], cwd);
     ui.write(`セッション ${session.id} を再開します(${session.messages.length}メッセージ)\n`);
     if (session.lastError) ui.write(`前回のエラー: ${session.lastError}\n`);
     const unknown = session.unknownToolResults();
@@ -146,15 +141,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     session = store.create(cwd, 'unconnected');
   }
 
-  // Explicit selection wins; resume uses the session's own connection before global defaults.
-  // A persisted offline fixture must never become an implicit coding model.
-  const sessionRef = args['resume'] && session.model !== 'unconnected' ? session.model : undefined;
-  const candidate = args['model'] ?? sessionRef ?? savedModelRef;
-  let connectionBaseUrl = args['base-url'] ?? (sessionRef && !args['model']
-    ? session.modelBaseUrl ?? (sessionRef === savedModelRef ? savedModelBaseUrl : undefined)
-    : !args['model'] || args['model'] === savedModelRef ? savedModelBaseUrl : undefined);
+  const { model: candidate, baseUrl } = selectInitialConnection(args, config, args['resume'] ? session : undefined);
+  let connectionBaseUrl = baseUrl;
   let modelId: string | null = null;
   let model: Model | null = null;
+  // A persisted offline fixture must never become an implicit coding model.
   if (candidate && (!candidate.startsWith('fixed/') || args['model'])) {
     try {
       model = makeModel(candidate, connectionBaseUrl,
@@ -217,6 +208,13 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     settings: languageSettings,
     progress: message => ui.write(`${message}\n`),
   });
+  let usageTotals = EMPTY_USAGE;
+  const onUsage = (reported: TokenUsage) => {
+    const next = addUsage(usageTotals, reported);
+    if (next === usageTotals) return;
+    usageTotals = next;
+    ui.setUsage?.(usageTotals);
+  };
   const subagents = new SubagentService({
     manager, store, parent: session, root: cwd, tools: [...tools, ...languageTools(language), ...formalTools({ lean: args.lean, java: args.java, tlaJar: args['tla-jar'] })], approval,
     settings: agentSettings.settings, unavailable: agentSettings.unavailable, verificationIsolation,
@@ -230,6 +228,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     },
     progress: message => ui.write(`${message}\n`),
     activity: status => ui.setSubagent?.(status),
+    onUsage,
   });
   // Analysis must never delay an edit. After a write the tool already reports success, so this
   // runs in the background and its result is attached to the next read of the same file.
@@ -269,8 +268,6 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     catch (e) { process.stderr.write(`メモリ監査の保存失敗(本作業は継続): ${String(e)}\n`); }
   };
 
-  // Session-wide totals: only provider-reported numbers are added, never estimates.
-  let usageTotals: UsageTotals = EMPTY_USAGE;
   let aborted = false;
   // ワークスペースの .modkh/sessions/<id>.md に人間が読める実行記録を残す。
   // 失敗(書き込み不可など)は一度だけ報告し、会話とセッション保存は止めない。
@@ -331,10 +328,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
             supplied = true;
           }
         },
-        onUsage: (reported: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }) => {
-          usageTotals = addUsage(usageTotals, reported);
-          ui.setUsage?.(usageTotals);
-        },
+        onUsage,
         onModelActivity: (stage: 'reasoning' | 'tool-input') => ui.setActivity?.(stage === 'reasoning' ? 'モデルが推論中… Ctrl+Cで中止' : 'ツール要求を受信中… Ctrl+Cで中止'),
         // Reasoning is display-only: it never joins assistant content or the persisted messages.
         onReasoning: (delta: string) => ui.setReasoning?.(delta),
@@ -555,8 +549,12 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         } catch (e) { ui.write(`(キー操作に失敗: ${(e as Error).message})\n`); }
         continue;
       }
+      if (line === '/usage') {
+        ui.write(`\n${usageBreakdown(usageTotals)}\n\n`);
+        continue;
+      }
       if (line === '/help') {
-        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /allow: 承認ポリシー  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n'
+        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /usage: トークン使用量  /allow: 承認ポリシー  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n'
           + '/reasoning off|minimal|low|medium|high [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信（実行中の追加依頼はテキストのみ） / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');
         continue;
       }

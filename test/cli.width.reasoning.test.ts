@@ -25,7 +25,7 @@ function fixture(columns: number, rows: number) {
   return preload;
 }
 
-test('a real TUI conversation uses 85% of the width and shows provider reasoning', async () => {
+test('a real TUI conversation uses the full terminal width and shows provider reasoning', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-width-'));
   const server = http.createServer((req, res) => {
     let body = '';
@@ -76,8 +76,10 @@ test('a real TUI conversation uses 85% of the width and shows provider reasoning
     await wait('ANSWER_MARKER');
     await wait('応答終了');
     const conversationWidth = widest();
-    assert.ok(conversationWidth >= 160 && conversationWidth <= 200,
-      `conversation should use ~85% of 200 columns, got ${conversationWidth}`);
+    // 会話中の本文は端末幅をそのまま使う。中央寄せの余白や85%への縮小はしない
+    // (縮小すると本文が狭い幅で折り返され、コピーした文字列に余計な改行が入る)。
+    assert.ok(conversationWidth >= 190 && conversationWidth <= 200,
+      `conversation should use the terminal width, got ${conversationWidth}`);
     assert.match(stripVTControlCharacters(output), /REASONING_VISIBLE_MARKER/, 'reasoning is displayed');
     assert.match(stripVTControlCharacters(output), /\(推論\)/, 'reasoning is labelled');
     assert.match(output, /\x1b\[90mREASONING_VISIBLE_MARKER/);

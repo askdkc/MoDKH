@@ -48,7 +48,7 @@ test('welcome groups logo and composer in the middle like the reference, includi
   } finally { t.ui.close(); }
 });
 
-test('the welcome block stays compact, and a conversation widens to ~85% of the screen', async () => {
+test('the welcome block stays compact, and a conversation uses the full width without stray indentation', async () => {
   const t = terminal(200, 40);
   try {
     const input = t.ui.next();
@@ -68,13 +68,33 @@ test('the welcome block stays compact, and a conversation widens to ~85% of the 
     t.ui.write('▶ You: 作業を始めます\n');
     const conversation = screenFrom(t.raw(), 40);
     const used2 = Math.max(...conversation.map(line => textWidth(line)));
-    // 85% of 200 columns is 170; streamed conversation lines must actually use it.
-    assert.ok(used2 >= 160, `conversation should use the width: ${used2}`);
+    // 会話中の本文は端末幅をそのまま使う。中央寄せの余白を焼き込むとコピーが壊れる。
+    assert.ok(used2 >= 190, `conversation should use the terminal width: ${used2}`);
     assert.ok(used2 <= 200, 'never exceeds the terminal');
 
     t.input.emit('keypress', 'x', {});
     t.key('return');
     assert.equal(await input, 'x');
+  } finally { t.ui.close(); }
+});
+
+test('transcript lines carry no leading margin and survive copying intact', () => {
+  const t = terminal(120, 30);
+  try {
+    void t.ui.next();
+    t.ui.write('▶ You: 依頼\n');
+    // 折り返し地点に長いトークンを置く: 文字数で切ると `headBudget+t` / `ailBudget` に割れる。
+    t.ui.write('1. `TextSink.text()` の重なり計算を修正し、`produced > budget` でない場合でも欠落が起きないようにする。境界（`produced == headBudget+tailBudget`、`produced == budget`）のテストを追加。\n');
+    const lines = stripVTControlCharacters(t.raw()).split(/\r?\n/);
+    const body = lines.filter(line => /TextSink|tailBudget|欠落/.test(line));
+    assert.ok(body.length >= 2, 'the long paragraph is wrapped');
+    for (const line of body) {
+      assert.ok(!/^\s+\S/.test(line), `no leading margin: ${JSON.stringify(line)}`);
+    }
+    // 折り返しても内容は失われず、トークンも割れない。
+    const joined = stripVTControlCharacters(t.raw());
+    assert.ok(joined.includes('headBudget+tailBudget`'), 'the long token stays in one piece');
+    assert.ok(joined.includes('produced == budget`'), 'the second boundary token stays intact');
   } finally { t.ui.close(); }
 });
 

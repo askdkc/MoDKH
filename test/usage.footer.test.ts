@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import type { ReadStream, WriteStream } from 'node:tty';
 import { TerminalUI, textWidth } from '../src/cli/terminal.ts';
+import { addUsage, EMPTY_USAGE, usageBreakdown } from '../src/cli/usage.ts';
 import { FixedModel } from '../src/model/fixed.ts';
 import { runAgentLoop } from '../src/agent/loop.ts';
 import { ToolRegistry } from '../src/tools/registry.ts';
@@ -45,10 +46,12 @@ test('usage appears on one line at the bottom and never displaces the composer',
     assert.match(bottom, /tok/, 'the usage is the bottom-right status');
     assert.match(bottom, /workspace|\/Users|パス|ルート/, 'the working directory shares the bottom row');
     assert.ok(bottom.indexOf('workspace') < bottom.indexOf('tok') - 0, 'the usage status is right of the cwd');
-    // 画面中央寄せ(margin=20)+本文80列=120。余白を除いた本文は80列以内。
+    // 最下段はステータス行で、端末幅いっぱいに cwd(左)と使用量(右)を並べる。
+    // 会話本文と違い中央寄せの余白は付かない(コピーする本文ではないが、余白の焼き込みを避ける)。
     const trimmed = bottom.trim();
     assert.ok(textWidth(bottom) <= 120, `the bottom status fits the terminal: ${textWidth(bottom)}`);
-    assert.ok(textWidth(trimmed) <= 102, `the status content stays within conversation width: ${textWidth(trimmed)}`);
+    assert.equal(textWidth(bottom), 120, 'the status row spans the terminal width');
+    assert.ok(bottom.endsWith(trimmed.slice(-4)) || textWidth(trimmed) <= 120, 'no content is clipped');
     // The composer still works with the footer present.
     t.input.emit('keypress', '/exit', {});
     t.input.emit('keypress', '', { name: 'return' });
@@ -101,4 +104,18 @@ test('the agent loop reports usage from the model stream to the caller', async (
   });
   assert.equal(result.outcome, 'complete');
   assert.deepEqual(seen, []);
+});
+
+
+test('the usage breakdown aligns values and partitions input without counting cache writes twice', () => {
+  const usage = addUsage(addUsage(EMPTY_USAGE, {
+    input: 277_000_000, cacheRead: 273_000_000, cacheWrite: 3_000_000, output: 370_000,
+  }), {
+    input: 1_100_000, uncachedInput: 1_100_000, cacheRead: 0, cacheWrite: 0, output: 4_000,
+  });
+  const lines = usageBreakdown(usage).split('\n');
+  assert.deepEqual(lines.map(line => line.split(/ +/).at(-1)), ['278.5M', '2.1M', '273M', '3M', '374K']);
+  assert.equal(new Set(lines.map(textWidth)).size, 1);
+  const zero = addUsage(EMPTY_USAGE, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  assert.match(usageBreakdown(zero), /キャッシュ書き込み +0/);
 });

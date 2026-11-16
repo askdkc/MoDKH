@@ -35,6 +35,36 @@ export function editorLayout(text: string, width: number): { lines: string[]; po
 
 export function wrap(text: string, width: number): string[] { return editorLayout(clean(text), width).lines; }
 
+/** Characters a line may break AFTER without splitting a word (CJK punctuation and spaces). */
+const BREAK_AFTER = /[ \t、。，．,.;:!?！？）)」』】〕》〉〉\]｝}ぁ-んァ-ヶ一-龠々ー…]/u;
+
+/**
+ * Transcript wrapping: same cell budget as `wrap`, but it prefers a break after a space or
+ * Japanese punctuation so a copied line does not split a token such as `headBudget+tailBudget`.
+ * A token wider than the line is still hard-split; nothing is dropped.
+ */
+export function wrapText(text: string, width: number): string[] {
+  const out: string[] = [];
+  for (const logical of clean(text).split('\n')) {
+    let line = '', used = 0;
+    let pending = ''; // the tail after the last break opportunity on this line
+    for (const c of chars(logical)) {
+      const n = cellWidth(c);
+      if (used + n > width) {
+        if (pending.length > 0 && pending.length < line.length) {
+          // Break at the last opportunity: the tail moves down, so no word is cut.
+          out.push(line.slice(0, line.length - pending.length));
+          line = pending; used = textWidth(pending); pending = '';
+        } else { out.push(line); line = ''; used = 0; pending = ''; }
+      }
+      line += c; used += n;
+      if (BREAK_AFTER.test(c)) pending = ''; else pending += c;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
 export function verticalCursor(text: string, cursor: number, width: number, delta: number): number {
   const layout = editorLayout(text, width), current = layout.positions[cursor];
   const row = Math.max(0, Math.min(layout.lines.length - 1, current.row + delta));

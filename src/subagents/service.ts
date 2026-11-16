@@ -3,7 +3,7 @@ import { EditVerification } from './verification.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { runAgentLoop } from '../agent/loop.ts';
 import { ToolError } from '../agent/types.ts';
-import type { ApprovalGate, Model, Tool } from '../agent/types.ts';
+import type { ApprovalGate, Model, TokenUsage, Tool } from '../agent/types.ts';
 import { ToolRegistry } from '../tools/registry.ts';
 import { SessionStore } from '../session/store.ts';
 import type { Session } from '../session/store.ts';
@@ -34,6 +34,7 @@ export interface SubagentOptions {
   verificationIsolation?: 'integrity-only' | 'required';
   progress?(message: string): void;
   activity?(status: SubagentActivity | null): void;
+  onUsage?(usage: TokenUsage): void;
 }
 const activeRoots = new Set<string>();
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -196,6 +197,7 @@ export class SubagentService {
           system: definition.system, signal, approval, checkpoint: () => child!.persistFrom(0),
           hooks: {
             onModelRequest: () => update('モデル応答を待機中'),
+            onUsage: this.opts.onUsage,
             onModelActivity: stage => update(stage === 'reasoning' ? '推論中' : 'ツール要求を受信中'),
             onText: () => update('応答を受信中'),
             onToolStart: () => update('ツールを実行中'),

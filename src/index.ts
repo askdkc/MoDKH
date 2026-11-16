@@ -105,7 +105,7 @@ async function dispatch(cmd: string, args: Record<string, string | undefined>, a
   try {
     if (cmd === 'chat') {
       const { recordChat } = await import('./cli/agenticreplay.ts');
-      const exitCode = await recordChat(fileURLToPath(import.meta.url), argv, args.cwd, args['base-url']);
+      const exitCode = await recordChat(fileURLToPath(import.meta.url), argv, args);
       if (exitCode !== undefined) {
         process.exitCode = exitCode;
         return;

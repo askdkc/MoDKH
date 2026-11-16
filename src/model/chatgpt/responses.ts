@@ -1,4 +1,4 @@
-import type { AgentMessage, Model, ModelEvent, ModelRequest } from '../../agent/types.ts';
+import type { AgentMessage, Model, ModelEvent, ModelRequest, TokenUsage } from '../../agent/types.ts';
 
 import { toolContext } from '../context.ts';
 import { responsesReasoningEffort } from '../reasoning.ts';
@@ -105,7 +105,7 @@ export class ResponsesApiModel implements Model {
     let aborted = false;
     let errorMessage: string | undefined;
     let sawFunctionCall = false;
-    let usage: { input?: number; output?: number; cacheRead?: number } | undefined;
+    let usage: TokenUsage | undefined;
     let completed = false;
     try {
       const credentials = this.credentials ? await this.credentials(signal) : { accessToken: this.accessToken, accountId: this.accountId };
@@ -165,10 +165,13 @@ export class ResponsesApiModel implements Model {
               const reported = ev['response'] as { usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } } } | undefined;
               const tokens = reported?.usage;
               if (tokens) {
+                const cached = tokens.input_tokens_details?.cached_tokens;
                 usage = {
                   input: tokens.input_tokens,
+                  uncachedInput: tokens.input_tokens !== undefined && cached !== undefined
+                    ? tokens.input_tokens - cached : undefined,
                   output: tokens.output_tokens,
-                  cacheRead: tokens.input_tokens_details?.cached_tokens,
+                  cacheRead: cached,
                 };
               }
             } else if (ev['type'] === 'response.failed' || ev['type'] === 'response.incomplete') {

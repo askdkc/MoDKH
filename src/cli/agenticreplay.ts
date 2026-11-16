@@ -3,9 +3,12 @@ import { statSync } from 'node:fs';
 import { constants } from 'node:os';
 import path from 'node:path';
 import { configureHttpModelRecording } from '../model/record-fetch.ts';
+import { SessionStore } from '../session/store.ts';
+import { loadConfig } from './config.ts';
+import { loadResumedSession, selectInitialConnection } from './initial-connection.ts';
 
 export async function recordChat(
-  entry: string, argv: readonly string[], workspace: string | undefined, baseUrl: string | undefined,
+  entry: string, argv: readonly string[], args: Readonly<Record<string, string | undefined>>,
 ): Promise<number | undefined> {
   const launchCwd = process.env.MODKH_AGENTICREPLAY_LAUNCH_CWD;
   if (launchCwd && process.env.AGENTICREPLAY_TLS_CA) {
@@ -21,15 +24,22 @@ export async function recordChat(
   if (process.env.MODKH_AGENTICREPLAY === '0' ||
       process.env.AGENTICREPLAY_TLS_CA || process.env.AGENTICREPLAY_PROXY_URL) return;
 
-  const cwd = path.resolve(workspace ?? process.cwd());
+  const cwd = path.resolve(args.cwd ?? process.cwd());
   if (!statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) return;
   const probe = spawnSync('agenticreplay', ['version'], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000, killSignal: 'SIGKILL', maxBuffer: 4096,
   });
   if (probe.status !== 0 || !probe.stdout?.trim()) return;
 
-  const target = URL.parse(baseUrl ?? '');
-  const tlsHosts = target?.protocol === 'https:' ? ['--tls-hosts', `+${target.hostname}`] : [];
+  const config = loadConfig();
+  const session = args.resume ? loadResumedSession(new SessionStore(), args.resume, cwd) : undefined;
+  const { model, baseUrl } = selectInitialConnection(args, config, session);
+  const provider = model?.match(/^([^/]+)\/.+/)?.[1];
+  const { modelBaseUrl } = await import('../model/factory.ts');
+  const target = provider ? URL.parse(modelBaseUrl(provider, baseUrl) ?? '') : null;
+  // AgenticReplay interprets commas and wildcards as policy syntax.
+  const tlsHosts = target?.protocol === 'https:' && !/[,\x2a]/.test(target.hostname)
+    ? ['--tls-hosts', `+${target.hostname}`] : [];
   const child = spawn('agenticreplay', [
     'record', 'exec', '--tls-intercept', ...tlsHosts, '--no-fs', '--no-shell', '--no-agent-spans', '--',
     process.execPath, ...process.execArgv, entry, ...argv,

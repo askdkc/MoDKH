@@ -217,6 +217,7 @@ test('the command menu renders once, never duplicated', async () => {
     await new Promise(resolve => setTimeout(resolve, 10));
     const view = t.text();
     assert.equal(view.split('Commands').length - 1, 1, `menu header appears once: ${view.split('\n').join(' | ')}`);
+    assert.equal(view.split('/usage').length - 1, 1, 'usage is discoverable in the menu');
     assert.equal(view.split('/exit').length - 1, 1, 'menu rows appear once');
     t.key('return'); // メニュー先頭候補(/connect)で決定する
     assert.equal(await line, '/connect');

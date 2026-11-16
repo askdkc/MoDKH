@@ -87,10 +87,19 @@ export interface Tool {
   execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string | Pick<ToolResult, 'status' | 'output'>>;
 }
 
+/** Input includes both cache reads and cache writes when the provider reports them. */
+export interface TokenUsage {
+  input?: number | undefined;
+  uncachedInput?: number | undefined;
+  output?: number | undefined;
+  cacheRead?: number | undefined;
+  cacheWrite?: number | undefined;
+}
+
 /** モデルストリームのイベント。 */
 export type ModelEvent =
   | { type: 'activity'; stage: 'reasoning' | 'tool-input' }
-  | { type: 'usage'; input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+  | ({ type: 'usage' } & TokenUsage)
   | { type: 'text-delta'; text: string }
   /** Provider-reported reasoning. Shown to the human, never merged into assistant content. */
   | { type: 'reasoning-delta'; text: string }

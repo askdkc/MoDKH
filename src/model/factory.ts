@@ -65,6 +65,21 @@ export function providerKeyEnv(provider: string): string | null | undefined {
   return preset === undefined ? undefined : preset.env;
 }
 
+export function modelBaseUrl(provider: string, override?: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  switch (provider) {
+    case 'chatgpt': return override;
+    case 'openai': return override ?? env.OPENAI_BASE_URL;
+    case 'anthropic': return env.ANTHROPIC_BASE_URL;
+    case 'google':
+    case 'deepseek': return undefined;
+    default: {
+      if (!Object.hasOwn(PRESETS, provider)) return undefined;
+      const preset = PRESETS[provider];
+      return override ?? (preset.baseURLVar ? env[preset.baseURLVar] ?? preset.baseURL : preset.baseURL);
+    }
+  }
+}
+
 /**
  * 接続先を組み立てる。キーが無ければ明示的に失敗する。
  * 認証失敗や通信エラーで別の接続先へ切り替えることはしない(PLAN.md の方針)。
@@ -76,8 +91,7 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
       `未知のプロバイダー: ${spec.provider}(対応: ${knownProviders().join(', ')})。別の接続先へは自動で切り替えない。`,
     );
   }
-  const presetBaseUrl = preset.baseURLVar ? (env[preset.baseURLVar] ?? preset.baseURL) : preset.baseURL;
-  const baseUrl = spec.baseUrl ?? presetBaseUrl;
+  const baseUrl = modelBaseUrl(spec.provider, spec.baseUrl, env);
   if (spec.provider === 'compatible' && !baseUrl) {
     throw new Error('compatible プロバイダーには --base-url で互換APIのURLが必要');
   }
@@ -95,7 +109,7 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
     case 'openai':
       return new AiSdkModel({ ...sdkOptions, languageModel: createOpenAI({ apiKey: key!, baseURL: baseUrl, fetch: fetchModel })(spec.model) });
     case 'anthropic':
-      return new AiSdkModel({ ...sdkOptions, languageModel: createAnthropic({ apiKey: key!, fetch: fetchModel })(spec.model) });
+      return new AiSdkModel({ ...sdkOptions, languageModel: createAnthropic({ apiKey: key!, baseURL: baseUrl, fetch: fetchModel })(spec.model) });
     case 'google':
       return new AiSdkModel({
         ...sdkOptions,

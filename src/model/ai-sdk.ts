@@ -12,7 +12,7 @@ import {
 import { toolContext } from './context.ts';
 import { reasoningProviderOptions } from './reasoning.ts';
 import { parseImages } from '../agent/images.ts';
-import type { Model, ModelEvent, ModelRequest, ToolSpec } from '../agent/types.ts';
+import type { Model, ModelEvent, ModelRequest, TokenUsage, ToolSpec } from '../agent/types.ts';
 
 export interface AiSdkModelOptions {
   id: string;
@@ -103,7 +103,7 @@ export class AiSdkModel implements Model {
     arm();
     const requestSignal = AbortSignal.any([signal, deadline.signal]);
     let activity: 'reasoning' | 'tool-input' | undefined;
-    let usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined;
+    let usage: TokenUsage | undefined;
     let errorMessage: string | undefined;
     let sawToolCall = false;
     let finishReason: 'stop' | 'tool-calls' | undefined;
@@ -150,6 +150,7 @@ export class AiSdkModel implements Model {
           if (part.totalUsage) {
             usage = {
               input: part.totalUsage.inputTokens,
+              uncachedInput: part.totalUsage.inputTokenDetails?.noCacheTokens,
               output: part.totalUsage.outputTokens,
               cacheRead: part.totalUsage.inputTokenDetails?.cacheReadTokens,
               cacheWrite: part.totalUsage.inputTokenDetails?.cacheWriteTokens,
