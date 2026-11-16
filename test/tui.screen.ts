@@ -1,4 +1,5 @@
 import { stripVTControlCharacters } from 'node:util';
+import { fitText, textWidth } from '../src/cli/editor.ts';
 
 /**
  * modkh の新しい描画契約(絶対行配置 + 行単位の消去)を再生し、現在の画面を再現する。
@@ -12,21 +13,23 @@ export function screenFrom(raw: string, rows = 40): string[] {
   let col = 1; // 次に書く列(1始まり)
   let clearPending = false; // クリア済み(次の書き込みで行全体を置き換える)
   let i = 0;
+  const leftOfCursor = (): string => {
+    const prefix = fitText(grid[crow - 1], col - 1);
+    return prefix + ' '.repeat(col - 1 - textWidth(prefix));
+  };
   const writeText = (text: string): void => {
     if (clearPending) { grid[crow - 1] = text; clearPending = false; }
     else {
-      const start = col - 1;
-      const row = grid[crow - 1];
-      grid[crow - 1] = row.slice(0, start) + text;
+      grid[crow - 1] = leftOfCursor() + text;
     }
-    col += text.length;
+    col += textWidth(text);
   };
   while (i < raw.length) {
     const c = raw[i];
     if (c === '\x1b') {
       const rest = raw.slice(i);
       let m: RegExpExecArray | null = null;
-      if ((m = /^\x1b\[([0-9]*)K/.exec(rest)) !== null) { grid[crow - 1] = ''; col = 1; clearPending = true; i += m[0].length; continue; }
+      if ((m = /^\x1b\[K/.exec(rest)) !== null) { grid[crow - 1] = fitText(grid[crow - 1], col - 1); clearPending = col === 1; i += m[0].length; continue; }
       if ((m = /^\x1b\[J/.exec(rest)) !== null) { for (let r = crow; r <= rows; r++) grid[r - 1] = ''; i += m[0].length; continue; }
       if ((m = /^\x1b\[2J/.exec(rest)) !== null) { for (let r = 1; r <= rows; r++) grid[r - 1] = ''; i += m[0].length; continue; }
       if ((m = /^\x1b\[(\d+)A/.exec(rest)) !== null) { crow = Math.max(1, crow - Number(m[1])); i += m[0].length; continue; }
@@ -59,6 +62,3 @@ export function screenFrom(raw: string, rows = 40): string[] {
 }
 
 export function screenText(rows: string[]): string { return rows.join('\n'); }
-export function withoutRightPane(line: string): string {
-  return line.endsWith('│') ? line.split('│').slice(0, -2).join('│') : line;
-}

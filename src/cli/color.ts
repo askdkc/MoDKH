@@ -121,7 +121,7 @@ export function highlightCodeLine(line: string, palette: Palette): string {
 }
 
 export const READABLE_TEXT_STYLE = '1;39';
-export type TranscriptKind = 'system' | 'answer' | 'reasoning';
+export type TranscriptKind = 'system' | 'user' | 'answer' | 'reasoning';
 export type ColorMode = 'text' | 'code';
 
 export interface ColorizerState { mode: ColorMode; inDiff: boolean }

@@ -3,16 +3,17 @@ import { stripVTControlCharacters } from 'node:util';
 const segments = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 export function chars(text: string): string[] { return [...segments.segment(text)].map(s => s.segment); }
 export function clean(text: string): string { return stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, ''); }
-function cellWidth(char: string): number {
+export function cellWidth(char: string, column = 0): number {
+  if (char === '\t') return 8 - column % 8;
   if (/\p{Extended_Pictographic}/u.test(char)) return 2;
   const cp = char.codePointAt(0)!;
   return cp >= 0x1100 && (cp <= 0x115f || cp >= 0x2e80 && cp <= 0xa4cf || cp >= 0xac00 && cp <= 0xd7a3
     || cp >= 0xf900 && cp <= 0xfaff || cp >= 0xfe10 && cp <= 0xfe6f || cp >= 0xff00 && cp <= 0xff60 || cp >= 0x20000) ? 2 : 1;
 }
-export function textWidth(text: string): number { return chars(clean(text)).reduce((sum, c) => sum + cellWidth(c), 0); }
+export function textWidth(text: string): number { return chars(clean(text)).reduce((sum, c) => sum + cellWidth(c, sum), 0); }
 export function fitText(text: string, width: number): string {
   let result = '', used = 0;
-  for (const c of chars(clean(text))) { const n = cellWidth(c); if (used + n > width) break; result += c; used += n; }
+  for (const c of chars(clean(text))) { const n = cellWidth(c, used); if (used + n > width) break; result += c; used += n; }
   return result;
 }
 
@@ -22,11 +23,11 @@ export function editorLayout(text: string, width: number): { lines: string[]; po
   const parts = chars(text), lines: string[] = [], positions: CursorPosition[] = [];
   let line = '', column = 0;
   for (let i = 0; i < parts.length; i++) {
-    const c = parts[i], n = c === '\n' ? 0 : cellWidth(c);
+    const c = parts[i], n = c === '\n' ? 0 : cellWidth(c, column);
     if (c !== '\n' && column + n > width) { lines.push(line); line = ''; column = 0; }
     positions[i] = { row: lines.length, column };
     if (c === '\n') { lines.push(line); line = ''; column = 0; }
-    else { line += c; column += n; }
+    else { line += c; column += cellWidth(c, column); }
   }
   positions[parts.length] = { row: lines.length, column };
   lines.push(line);
@@ -49,15 +50,14 @@ export function wrapText(text: string, width: number): string[] {
     let line = '', used = 0;
     let pending = ''; // the tail after the last break opportunity on this line
     for (const c of chars(logical)) {
-      const n = cellWidth(c);
-      if (used + n > width) {
-        if (pending.length > 0 && pending.length < line.length) {
-          // Break at the last opportunity: the tail moves down, so no word is cut.
-          out.push(line.slice(0, line.length - pending.length));
-          line = pending; used = textWidth(pending); pending = '';
-        } else { out.push(line); line = ''; used = 0; pending = ''; }
+      if (used + cellWidth(c, used) > width && pending.length > 0 && pending.length < line.length) {
+        out.push(line.slice(0, line.length - pending.length));
+        line = pending; used = textWidth(pending); pending = '';
       }
-      line += c; used += n;
+      if (used + cellWidth(c, used) > width) {
+        out.push(line); line = ''; used = 0; pending = '';
+      }
+      line += c; used += cellWidth(c, used);
       if (BREAK_AFTER.test(c)) pending = ''; else pending += c;
     }
     out.push(line);

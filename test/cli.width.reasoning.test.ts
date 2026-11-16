@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import { stripVTControlCharacters } from 'node:util';
-import { screenFrom, withoutRightPane } from './tui.screen.ts';
+import { screenFrom } from './tui.screen.ts';
 
 const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
@@ -25,7 +25,7 @@ function fixture(columns: number, rows: number) {
   return preload;
 }
 
-test('a real TUI conversation uses the full terminal width and shows provider reasoning', async () => {
+test('a real TUI switches from welcome to a split conversation and shows provider reasoning', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-width-'));
   const server = http.createServer((req, res) => {
     let body = '';
@@ -54,9 +54,9 @@ test('a real TUI conversation uses the full terminal width and shows provider re
     let output = '';
     child.stdout!.on('data', data => { output += data; });
     // ウェルカムは端末中央寄せ(余白込みで広がらない)。本文幅を測るため余白を除く。
-    const widest = (welcome = false): number => {
+    const widest = (): number => {
       const lines = screenFrom(output, 40);
-      return Math.max(...lines.map(line => [...(welcome ? withoutRightPane(line) : line).trim()].length));
+      return Math.max(...lines.map(line => [...line.trim()].length));
     };
     const wait = async (text: string): Promise<void> => {
       const deadline = Date.now() + 8000;
@@ -67,19 +67,20 @@ test('a real TUI conversation uses the full terminal width and shows provider re
     };
     await wait('何を調べますか');
     assert.match(output, /\x1b\[48;5;\d+;1;39m 何を調べますか/);
-    const welcomeWidth = widest(true);
+    assert.doesNotMatch(stripVTControlCharacters(output), /│ トークン使用量/);
+    const welcomeWidth = widest();
     assert.ok(welcomeWidth <= 80, `welcome stays compact: ${welcomeWidth}`);
 
     child.stdin!.write(`/connect compatible/x --base-url http://127.0.0.1:${(server.address() as AddressInfo).port}/v1\r`);
     await wait('接続しました');
+    assert.doesNotMatch(stripVTControlCharacters(output), /│ トークン使用量/);
     child.stdin!.write('調べて\r');
+    await wait('│ トークン使用量');
     await wait('ANSWER_MARKER');
     await wait('応答終了');
-    const conversationWidth = widest();
-    // 会話中の本文は端末幅をそのまま使う。中央寄せの余白や85%への縮小はしない
-    // (縮小すると本文が狭い幅で折り返され、コピーした文字列に余計な改行が入る)。
-    assert.ok(conversationWidth >= 190 && conversationWidth <= 200,
-      `conversation should use the terminal width, got ${conversationWidth}`);
+    const conversation = screenFrom(output, 40);
+    assert.match(conversation[1], /│ トークン使用量/);
+    assert.doesNotMatch(conversation.join('\n'), /██████╗/);
     assert.match(stripVTControlCharacters(output), /REASONING_VISIBLE_MARKER/, 'reasoning is displayed');
     assert.match(stripVTControlCharacters(output), /\(推論\)/, 'reasoning is labelled');
     assert.match(output, /\x1b\[90mREASONING_VISIBLE_MARKER/);

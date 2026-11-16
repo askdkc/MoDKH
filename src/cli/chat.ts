@@ -284,7 +284,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   };
   saveWorkspaceRecord();
   const runTurn = async (input: string, activeModel: Model | null, direct?: DelegationRequest, images: ImageAttachment[] = []): Promise<void> => {
-    ui.write(`\n▶ You: ${input}${images.length ? ` [画像${images.length}枚]` : ''}\n`);
+    ui.write(`\n▶ You: ${input}${images.length ? ` [画像${images.length}枚]` : ''}\n`, 'user');
     session.setStatus('active');
     session.append({ role: 'user', content: input, ...(images.length ? { images } : {}) });
     const checkpoint = () => session.persistFrom(0);
@@ -306,7 +306,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     const takeFollowups = () => {
       const messages = followups.splice(0);
       if (messages.length) ui.setReasoning?.(null);
-      for (const message of messages) ui.write(`\n▶ You: ${message}\n`);
+      for (const message of messages) ui.write(`\n▶ You: ${message}\n`, 'user');
       return messages;
     };
     try {
@@ -555,6 +555,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       }
       if (line === '/help') {
         ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /usage: トークン使用量  /allow: 承認ポリシー  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n'
+          + 'macOS: 会話のテキストをドラッグして選択するとコピーします。\n'
           + '/reasoning off|minimal|low|medium|high [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信（実行中の追加依頼はテキストのみ） / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');
         continue;
       }

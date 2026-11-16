@@ -4,7 +4,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { PassThrough } from 'node:stream';
 import type { ReadStream, WriteStream } from 'node:tty';
 import { TerminalUI, textWidth } from '../src/cli/terminal.ts';
-import { screenFrom, screenText, withoutRightPane } from './tui.screen.ts';
+import { screenFrom, screenText } from './tui.screen.ts';
 
 function terminal(columns = 100, rows = 30) {
   const input = new PassThrough() as unknown as ReadStream;
@@ -40,7 +40,7 @@ test('welcome groups logo and composer in the middle like the reference, includi
     t.key('u', '', true);
     check(36);
     t.key('return'); await pending;
-    t.ui.write('▶ You: do the work\n');
+    t.ui.write('▶ You: do the work\n', 'user');
     const active = t.ui.next();
     const screen = screenFrom(t.raw(), 36);
     assert.equal(screen.findIndex(line => line.includes('/workspace')), 35, 'conversation composer stays at bottom');
@@ -48,14 +48,14 @@ test('welcome groups logo and composer in the middle like the reference, includi
   } finally { t.ui.close(); }
 });
 
-test('the welcome block stays compact, and a conversation uses the full width without stray indentation', async () => {
+test('the welcome stays centered and the conversation uses two columns', async () => {
   const t = terminal(200, 40);
   try {
     const input = t.ui.next();
     const welcome = t.text().split('\n');
     // ウェルカムは端末全体の中央に寄せられる。コンテンツ幅は80列で、
     // 余白(margin)を除いた本文は80列以内。
-    const used = Math.max(...welcome.map(line => textWidth(withoutRightPane(line).trim())));
+    const used = Math.max(...welcome.map(line => textWidth(line.trim())));
     assert.ok(used <= 80, `welcome stays compact: ${used}`);
     const logoRows = welcome.filter(line => line.trim().startsWith('█'));
     assert.ok(logoRows.some(line => line.includes('███╗   ███╗')), 'wordmark includes M');
@@ -65,11 +65,11 @@ test('the welcome block stays compact, and a conversation uses the full width wi
       assert.ok(Math.abs(left - right) <= 1, 'each logo row is centered');
     }
 
-    t.ui.write('▶ You: 作業を始めます\n');
+    t.ui.write('▶ You: 作業を始めます\n', 'user');
     const conversation = screenFrom(t.raw(), 40);
     const used2 = Math.max(...conversation.map(line => textWidth(line)));
-    // 会話中の本文は端末幅をそのまま使う。中央寄せの余白を焼き込むとコピーが壊れる。
-    assert.ok(used2 >= 190, `conversation should use the terminal width: ${used2}`);
+    assert.equal(used2, 200, 'the sidebar reaches the right edge');
+    assert.equal(textWidth(conversation[1].split('│')[0]), 164, 'the sidebar starts after the transcript');
     assert.ok(used2 <= 200, 'never exceeds the terminal');
 
     t.input.emit('keypress', 'x', {});
@@ -82,7 +82,7 @@ test('transcript lines carry no leading margin and survive copying intact', () =
   const t = terminal(120, 30);
   try {
     void t.ui.next();
-    t.ui.write('▶ You: 依頼\n');
+    t.ui.write('▶ You: 依頼\n', 'user');
     // 折り返し地点に長いトークンを置く: 文字数で切ると `headBudget+t` / `ailBudget` に割れる。
     t.ui.write('1. `TextSink.text()` の重なり計算を修正し、`produced > budget` でない場合でも欠落が起きないようにする。境界（`produced == headBudget+tailBudget`、`produced == budget`）のテストを追加。\n');
     const lines = stripVTControlCharacters(t.raw()).split(/\r?\n/);
@@ -94,7 +94,7 @@ test('transcript lines carry no leading margin and survive copying intact', () =
     // 折り返しても内容は失われず、トークンも割れない。
     const joined = stripVTControlCharacters(t.raw());
     assert.ok(joined.includes('headBudget+tailBudget`'), 'the long token stays in one piece');
-    assert.ok(joined.includes('produced == budget`'), 'the second boundary token stays intact');
+    assert.match(joined, /produced\s+==\s+budget`/, 'the second expression keeps its tokens');
   } finally { t.ui.close(); }
 });
 
@@ -104,7 +104,7 @@ test('a narrow terminal never widens past its own width', async () => {
     const input = t.ui.next();
     assert.ok(t.text().includes('MoDKH'), 'narrow welcome keeps the full brand');
     assert.ok(!t.text().includes('███╗'), 'oversized wordmark is replaced, not clipped');
-    t.ui.write('▶ You: 狭い画面\n');
+    t.ui.write('▶ You: 狭い画面\n', 'user');
     assert.ok(t.text().split('\n').every(line => textWidth(line) <= 40), 'no line may exceed the terminal');
     t.key('return');
     assert.equal(await input, '');
@@ -141,7 +141,7 @@ test('reasoning never enters the request messages', async () => {
     const input = t.ui.next();
     t.ui.setReasoning('SECRET_CHAIN_OF_THOUGHT');
     t.ui.setReasoning(null);
-    t.ui.write('▶ You: 依頼\n');
+    t.ui.write('▶ You: 依頼\n', 'user');
     // The transcript is display state; the agent loop owns `messages` and only receives text-delta
     // through onText. Reasoning reaching the screen must not be mistaken for assistant content.
     assert.match(t.text(), /SECRET_CHAIN_OF_THOUGHT/);
@@ -160,7 +160,7 @@ test('reasoning and transcript stream into the scrollback instead of being erase
     const full = stripVTControlCharacters(t.raw());
     for (const i of [0, 5, 29]) assert.ok(full.includes(`▶ ツール実行 ${i} (結果: ok)`), `line ${i} is final`);
     // 現在の画面の最下部にはライブブロック(入力欄)が残る。
-    t.ui.write('▶ You: 続き\n');
+    t.ui.write('▶ You: 続き\n', 'user');
     const view = t.text();
     assert.match(view, /│ MoDKH/, 'the live status block stays on screen');
   } finally { t.ui.close(); }
@@ -169,10 +169,11 @@ test('reasoning and transcript stream into the scrollback instead of being erase
 test('the active child uses a right-hand pane and remains visible after narrowing', async () => {
   const t = terminal(110, 30);
   try {
-    t.ui.write('▶ You: 調査\n');
+    t.ui.write('▶ You: 調査\n', 'user');
     t.ui.setActivity('子エージェントの結果を待機中');
     t.ui.setSubagent({ pluginId: 'modkh-explorer', task: '設定ファイルを調査', phase: 'モデル応答を待機中' });
-    assert.match(t.text(), /子エージェントの結果を待機中 +│ サブエージェント/);
+    assert.match(t.text(), /子エージェントの結果を待機中/);
+    assert.match(t.text(), /│ サブエージェント +│/);
     assert.match(t.text(), /│ モデル応答を待機中 · 0秒/);
     assert.match(t.text(), /│ 設定ファイルを調査 +│/);
     t.output.columns = 40;
@@ -198,7 +199,7 @@ test('the active child uses a right-hand pane and remains visible after narrowin
 test('an approval temporarily takes the input without consuming the follow-up draft', async () => {
   const t = terminal();
   try {
-    t.ui.write('▶ You: 調査\n');
+    t.ui.write('▶ You: 調査\n', 'user');
     const sent: string[] = [];
     const finish = t.ui.beginFollowups(text => { sent.push(text); return null; });
     t.key('a', '追記');

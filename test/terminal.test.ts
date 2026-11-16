@@ -44,15 +44,15 @@ test('TUI shows MODKH once, completes /conn, searches and selects providers by k
   assert.equal(t.input.listenerCount('keypress'), 0);
 });
 
-test('the MODKH banner is streamed exactly once and never erased', () => {
+test('the welcome banner leaves the screen when the first turn starts', () => {
   const t = terminal(120, 30);
   try {
     const input = t.ui.next();
-    t.ui.write('▶ You: 最初の会話\n');
+    assert.match(t.text(), /██████╗/);
+    t.ui.write('▶ You: 最初の会話\n', 'user');
     t.ui.write('回答の本文です\n');
-    // 会話開始後の最終画面にロゴは1組だけ(フレーム再描画の重複ではない)
     const view = t.text();
-    assert.equal(view.split('██████╗').length - 1, 1, 'the banner is painted once');
+    assert.doesNotMatch(view, /██████╗/);
     assert.match(view, /最初の会話/);
     assert.match(view, /回答の本文です/);
     t.key('return'); void input;

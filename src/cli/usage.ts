@@ -4,6 +4,8 @@ import type { TokenUsage } from '../agent/types.ts';
 
 export interface UsageTotals extends TokenUsage {
   responses: number;
+  /** Some reported usage lacks a comparable input and cache-read pair. */
+  cacheHitIncomplete?: true;
 }
 
 export const EMPTY_USAGE: UsageTotals = { responses: 0 };
@@ -34,6 +36,8 @@ export function addUsage(total: UsageTotals, reported: TokenUsage): UsageTotals 
     cacheRead: sumReported(total.cacheRead, cacheRead),
     cacheWrite: sumReported(total.cacheWrite, cacheWrite),
     responses: total.responses + 1,
+    ...(total.cacheHitIncomplete || input === undefined || (input > 0 && cacheRead === undefined) ||
+      (cacheRead ?? 0) > input ? { cacheHitIncomplete: true } : {}),
   };
 }
 
@@ -47,8 +51,8 @@ export function compactTokens(value: number): string {
 
 /** Share of input tokens served from cache. Undefined when the provider reports no input. */
 export function cacheHitRate(usage: UsageTotals): number | undefined {
-  if (!usage.input || usage.cacheRead === undefined) return undefined;
-  return Math.min(100, Math.round((usage.cacheRead / usage.input) * 100));
+  if (usage.cacheHitIncomplete || !usage.input || usage.cacheRead === undefined || usage.cacheRead > usage.input) return undefined;
+  return Math.round((usage.cacheRead / usage.input) * 100);
 }
 
 /** One footer line, most useful numbers first. `width` is the usable cell width; narrower terminals
@@ -85,24 +89,38 @@ export function usageBadgeLine(usage: UsageTotals, maxWidth?: number): string {
   return '';
 }
 
-const breakdownNumber = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
+const exactNumber = new Intl.NumberFormat('en-US');
+const compactNumber = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+export const USAGE_HEADING = 'トークン使用量';
+
+type UsageRow = [label: string, value: string, compact?: string];
+
+function tokenRow(label: string, value: number | undefined, suffix = ''): UsageRow {
+  if (value === undefined) return [label, '—'];
+  return [label, exactNumber.format(value) + suffix, compactNumber.format(value) + suffix];
+}
 
 export function usageBreakdown(usage: UsageTotals): string {
   return usage.responses === 0 ? 'トークン使用量はまだ報告されていません' : usageBreakdownLines(usage).join('\n');
 }
 
-export function usageBreakdownLines(usage: UsageTotals, minWidth = 0): string[] {
+/** Width is omitted for /usage, which always shows exact counts and every field. */
+export function usageBreakdownLines(usage: UsageTotals, width?: number): string[] {
   const total = usage.input === undefined && usage.output === undefined
     ? undefined : (usage.input ?? 0) + (usage.output ?? 0);
-  const rows: [string, number | undefined][] = [
-    ['トークン消費量', total],
-    ['未キャッシュ入力', usage.uncachedInput],
-    ['キャッシュ読み取り', usage.cacheRead],
-    ['キャッシュ書き込み', usage.cacheWrite],
-    ['出力', usage.output],
+  const rate = cacheHitRate(usage);
+  const rows: UsageRow[] = [
+    tokenRow(USAGE_HEADING, total, ' tok'),
+    ['キャッシュヒット', rate === undefined ? '—' : `${rate}%`],
+    tokenRow('未キャッシュ入力', usage.uncachedInput),
+    tokenRow('キャッシュ済み入力', usage.cacheRead),
   ];
-  const labels = Math.max(...rows.map(([label]) => textWidth(label)));
-  const values = rows.map(([, value]) => value === undefined ? '—' : breakdownNumber.format(value));
-  const width = Math.max(minWidth - labels - 2, ...values.map(textWidth));
-  return rows.map(([label], i) => label + ' '.repeat(labels - textWidth(label) + 2 + width - textWidth(values[i])) + values[i]);
+  if (width === undefined || (usage.cacheWrite ?? 0) > 0) rows.push(tokenRow('キャッシュ書き込み', usage.cacheWrite));
+  rows.push(tokenRow('出力', usage.output));
+  const lineWidth = width ?? Math.max(...rows.map(([label, value]) => textWidth(label) + 2 + textWidth(value)));
+  return rows.map(([label, exact, compact = exact]) => {
+    const available = lineWidth - textWidth(label);
+    const value = textWidth(exact) + 2 <= available ? exact : compact;
+    return label + ' '.repeat(Math.max(2, available - textWidth(value))) + value;
+  });
 }

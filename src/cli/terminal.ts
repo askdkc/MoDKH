@@ -1,8 +1,11 @@
 import { emitKeypressEvents, type Key } from 'node:readline';
-import { EMPTY_USAGE, usageFooter, usageBadgeLine, usageBreakdownLines, type UsageTotals } from './usage.ts';
-import { chars, clean, fitText, textWidth, wrap, wrapText, editorLayout, verticalCursor, lineEdge } from './editor.ts';
+import { PassThrough } from 'node:stream';
+import { TerminalMouseInput, type MouseReport } from './terminal-mouse.ts';
+import { selectedTranscript, transcriptLine, transcriptLines, type DragSelection, type TranscriptLine, type TranscriptScreenLine } from './transcript-selection.ts';
+import { EMPTY_USAGE, USAGE_HEADING, usageFooter, usageBadgeLine, usageBreakdownLines, type UsageTotals } from './usage.ts';
+import { chars, clean, fitText, textWidth, wrap, editorLayout, verticalCursor, lineEdge } from './editor.ts';
 export { textWidth, fitText } from './editor.ts';
-import { readClipboardImage, type ClipboardReader } from './clipboard.ts';
+import { readClipboardImage, writeClipboardText, type ClipboardReader } from './clipboard.ts';
 import { MAX_IMAGES, parseImage, type ImageAttachment } from '../agent/images.ts';
 import type { ReadStream, WriteStream } from 'node:tty';
 import { LineSource } from './lines.ts';
@@ -110,14 +113,18 @@ class PlainTerminal implements ChatTerminal {
 }
 
 type Pending = { finish: (value: string | null) => void; title: string; choices?: readonly Choice[]; secret?: boolean; composer?: boolean };
-export interface TerminalOptions { readClipboardImage?: ClipboardReader }
+export interface TerminalOptions {
+  readClipboardImage?: ClipboardReader;
+  writeClipboardText?: typeof writeClipboardText;
+}
 const MAX_INPUT_BYTES = 128 * 1024;
-const SIDEBAR_WIDTH = 34;
+const SIDEBAR_WIDTH = 36;
+const TRANSCRIPT_HISTORY_ROWS = 4000;
 /**
  * メインスクリーンに流し込むストリーミングUI。
  * - 完成したトランスクリプト行は一度だけ出力し、その後は端末のスクロールバックへ流れる
  * - 起動時はロゴと入力欄を中央にまとめ、会話開始後は入力欄を最下部に描画する
- * 代替スクリーン(?1049)は使わない。これが「起動前バッファしか辿れない」問題の原因だった。
+ * 通常はメインスクリーンを使う。マウス操作で履歴を開く間だけ別画面に切り替える。
  */
 export class TerminalUI implements ChatTerminal {
   readonly interactive = true;
@@ -127,11 +134,23 @@ export class TerminalUI implements ChatTerminal {
   private pending?: Pending;
   private queued: string[] = [];
   /** スクロールバックへ確定待ちの完成行(折り返し済み)。 */
-  private queue: { text: string; kind: TranscriptKind }[] = [];
+  private queue: (TranscriptLine & { kind: TranscriptKind })[] = [];
+  private transcriptRows = new Map<number, TranscriptScreenLine>();
+  private liveTranscriptRows = new Map<number, TranscriptScreenLine>();
+  private drag?: DragSelection;
+  private selectionRows: number[] = [];
+  private readonly mouseInput?: TerminalMouseInput;
+  private readonly keyInput?: PassThrough;
+  private readonly copyText: typeof writeClipboardText;
+  private copyQueue = Promise.resolve();
+  private historyRows: TranscriptLine[] = [];
+  private history?: { text: string; width: number; lines: TranscriptLine[]; offset: number; rows: Map<number, TranscriptScreenLine> };
   /** まだ改行が来ていない最終行。ライブブロックの一部として再描画する。 */
   private partial = '';
   private partialKind: TranscriptKind = 'system';
   private started = false;
+  private usageVisible = false;
+  private sidebarPainted = false;
   /** 会話開始前の案内行(ウェルカムブロックに表示し、会話開始時に本文へ流す)。 */
   private bootLines: string[] = [];
   private bootFlushed = false;
@@ -180,19 +199,30 @@ export class TerminalUI implements ChatTerminal {
 
   constructor(cwd: string, input: ReadStream = process.stdin, output: WriteStream = process.stdout, options: TerminalOptions = {}) {
     this.clipboardReader = options.readClipboardImage ?? readClipboardImage;
+    this.copyText = options.writeClipboardText ?? writeClipboardText;
     this.cwd = cwd; this.input = input; this.output = output;
     this.previousRaw = input.isRaw; this.color = process.env.NO_COLOR === undefined;
     // 背景プローブの data 購読を readline より先に付ける。返信チャンクからだけ
     // キー入力を落とし、ユーザーの打鍵はいつでも通常通り処理する。
     if (this.color && (input as unknown as { isTTY?: boolean }).isTTY === true) this.probeBackground();
-    emitKeypressEvents(input);
+    if (options.writeClipboardText || (process.platform === 'darwin' && input.isTTY && output.isTTY)) {
+      const keyInput = this.keyInput = new PassThrough();
+      this.mouseInput = new TerminalMouseInput(
+        text => { if (text) keyInput.write(text); },
+        this.mouseReport,
+        () => this.paste || this.replySilenced,
+      );
+      emitKeypressEvents(keyInput);
+      keyInput.on('keypress', this.keypress);
+      input.on('data', this.mouseInput.write);
+    } else emitKeypressEvents(input);
     input.setRawMode(true);
     input.on('keypress', this.keypress);
     input.on('end', this.onEnd);
     output.on('resize', this.onResize);
     process.on('exit', this.close);
     input.resume();
-    output.write('\x1b[?2004h');
+    output.write('\x1b[?2004h' + (this.mouseInput ? '\x1b[?1002h\x1b[?1006h' : ''));
     // 起動時は一度だけ画面を消す(前回実行の残りを見せない)。
     this.clearPending = true;
     if (this.backgroundProbe) this.output.write('\x1b]11;?\x1b\\');
@@ -251,19 +281,22 @@ export class TerminalUI implements ChatTerminal {
   /** リサイズ: 画面を作り直す。トランスクリプトはスクロールバックに確定済み。 */
   private onResize = (): void => {
     if (this.closed) return;
+    this.cancelDrag();
     this.clearPending = true;
     this.streamRow = 1;
     this.cursorRow = 1;
-    this.render();
+    if (this.history) this.renderHistory();
+    else this.render();
   };
 
   private columns(): number { return Math.max(12, this.output.columns || 80); }
   private rows(): number { return Math.max(6, this.output.rows || 24); }
 
-  /** 本文の幅。会話中は端末幅いっぱい、起動時は中央寄せ用に80列まで。 */
+  /** 会話中は左ペイン、起動時は中央寄せ用に80列まで。 */
   private width(): number {
     const columns = this.columns();
-    return this.started ? columns : Math.max(8, Math.min(columns - 2, 80));
+    if (!this.started) return Math.max(8, Math.min(columns - 2, 80));
+    return this.hasUsagePane() ? columns - SIDEBAR_WIDTH - 2 : columns;
   }
 
   write(text: string, kind: TranscriptKind = 'system'): void { this.appendTranscript(text, kind); this.render(); }
@@ -298,7 +331,7 @@ export class TerminalUI implements ChatTerminal {
   }
 
   private hasUsagePane(): boolean {
-    return this.columns() >= SIDEBAR_WIDTH + 28 && this.rows() >= 9;
+    return this.usageVisible && this.columns() >= 80 && this.rows() >= 9;
   }
 
   private controlMargin(): number {
@@ -306,8 +339,7 @@ export class TerminalUI implements ChatTerminal {
   }
 
   private controlWidth(): number {
-    const right = this.hasUsagePane() ? SIDEBAR_WIDTH : 0;
-    return Math.min(this.width(), this.columns() - right - this.controlMargin());
+    return this.width();
   }
 
   private editorWidth(): number {
@@ -345,6 +377,7 @@ export class TerminalUI implements ChatTerminal {
     if (signal?.aborted || this.closed) return Promise.resolve(null);
     if (this.queued.length) return Promise.resolve(this.queued.shift()!);
     if (this.pending) throw new Error('端末の入力待ちは同時に1件だけです');
+    if (!composer) this.leaveHistory();
     const draft = !composer && this.text
       ? { text: this.text, cursor: this.cursor, scroll: this.editorScroll, notice: this.inputNotice } : undefined;
     this.text = composer ? this.text : query;
@@ -405,8 +438,148 @@ export class TerminalUI implements ChatTerminal {
       this.render();
     }
   }
+  private mouseReport = ({ button, released, ...point }: MouseReport): void => {
+    if (this.pending?.secret) return;
+    if (!released && (button === 64 || button === 65)) {
+      this.scrollHistory(button === 64 ? 3 : -3);
+      return;
+    }
+    if (point.row < 1 || point.row > this.rows() || point.column < 1) return;
+    const rows = this.visibleTranscript();
+    if (!released && button === 0) {
+      // Some terminals repeat the press immediately before the release.
+      if (!this.drag && rows.has(point.row) && point.column <= (this.history ? this.columns() : this.width())) {
+        this.drag = { anchor: point, end: point };
+      }
+      return;
+    }
+    const drag = this.drag;
+    if (!drag || (released ? button !== 0 : button !== 32)) return;
+    drag.end = point;
+    if (!released) {
+      this.output.write(this.clearDragHighlight() + this.drawDragHighlight());
+      return;
+    }
+    const moved = drag.anchor.row !== point.row || drag.anchor.column !== point.column;
+    const text = moved ? selectedTranscript(rows, drag).map(line => line.text + (line.newline ? '\n' : '')).join('') : '';
+    this.cancelDrag();
+    this.render();
+    if (text.trim()) this.copyQueue = this.copyQueue.then(() => this.copySelection(text));
+  };
+
+  private visibleTranscript(): Map<number, TranscriptScreenLine> {
+    return this.history?.rows ?? new Map([...this.transcriptRows, ...this.liveTranscriptRows]);
+  }
+
+  private drawDragHighlight(): string {
+    if (!this.drag) return '';
+    const lines = selectedTranscript(this.visibleTranscript(), this.drag).filter(line => line.text);
+    this.selectionRows = lines.map(line => line.row);
+    return lines.length ? '\x1b7' + lines.map(line => `\x1b[${line.row};${line.column}H\x1b[7m${line.text}\x1b[0m`).join('') + '\x1b8' : '';
+  }
+
+  private clearDragHighlight(): string {
+    if (!this.selectionRows.length) return '';
+    const rows = this.visibleTranscript();
+    const restore = this.selectionRows.map(row => `\x1b[${row};1H${rows.get(row)?.painted ?? ''}`).join('');
+    this.selectionRows = [];
+    return '\x1b7' + restore + '\x1b8';
+  }
+
+  private cancelDrag(): void {
+    const restore = this.clearDragHighlight();
+    if (restore) this.output.write(restore);
+    this.drag = undefined;
+  }
+
+  private async copySelection(text: string): Promise<void> {
+    if (this.closed) return;
+    try {
+      await this.copyText(text);
+      this.inputNotice = '選択範囲をコピーしました';
+    } catch {
+      this.inputNotice = '選択範囲をコピーできませんでした';
+    } finally {
+      if (this.history) this.renderHistory();
+      else this.render();
+    }
+  }
+
+  private scrollTranscriptRows(count: number): void {
+    this.drag = undefined;
+    const visible = new Map<number, TranscriptScreenLine>();
+    for (const [row, line] of this.transcriptRows) {
+      if (row > count) visible.set(row - count, line);
+      else if (this.mouseInput) this.historyRows.push({ text: line.text, newline: line.newline });
+    }
+    this.transcriptRows = visible;
+    if (this.historyRows.length > TRANSCRIPT_HISTORY_ROWS) {
+      this.historyRows.splice(0, this.historyRows.length - TRANSCRIPT_HISTORY_ROWS);
+    }
+  }
+
+  private scrollHistory(delta: number): void {
+    if (!this.started) return;
+    this.cancelDrag();
+    if (!this.history) {
+      if (delta < 0 || !this.historyRows.length) return;
+      const text = [...this.historyRows, ...this.visibleTranscript().values()]
+        .map(line => line.text + (line.newline ? '\n' : '')).join('');
+      this.history = { text, width: 0, lines: [], offset: 0, rows: new Map() };
+      this.inputNotice = '';
+      this.output.write('\x1b[?1049h\x1b[?25l');
+    }
+    this.history.offset = Math.max(0, this.history.offset + delta);
+    if (this.history.offset) this.renderHistory();
+    else this.leaveHistory();
+  }
+
+  private renderHistory(): void {
+    const history = this.history;
+    if (!history) return;
+    const rows = this.rows() - 1;
+    const width = this.columns();
+    if (history.width !== width) {
+      history.width = width;
+      history.lines = transcriptLines(history.text, width);
+    }
+    const transcript = history.lines;
+    history.offset = Math.min(history.offset, Math.max(1, transcript.length - rows));
+    const end = Math.max(0, transcript.length - history.offset);
+    const visible = transcript.slice(Math.max(0, end - rows), end);
+    let out = this.clearDragHighlight() + '\x1b[H\x1b[J';
+    history.rows.clear();
+    visible.forEach((line, index) => {
+      history.rows.set(index + 1, { ...line, painted: line.text });
+      out += `\x1b[${index + 1};1H${line.text}`;
+    });
+    const hint = this.inputNotice || '会話履歴  ·  ホイール / PgUp / PgDn  ·  Esc 戻る';
+    this.output.write(out + `\x1b[${rows + 1};1H${this.paint(fitText(hint, width), '2')}` + this.drawDragHighlight());
+  }
+
+  private leaveHistory(redraw = true): void {
+    if (!this.history) return;
+    this.cancelDrag();
+    this.history = undefined;
+    this.output.write('\x1b[?1049l');
+    if (redraw) this.render();
+  }
+
   private onEnd = (): void => { this.pending?.finish(null); this.close(); };
   private keypress = (value: string | undefined, key: Key): void => {
+    if (this.drag) {
+      this.cancelDrag();
+      this.render();
+    }
+    if (this.mouseInput && !this.paste && !this.replySilenced && !this.pending?.secret &&
+        (key.name === 'pageup' || key.name === 'pagedown')) {
+      this.scrollHistory((this.rows() - 2) * (key.name === 'pageup' ? 1 : -1));
+      return;
+    }
+    if (this.history) {
+      this.leaveHistory();
+      if (key.name === 'escape') return;
+    }
     if (key.name === 'paste-start') { this.paste = true; this.pasteBuffer = ''; this.pasteBytes = 0; return; }
     if (key.name === 'paste-end') {
       this.paste = false;
@@ -430,7 +603,6 @@ export class TerminalUI implements ChatTerminal {
     }
     // 返信チャンク(OSC 応答)から生じたキー入力だけを握りつぶす。Ctrl+C は通す。
     if (this.replySilenced && !(key.ctrl && key.name === 'c')) return;
-    // PageUp/PgDn は端末本来のスクロールに任せる(代替スクリーンを使わないため)。
     const pending = this.pending;
     if (!pending && !this.followup) return;
     const composer = pending ? pending.composer : true;
@@ -481,7 +653,8 @@ export class TerminalUI implements ChatTerminal {
   private appendTranscript(text: string, kind: TranscriptKind): void {
     let source = (this.partial + text).replace(/\r\n?/g, '\n');
     let lineKind = this.partial ? this.partialKind : kind;
-    if (/(^|\n)▶/.test(text) || /https:\/\//.test(text)) this.started = true;
+    if (kind === 'user') this.usageVisible = true;
+    if (kind === 'user' || /(^|\n)▶/.test(text) || /https:\/\//.test(text)) this.started = true;
     const width = this.width();
     for (;;) {
       const at = source.indexOf('\n');
@@ -494,7 +667,7 @@ export class TerminalUI implements ChatTerminal {
       source = source.slice(at + 1);
       // 会話が始まる前の案内行はウェルカムブロックへ(会話開始時に一括で出力する)。
       if (!this.started) this.bootLines.push(logicalLine);
-      else for (const wrapped of wrapText(logicalLine, width)) this.queue.push({ text: wrapped, kind: lineKind });
+      else for (const wrapped of transcriptLine(logicalLine, width, true)) this.queue.push({ ...wrapped, kind: lineKind });
       lineKind = kind;
     }
   }
@@ -509,25 +682,27 @@ export class TerminalUI implements ChatTerminal {
    * 再描画は最下部ブロックに限るため、過去の履歴が端末のスクロールバックに蓄積する。
    */
   private render = (): void => {
-    if (this.closed) return;
+    // Keep mouse coordinates stable while a response is still streaming under the drag.
+    if (this.closed || this.history || this.drag) return;
     const rows = this.rows();
     const columns = this.columns();
-    // 本文・入力欄・ライブブロックは端末の全幅を使う。狭い幅へ折り返して中央寄せすると、
-    // コピーした本文に余白が付き、語の途中で改行される(コピペが壊れる)。
-    const width = this.started ? columns : Math.max(8, Math.min(columns - 4, 80));
+    const width = this.started ? this.width() : Math.max(8, Math.min(columns - 4, 80));
     // 会話開始前だけ中央寄せを残す。会話中は余白を付けず、画面上の位置とコピー結果を一致させる。
     const marginPrefix = this.started ? '' : ' '.repeat(Math.max(0, Math.floor((columns - width) / 2)));
-    const stream = this.queue.splice(0, this.queue.length)
-      .map(({ text, kind }) => this.color ? this.colorizer.line(text, this.palette, kind) : text);
+    const stream = this.queue.splice(0).map(({ kind, ...line }): TranscriptScreenLine => {
+      const painted = !this.color ? line.text : kind === 'user' && line.text
+        ? this.paint(line.text.padEnd(line.text.length + width - textWidth(line.text)), `${this.panelStyle};${this.palette.user}`)
+        : this.colorizer.line(line.text, this.palette, kind);
+      return { ...line, painted };
+    });
     this.colorizerState = this.colorizer.state();
-    // 会話が始まった瞬間、ウェルカム(ロゴ+案内)を一度だけ本文へ流し込む。
+    // 起動時の案内だけを履歴に残す。ロゴはウェルカム画面の一部。
     if (this.started && !this.bootFlushed) {
       this.bootFlushed = true;
-      const banner = ['MoDKH  ·  Coding Harness', ...logoForWidth(width)];
-      // 余白を焼き込むと会話開始前の本文にもコピー余白が残る。起動時のみ中央寄せを保つ。
-      const bannerPad = marginPrefix;
-      stream.unshift(...banner.map(l => bannerPad + this.paint(l, l.startsWith('MoDKH') ? '1' : ACCENT)),
-        ...this.bootLines.flatMap(l => wrap(l, width).map(line => bannerPad + line)));
+      stream.unshift(...this.bootLines.flatMap(line => {
+        const wrapped = wrap(line, width);
+        return wrapped.map((text, index) => ({ text, painted: text, newline: index === wrapped.length - 1 }));
+      }));
       this.bootLines = [];
     }
 
@@ -537,7 +712,7 @@ export class TerminalUI implements ChatTerminal {
     const editor = editorLayout(displayText, this.editorWidth());
     const cursor = editor.positions[Math.min(this.cursor, editor.positions.length - 1)];
     const showUsage = this.hasUsagePane();
-    const stackUsage = !showUsage && columns >= SIDEBAR_WIDTH && rows >= 14;
+    const stackUsage = this.usageVisible && !showUsage && columns >= SIDEBAR_WIDTH && rows >= 14;
     const usageRows = showUsage || stackUsage
       ? usageBreakdownLines(this.usage ?? EMPTY_USAGE, SIDEBAR_WIDTH - 4) : [];
     const stackedHeight = stackUsage ? usageRows.length : 0;
@@ -552,17 +727,18 @@ export class TerminalUI implements ChatTerminal {
     const controlWidth = this.controlWidth();
     const controlMargin = this.controlMargin();
 
-    const partialLines = this.partial ? wrapText(this.partial, width)
-      .map(line => (this.color ? this.fork().line(line, this.palette, this.partialKind) : line)) : [];
+    const partialRows = this.partial ? transcriptLines(this.partial, width)
+      .map(line => ({ ...line, painted: this.color ? this.fork().line(line.text, this.palette, this.partialKind) : line.text })) : [];
+    const partialLines = partialRows.map(line => line.painted);
     const partialCount = partialLines.length;
     // ライブの推論は見出し含めて表示。はみ出すときは古い行(先頭)から落とす。
     const reasoningText = this.reasoning.trimEnd() === '' ? [] :
-      wrapText(`(推論)\n${this.reasoning.trimEnd()}`, width);
+      transcriptLines(`(推論)\n${this.reasoning.trimEnd()}`, width);
     const reservedForBody = 1 /* divider */ + inputRows + 4 /* status/hints/cwd+footer */ + (options ? 2 : 0) + partialCount + stackedHeight;
     const maxReasoning = Math.max(0, Math.min(rows - reservedForBody - 1, 24));
     const liveReasoning = reasoningText.length === 0 ? [] :
       reasoningText.slice(Math.max(0, reasoningText.length - maxReasoning))
-        .map(line => ({ text: line, style: this.palette.reasoning }));
+        .map(line => ({ ...line, painted: this.paint(fitText(line.text, width), this.palette.reasoning) }));
 
     const optionsLines: { text: string; style: string }[] = [];
     if (options) {
@@ -581,7 +757,7 @@ export class TerminalUI implements ChatTerminal {
       });
     }
     const lines: { text: string; style: string }[] = [...optionsLines,
-      { text: this.started ? '─'.repeat(width) : '', style: ACCENT }];
+      { text: this.started && !showUsage ? '─'.repeat(width) : '', style: ACCENT }];
     const editorStart = partialCount + liveReasoning.length + lines.length;
     // 入力欄が表示行数を超えたら、カーソルが常に窓内に来るようにスクロールする。
     if (cursor.row < this.editorScroll) this.editorScroll = cursor.row;
@@ -602,11 +778,11 @@ export class TerminalUI implements ChatTerminal {
     lines.push({ text: modelStatus, style: ACCENT });
     const hints = editingFollowup ? `${compactChild && this.inputNotice ? this.inputNotice + '  ' : ''}Enter 追加の依頼を送信  Ctrl+C 中止`
       : !this.pending ? 'Ctrl+C 中止（入力は応答完了後）' : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
-      : composer ? 'Enter 送信  Ctrl+J 改行  Ctrl+V 画像  Cmd+V テキスト' : 'Enter 決定  Ctrl+C 中止';
+      : composer ? 'Enter 送信  Ctrl+J 改行  Ctrl+V 画像  Cmd+V テキスト' + (this.mouseInput ? '  ドラッグでコピー' : '') : 'Enter 決定  Ctrl+C 中止';
     lines.push({ text: hints, style: '2' });
     // 右側の内訳を置けない端末では、最下段に使用量の要約を残す。
     const badgeRoom = controlWidth - textWidth(this.cwd) - 2;
-    const usageStatus = usageRows.length ? '' : this.usage?.responses
+    const usageStatus = !this.usageVisible || usageRows.length ? '' : this.usage?.responses
       ? usageBadgeLine(this.usage, controlWidth) : '計 — tok';
     const usageWidth = textWidth(usageStatus);
     const cwdWidth = textWidth(this.cwd);
@@ -623,26 +799,19 @@ export class TerminalUI implements ChatTerminal {
       }
       return this.paint(fitted, row.style);
     };
-    const sidebar = showUsage ? usageRows : [];
-    if (pane) sidebar.unshift('', 'サブエージェント', childPhase, childTask ?? '', pane.pluginId);
-    const extraRows = Math.max(0, sidebar.length - lines.length);
-    // 子と使用量の両方を表示している間も入力欄とカーソル位置を保つ。
-    lines.splice(lines.length - 2, 0, ...Array.from({ length: extraRows }, () => ({ text: '', style: '' })));
+    const sidebar = showUsage ? ['', ...usageRows] : [];
+    if (pane) sidebar.push('', 'サブエージェント', childPhase, childTask ?? '', pane.pluginId);
     const rightStart = columns - SIDEBAR_WIDTH;
-    const sidebarStart = lines.length - sidebar.length;
     const paintSidebarRow = (content: string): string => {
       const right = fitText(content, SIDEBAR_WIDTH - 4);
       const border = this.paint('│', ACCENT);
-      const style = content.startsWith('トークン消費量') ? `${this.panelStyle};1` : this.panelStyle;
+      const heading = content.startsWith(USAGE_HEADING) || content === 'サブエージェント';
+      const style = heading ? `${this.panelStyle};1` : this.panelStyle;
       const padding = ' '.repeat(SIDEBAR_WIDTH - 3 - textWidth(right));
       const panel = this.paint(` ${right}${padding}`, style);
       return border + panel + border;
     };
-    const controls = lines.map((row, i) => {
-      const left = ' '.repeat(controlMargin) + styled(row, controlWidth);
-      const content = sidebar[i - sidebarStart];
-      return content ? left + ' '.repeat(rightStart - textWidth(left)) + paintSidebarRow(content) : left;
-    });
+    const controls = lines.map(row => ' '.repeat(controlMargin) + styled(row, controlWidth));
     if (stackUsage) {
       controls.splice(controls.length - 2, 0, ...usageRows.map(row => ' '.repeat(rightStart) + paintSidebarRow(row)));
     }
@@ -667,7 +836,7 @@ export class TerminalUI implements ChatTerminal {
         ...welcome.map(row => marginStyled(row)),
         ...Array.from({ length: midPad }, () => marginPrefix),
         ...partialLines,
-        ...liveReasoning.map(row => marginPrefix + this.paint(fitText(row.text, width), row.style)),
+        ...liveReasoning.map(row => marginPrefix + row.painted),
         // lines にはコマンドメニュー(optionsLines)が含まれる。二重に展開しない。
         ...controls,
       ];
@@ -676,7 +845,7 @@ export class TerminalUI implements ChatTerminal {
       // 会話中は余白を付けない: 画面上の位置とコピーした文字列を一致させる。
       body = [
         ...partialLines,
-        ...liveReasoning.map(row => this.paint(fitText(row.text, width), row.style)),
+        ...liveReasoning.map(row => row.painted),
         // lines にはコマンドメニュー(optionsLines)が含まれる。二重に展開しない。
         ...controls,
       ];
@@ -695,16 +864,16 @@ export class TerminalUI implements ChatTerminal {
     // サイズ変更や起動直後は画面を一度消して制御範囲を作り直す(残りを見せない)。
     if (this.clearPending) {
       this.clearPending = false;
+      this.scrollTranscriptRows(rows);
       this.streamRow = 1;
       this.cursorRow = 1;
       out += '\x1b[2J\x1b[1;1H';
+    } else if (this.sidebarPainted) {
+      // 右欄を履歴に巻き込む前に消し、左側を描いた後で元の位置へ戻す。
+      out += this.eraseSidebar(rows, rightStart + 1);
     }
     const streamRow = this.streamRow >= 1 ? Math.max(1, Math.min(rows, this.streamRow)) : rows;
-    // 消去: カーソルは前回フレームの入力位置にある。そこから streamRow まで上がって消す。
-    const cursorBase = Math.max(1, Math.min(rows, this.cursorRow >= 1 ? this.cursorRow : rows));
-    const eraseUp = Math.max(0, cursorBase - streamRow);
-    if (eraseUp > 0) out += `\x1b[${eraseUp}A`;
-    out += `\r\x1b[J`;
+    out += `\x1b[${streamRow};1H\x1b[J`;
     // 確定行の出力。ライブブロックの上端を越えそうなら先にスクロールして確定させる。
     const streamBottom = Math.max(1, rows - liveCount);
     let r = streamRow;
@@ -713,8 +882,10 @@ export class TerminalUI implements ChatTerminal {
         const scrolls = Math.min(r - streamBottom, rows);
         out += `\x1b[${rows};1H` + '\n'.repeat(scrolls);
         r -= scrolls;
+        this.scrollTranscriptRows(scrolls);
       }
-      out += `\x1b[${r};1H\x1b[K${line}\r\n`;
+      out += `\x1b[${r};1H\x1b[K${line.painted}\r\n`;
+      this.transcriptRows.set(r, line);
       r++;
     }
     this.streamRow = Math.max(1, Math.min(rows, r));
@@ -725,16 +896,37 @@ export class TerminalUI implements ChatTerminal {
       const scrolls = Math.min(rows, this.streamRow - liveStart);
       out += `\x1b[${rows};1H` + '\n'.repeat(scrolls);
       this.streamRow -= scrolls;
+      this.scrollTranscriptRows(scrolls);
+    }
+    this.liveTranscriptRows.clear();
+    if (this.started) {
+      const liveTranscript = [...partialRows, ...liveReasoning];
+      for (let i = overflow; i < liveTranscript.length; i++) {
+        this.liveTranscriptRows.set(liveStart + i - overflow, liveTranscript[i]);
+      }
     }
     for (let i = 0; i < liveCount; i++) {
       out += `\x1b[${liveStart + i};1H\x1b[K${body[i]}` + (i === liveCount - 1 ? '' : '\r\n');
     }
+    if (showUsage) {
+      for (let i = 0; i < rows; i++) {
+        const content = sidebar[i];
+        const panel = content ? paintSidebarRow(content)
+          : this.color ? this.paint(' '.repeat(SIDEBAR_WIDTH), this.panelStyle) : '';
+        if (panel) out += `\x1b[${i + 1};${rightStart + 1}H${panel}`;
+      }
+    }
+    this.sidebarPainted = showUsage;
     const cursorLiveRow = Math.min(rows, liveStart + editorStartIdx + (cursor.row - this.editorScroll));
     const cursorCol = Math.min(columns, controlMargin + 3 + cursor.column);
     out += `\x1b[${cursorLiveRow};${cursorCol}H` + (this.pending || editingFollowup ? '\x1b[?25h' : '\x1b[?25l');
     this.cursorRow = cursorLiveRow;
     this.output.write(out);
   };
+
+  private eraseSidebar(rows: number, column: number): string {
+    return Array.from({ length: rows }, (_, i) => `\x1b[${i + 1};${column}H\x1b[K`).join('');
+  }
 
   /** 未完了行の色分け用に、完成行までの状態を複製する。 */
   private fork(): TranscriptColorizer {
@@ -745,7 +937,15 @@ export class TerminalUI implements ChatTerminal {
 
   close = (): void => {
     if (this.closed) return;
+    this.leaveHistory(false);
+    this.cancelDrag();
     this.closed = true;
+    if (this.mouseInput) {
+      this.input.off('data', this.mouseInput.write);
+      this.mouseInput.close();
+      this.keyInput?.destroy();
+      this.output.write('\x1b[?1006l\x1b[?1002l');
+    }
     clearInterval(this.subagentTimer);
     this.clipboardTask?.abort(); this.clipboardTask = undefined;
     this.images = [];
@@ -760,6 +960,9 @@ export class TerminalUI implements ChatTerminal {
     const rows = this.rows();
     const eraseRow = Math.min(rows, this.streamRow >= 1 ? this.streamRow : rows);
     const base = Math.max(1, Math.min(rows, this.cursorRow >= 1 ? this.cursorRow : rows));
+    if (this.sidebarPainted) {
+      this.output.write(this.eraseSidebar(rows, this.columns() - SIDEBAR_WIDTH + 1) + `\x1b[${base};1H`);
+    }
     const up = base - eraseRow;
     if (up > 0) this.output.write(`\x1b[${up}A`);
     this.output.write('\r\x1b[J');

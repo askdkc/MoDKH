@@ -25,9 +25,13 @@ test('cloud uses the official host and bearer key without inheriting the local e
   const original = globalThis.fetch;
   const seen: { url: string; auth: string | null; model: string }[] = [];
   globalThis.fetch = async (url, init) => {
+    const request = JSON.parse(String(init?.body));
     seen.push({ url: String(url), auth: new Headers(init?.headers).get('authorization'),
-      model: JSON.parse(String(init?.body)).model });
-    return new Response('data: {"id":"test","object":"chat.completion.chunk","created":1,"model":"test","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+      model: request.model });
+    const usage = request.stream_options?.include_usage === true
+      ? 'data: {"choices":[],"usage":{"prompt_tokens":37,"completion_tokens":20,"total_tokens":57,"prompt_tokens_details":{"cached_tokens":0}}}\n\n'
+      : '';
+    return new Response('data: {"id":"test","object":"chat.completion.chunk","created":1,"model":"test","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n' + usage + 'data: [DONE]\n\n',
       { headers: { 'content-type': 'text/event-stream' } });
   };
   const env = { OLLAMA_API_KEY: 'cloud-test-key', OLLAMA_BASE_URL: 'http://127.0.0.1:12345/v1' };
@@ -37,6 +41,10 @@ test('cloud uses the official host and bearer key without inheriting the local e
       const events = [];
       for await (const event of model.stream({ messages: [{ role: 'user', content: 'hi' }], tools: [] }, new AbortController().signal)) events.push(event);
       assert.ok(events.some(e => e.type === 'finish' && e.stopReason === 'stop'));
+      const usage = events.filter(e => e.type === 'usage');
+      assert.deepEqual(usage, spec.provider === 'ollama-cloud' ? [{
+        type: 'usage', input: 37, uncachedInput: 37, output: 20, cacheRead: 0, cacheWrite: undefined,
+      }] : []);
     }
     assert.deepEqual(seen, [
       { url: 'https://ollama.com/v1/chat/completions', auth: 'Bearer cloud-test-key', model: 'gemma4:31b' },

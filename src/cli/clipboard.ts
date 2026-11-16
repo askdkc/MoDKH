@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { pipeline } from 'node:stream/promises';
 import { MAX_IMAGE_BYTES, parseImage, type ImageAttachment } from '../agent/images.ts';
 
 /** Read only on an explicit Ctrl+V. No clipboard text, files, credentials or network access. */
@@ -49,4 +50,31 @@ export async function readClipboardImage(signal: AbortSignal, options: { platfor
   try { value = JSON.parse(output); }
   catch { throw new Error('クリップボードの画像を読み取れませんでした'); }
   return parseImage(value);
+}
+
+export const MAC_TEXT_SCRIPT = `
+ObjC.import('AppKit');
+ObjC.import('Foundation');
+const data = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile;
+const text = $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding);
+if (text.isNil()) throw new Error('Invalid UTF-8');
+const board = $.NSPasteboard.generalPasteboard;
+board.clearContents;
+if (!board.setStringForType(text, $.NSPasteboardTypeString)) throw new Error('Pasteboard write failed');
+`;
+
+export async function writeClipboardText(text: string): Promise<void> {
+  if (process.platform !== 'darwin') throw new Error('回答のコピーはmacOSで使えます');
+  try {
+    const child = execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', MAC_TEXT_SCRIPT], {
+      timeout: 5000, killSignal: 'SIGKILL',
+    });
+    const completion = new Promise<void>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', code => code === 0 ? resolve() : reject(new Error('Pasteboard write failed')));
+    });
+    await Promise.all([completion, pipeline([text], child.stdin!)]);
+  } catch {
+    throw new Error('クリップボードに回答をコピーできませんでした');
+  }
 }

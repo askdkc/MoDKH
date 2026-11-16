@@ -50,7 +50,7 @@ for (const reported of [true, false]) {
         // The SDK folds cached tokens into the prompt total, so input reads 2k and the ratio is
         // cache over total input. Every number is the provider's; nothing is estimated here.
         assert.match(output, /使用量: 計 2k tok · cache 67% · 入 2k · 出 250/, output);
-        assert.match(output, /トークン消費量 +3\.5K\n未キャッシュ入力 +1K\nキャッシュ読み取り +2K\nキャッシュ書き込み +—\n出力 +500/, output);
+        assert.match(output, /トークン使用量 +3,500 tok\nキャッシュヒット +67%\n未キャッシュ入力 +1,000\nキャッシュ済み入力 +2,000\nキャッシュ書き込み +—\n出力 +500/, output);
       } else {
         assert.doesNotMatch(output, /計 .*tok/, `no usage may be invented:\n${output}`);
         assert.match(output, /トークン使用量はまだ報告されていません/);
