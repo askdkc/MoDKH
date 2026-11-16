@@ -6,6 +6,7 @@ import { readClipboardImage, type ClipboardReader } from './clipboard.ts';
 import { MAX_IMAGES, parseImage, type ImageAttachment } from '../agent/images.ts';
 import type { ReadStream, WriteStream } from 'node:tty';
 import { LineSource } from './lines.ts';
+import type { SubagentActivity } from '../subagents/service.ts';
 import {
   TranscriptColorizer,
   classifyBackground,
@@ -30,6 +31,9 @@ export interface ChatTerminal {
   choose(title: string, choices: readonly Choice[], query?: string): Promise<string | null>;
   setModel(model: string | null): void;
   setActivity?(activity: string | null): void;
+  /** Return an error to keep the draft, or null to accept it. */
+  beginFollowups?(submit: (text: string) => string | null): (unsent: string[]) => void;
+  setSubagent?(activity: SubagentActivity | null): void;
   setUsage?(usage: UsageTotals): void;
   /** Live reasoning text; `null` flushes it into the transcript. Display only, never a message. */
   setReasoning?(delta: string | null): void;
@@ -107,6 +111,7 @@ class PlainTerminal implements ChatTerminal {
 type Pending = { finish: (value: string | null) => void; title: string; choices?: readonly Choice[]; secret?: boolean; composer?: boolean };
 export interface TerminalOptions { readClipboardImage?: ClipboardReader }
 const MAX_INPUT_BYTES = 128 * 1024;
+const SUBAGENT_PANE_WIDTH = 34;
 /**
  * メインスクリーンに流し込むストリーミングUI。
  * - 完成したトランスクリプト行は一度だけ出力し、その後は端末のスクロールバックへ流れる
@@ -137,6 +142,10 @@ export class TerminalUI implements ChatTerminal {
   private clearPending = false;
   private model: string | null = null;
   private activity: string | null = null;
+  private followup?: (text: string) => string | null;
+  private subagent: SubagentActivity | null = null;
+  private subagentStarted = 0;
+  private subagentTimer?: NodeJS.Timeout;
   private usage: UsageTotals | null = null;
   private closed = false;
   private paste = false;
@@ -260,6 +269,50 @@ export class TerminalUI implements ChatTerminal {
   write(text: string, kind: TranscriptKind = 'system'): void { this.appendTranscript(text, kind); this.render(); }
   setModel(model: string | null): void { this.model = model; this.render(); }
   setActivity(activity: string | null): void { if (this.activity !== activity) { this.activity = activity; this.render(); } }
+  beginFollowups(submit: (text: string) => string | null): (unsent: string[]) => void {
+    this.followup = submit;
+    this.render();
+    return unsent => {
+      if (this.followup !== submit) return;
+      this.followup = undefined;
+      if (unsent.length) {
+        this.text = [...unsent, this.text].filter(Boolean).join('\n\n');
+        this.cursor = chars(this.text).length;
+        this.write('\n(送信待ちだった追加の依頼を入力欄に戻しました)\n');
+      }
+      this.render();
+    };
+  }
+
+  private sendFollowup(): void {
+    if (!this.text.trim() || !this.followup) return;
+    const command = this.text.includes('\n') ? '' : this.text.trim().split(/\s+/, 1)[0];
+    const isCommand = command === '/quit' || command === '/head' || COMMANDS.some(choice => choice.value === command);
+    const error = isCommand ? 'スラッシュコマンドは応答完了後に使えます' : this.followup(this.text);
+    this.inputNotice = error ?? '追加の依頼を受け付けました';
+    if (error === null) { this.text = ''; this.cursor = 0; this.editorScroll = 0; }
+  }
+
+  private hasSidePane(): boolean {
+    return !!this.subagent && !this.pending && this.width() >= 80 && this.rows() >= 11;
+  }
+
+  private editorWidth(): number {
+    return Math.max(5, this.width() - (this.hasSidePane() ? SUBAGENT_PANE_WIDTH + 5 : 3));
+  }
+
+  setSubagent(activity: SubagentActivity | null): void {
+    if (this.closed || (this.subagent?.phase === activity?.phase && this.subagent?.pluginId === activity?.pluginId && this.subagent?.task === activity?.task)) return;
+    if (activity && !this.subagent) {
+      this.subagentStarted = performance.now();
+      this.subagentTimer = setInterval(this.render, 1000).unref();
+    } else if (!activity) {
+      clearInterval(this.subagentTimer);
+      this.subagentTimer = undefined;
+    }
+    this.subagent = activity;
+    this.render();
+  }
   setUsage(usage: UsageTotals): void { this.usage = usage; this.render(); }
   /** Accumulate one reasoning delta, or flush the finished block into the transcript with `null`. */
   setReasoning(delta: string | null): void {
@@ -279,7 +332,11 @@ export class TerminalUI implements ChatTerminal {
     if (signal?.aborted || this.closed) return Promise.resolve(null);
     if (this.queued.length) return Promise.resolve(this.queued.shift()!);
     if (this.pending) throw new Error('端末の入力待ちは同時に1件だけです');
-    this.text = query; this.cursor = chars(query).length; this.selection = 0; this.hiddenCompletion = false;
+    const draft = !composer && this.text
+      ? { text: this.text, cursor: this.cursor, scroll: this.editorScroll, notice: this.inputNotice } : undefined;
+    this.text = composer ? this.text : query;
+    this.cursor = composer ? this.cursor : chars(query).length;
+    this.selection = 0; this.hiddenCompletion = false;
     this.editorScroll = 0; this.inputNotice = '';
     return new Promise(resolve => {
       const abort = () => finish(null);
@@ -288,7 +345,10 @@ export class TerminalUI implements ChatTerminal {
         this.clipboardTask?.abort(); this.clipboardTask = undefined;
         this.paste = false; this.pasteBuffer = ''; this.pasteBytes = 0;
         if (value === null && composer) this.images = [];
-        this.pending = undefined; this.text = ''; this.cursor = 0; this.render(); resolve(value);
+        this.pending = undefined;
+        this.text = draft?.text ?? ''; this.cursor = draft?.cursor ?? 0;
+        this.editorScroll = draft?.scroll ?? 0; this.inputNotice = draft?.notice ?? '';
+        this.render(); resolve(value);
       };
       this.pending = { title, choices, finish, secret, composer };
       signal?.addEventListener('abort', abort, { once: true });
@@ -302,13 +362,13 @@ export class TerminalUI implements ChatTerminal {
       // Pinned rows are actions: they stay on top so a bare Enter cannot pick an arbitrary model.
       return [...visible.filter(c => c.pinned), ...visible.filter(c => !c.pinned)];
     }
-    if (!this.hiddenCompletion && this.text.startsWith('/') && !(/\s/.test(this.text))) return matching(COMMANDS, this.text);
+    if (this.pending && !this.hiddenCompletion && this.text.startsWith('/') && !(/\s/.test(this.text))) return matching(COMMANDS, this.text);
     return undefined;
   }
   private insertText(value: string): void {
     if (this.replySilenced) return; // OSC 返信の取り込みを入力にしない
     const normalized = clean(value.replace(/\r\n?/g, '\n').replace(/\t/g, '  '));
-    const added = chars(this.pending?.composer ? normalized : normalized.replace(/\n/g, ' '));
+    const added = chars((this.pending?.composer || (!this.pending && this.followup)) ? normalized : normalized.replace(/\n/g, ' '));
     const parts = chars(this.text);
     const next = parts.slice(0, this.cursor).concat(added, parts.slice(this.cursor)).join('');
     if (Buffer.byteLength(next) > MAX_INPUT_BYTES) { this.inputNotice = '入力は128 KiB以内にしてください'; return; }
@@ -337,7 +397,7 @@ export class TerminalUI implements ChatTerminal {
     if (key.name === 'paste-start') { this.paste = true; this.pasteBuffer = ''; this.pasteBytes = 0; return; }
     if (key.name === 'paste-end') {
       this.paste = false;
-      if (this.pending && this.pasteBytes <= MAX_INPUT_BYTES) this.insertText(this.pasteBuffer);
+      if ((this.pending || this.followup) && this.pasteBytes <= MAX_INPUT_BYTES) this.insertText(this.pasteBuffer);
       else if (this.pasteBytes > MAX_INPUT_BYTES) this.inputNotice = '貼り付けるテキストは128 KiB以内にしてください';
       this.pasteBuffer = ''; this.pasteBytes = 0; this.render(); return;
     }
@@ -358,33 +418,35 @@ export class TerminalUI implements ChatTerminal {
     // 返信チャンク(OSC 応答)から生じたキー入力だけを握りつぶす。Ctrl+C は通す。
     if (this.replySilenced && !(key.ctrl && key.name === 'c')) return;
     // PageUp/PgDn は端末本来のスクロールに任せる(代替スクリーンを使わないため)。
-    if (!this.pending) return;
+    const pending = this.pending;
+    if (!pending && !this.followup) return;
+    const composer = pending ? pending.composer : true;
     if (key.ctrl && key.name === 'v') { void this.pasteImage(); return; }
-    if (key.ctrl && key.name === 'x' && this.pending.composer) {
+    if (key.ctrl && key.name === 'x' && pending?.composer) {
       this.clipboardTask?.abort(); this.clipboardTask = undefined;
       this.images.pop(); this.inputNotice = ''; this.render(); return;
     }
     const options = this.options();
     if (key.name === 'escape' || key.ctrl && key.name === 'd') {
-      if (this.pending.choices) this.pending.finish(null);
+      if (pending?.choices) pending.finish(null);
       else if (options?.length && key.name === 'escape') { this.hiddenCompletion = true; this.render(); }
-      else if (!this.text && key.ctrl) this.pending.finish(null);
+      else if (!this.text && key.ctrl) pending?.finish(null);
       return;
     }
-    const newline = this.pending.composer && (value === '\n' || key.ctrl && key.name === 'j' || (key.name === 'return' || key.name === 'enter') && (key.shift || key.meta));
+    const newline = composer && (value === '\n' || key.ctrl && key.name === 'j' || (key.name === 'return' || key.name === 'enter') && (key.shift || key.meta));
     if (newline) this.insertText('\n');
     else if (options && (key.name === 'up' || key.name === 'down')) {
       this.selection = options.length ? (this.selection + (key.name === 'down' ? 1 : -1) + options.length) % options.length : 0;
-    } else if (this.pending.composer && (key.name === 'up' || key.name === 'down')) {
-      const width = Math.max(5, Math.min(this.width() - 4, 80) - 3);
-      this.cursor = verticalCursor(this.text, this.cursor, width, key.name === 'up' ? -1 : 1);
+    } else if (composer && (key.name === 'up' || key.name === 'down')) {
+      this.cursor = verticalCursor(this.text, this.cursor, this.editorWidth(), key.name === 'up' ? -1 : 1);
     } else if (key.name === 'return' || key.name === 'enter' || key.name === 'tab') {
       if (this.clipboardTask) { this.inputNotice = '画像の読込中です。完了後にEnterで送信'; this.render(); return; }
       const selected = options?.[this.selection];
       if (key.name === 'tab') {
-        if (selected && !this.pending.choices) { this.text = selected.value; this.cursor = chars(this.text).length; }
-      } else if (this.pending.choices) { if (selected) this.pending.finish(selected.value); }
-      else this.pending.finish(selected?.value ?? this.text);
+        if (selected && !pending?.choices) { this.text = selected.value; this.cursor = chars(this.text).length; }
+      } else if (pending?.choices) { if (selected) pending.finish(selected.value); }
+      else if (pending) pending.finish(selected?.value ?? this.text);
+      else this.sendFollowup();
     } else if (key.name === 'left') this.cursor = Math.max(0, this.cursor - 1);
     else if (key.name === 'right') this.cursor = Math.min(chars(this.text).length, this.cursor + 1);
     else if (key.name === 'home' || key.ctrl && key.name === 'a') this.cursor = lineEdge(this.text, this.cursor, 'start');
@@ -455,10 +517,24 @@ export class TerminalUI implements ChatTerminal {
     // --- ライブブロック(最下部)を構成する ---
     const displayText = this.pending?.secret ? '•'.repeat(chars(this.text).length) : this.text;
     const composer = !this.pending || this.pending.composer;
-    const editor = editorLayout(displayText, Math.max(5, width - 3));
+    const editor = editorLayout(displayText, this.editorWidth());
     const cursor = editor.positions[Math.min(this.cursor, editor.positions.length - 1)];
     const inputRows = Math.min(Math.max(1, rows - 8), Math.max(composer ? 3 : 1, editor.lines.length));
     const options = this.options();
+    const childPhase = this.subagent
+      ? `${this.subagent.phase} · ${Math.floor((performance.now() - this.subagentStarted) / 1000)}秒` : '';
+    const paneWidth = SUBAGENT_PANE_WIDTH;
+    const childTask = this.subagent?.task.split(/\r?\n/, 1)[0];
+    const pane = this.hasSidePane() ? this.subagent : null;
+    const sidePane = pane ? ['サブエージェント', childPhase, childTask ?? ''] : [];
+    const editingFollowup = !this.pending && !!this.followup;
+    const compactChild = !!this.subagent && sidePane.length === 0;
+    const withPane = (text: string, content: string): string => {
+      const left = fitText(text, width - paneWidth - 2);
+      const right = fitText(content, paneWidth - 4);
+      return left + ' '.repeat(width - paneWidth - textWidth(left))
+        + `│ ${right}` + ' '.repeat(paneWidth - 3 - textWidth(right)) + '│';
+    };
 
     const partialLines = this.partial ? wrap(this.partial, width)
       .map(line => marginPrefix + (this.color ? this.fork().line(line, this.palette, this.partialKind) : line)) : [];
@@ -497,12 +573,19 @@ export class TerminalUI implements ChatTerminal {
     for (let i = 0; i < inputRows; i++) {
       const line = editor.lines[this.editorScroll + i] ?? '';
       const placeholder = i === 0 && !this.text ? (this.pending?.choices ? 'Search…' : this.pending?.title ?? this.activity ?? '処理中… Ctrl+C で中止') : '';
-      lines.push({ text: `│ ${line || placeholder}`, style: placeholder && this.pending ? READABLE_TEXT_STYLE : '' });
+      let text = `│ ${line || placeholder}`;
+      if (sidePane[i] !== undefined) text = withPane(text, sidePane[i]);
+      else if (!this.pending && this.subagent && (!editingFollowup || (!this.text && i > 0))) {
+        text = `│ ${[childPhase, this.subagent.pluginId, childTask][i] ?? ''}`;
+      }
+      lines.push({ text, style: placeholder && this.pending ? READABLE_TEXT_STYLE : '' });
     }
     const attachments = composer && this.images.length ? ` · 画像${this.images.length}枚 (Ctrl+Xで削除)` : '';
     const status = this.inputNotice && !this.pending?.secret ? this.inputNotice : `MoDKH  ·  ${this.model ?? '未接続 — /connect'}${attachments}`;
-    lines.push({ text: `│ ${status}`, style: ACCENT });
-    const hints = !this.pending ? 'Ctrl+C 中止（入力は応答完了後）' : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
+    const modelStatus = `│ ${compactChild && (this.pending || editingFollowup) ? childPhase : status}`;
+    lines.push({ text: pane ? withPane(modelStatus, pane.pluginId) : modelStatus, style: ACCENT });
+    const hints = editingFollowup ? `${compactChild && this.inputNotice ? this.inputNotice + '  ' : ''}Enter 追加の依頼を送信  Ctrl+C 中止`
+      : !this.pending ? 'Ctrl+C 中止（入力は応答完了後）' : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
       : composer ? 'Enter 送信  Ctrl+J 改行  Ctrl+V 画像  Cmd+V テキスト' : 'Enter 決定  Ctrl+C 中止';
     lines.push({ text: hints, style: '2' });
     // 最下段: 作業ルート(左)とトークン使用量のステータス(右)。狭い時はルートだけ。
@@ -607,7 +690,7 @@ export class TerminalUI implements ChatTerminal {
     }
     const cursorLiveRow = Math.min(rows, liveStart + editorStartIdx + (cursor.row - this.editorScroll));
     const cursorCol = Math.min(this.columns(), paintMargin + 3 + cursor.column);
-    out += `\x1b[${cursorLiveRow};${cursorCol}H` + (this.pending ? '\x1b[?25h' : '\x1b[?25l');
+    out += `\x1b[${cursorLiveRow};${cursorCol}H` + (this.pending || editingFollowup ? '\x1b[?25h' : '\x1b[?25l');
     this.cursorRow = cursorLiveRow;
     this.output.write(out);
   };
@@ -622,6 +705,7 @@ export class TerminalUI implements ChatTerminal {
   close = (): void => {
     if (this.closed) return;
     this.closed = true;
+    clearInterval(this.subagentTimer);
     this.clipboardTask?.abort(); this.clipboardTask = undefined;
     this.images = [];
     this.pending?.finish(null);

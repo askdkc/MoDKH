@@ -26,8 +26,7 @@ test('workspace policy runs an in-root command without prompting', async () => {
       { root: home, approval: spy, signal: new AbortController().signal });
     assert.match(String(typeof result === 'string' ? result : result.output), /policy-ok/);
     assert.equal(asked, 1, 'approve is consulted so the decision is auditable');
-    assert.match(written.join(''), /自動承認/, 'the automatic effect is still reported');
-    assert.doesNotMatch(written.join(''), /承認要求/, 'no prompt is shown');
+    assert.deepEqual(written, [], 'automatic approval does not add a separate transcript line');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -64,7 +63,7 @@ test('all runs in-root edits without prompting, and the edit still applies', asy
       { root, approval, signal: new AbortController().signal });
     assert.match(String(typeof result === 'string' ? result : result.output), /a\.txt/);
     assert.equal(fs.readFileSync(path.join(root, 'a.txt'), 'utf8'), 'after\n');
-    assert.match(written.join(''), /自動承認/);
+    assert.deepEqual(written, []);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -75,7 +74,7 @@ test('changing the policy affects later requests only', async () => {
   assert.match(written.join(''), /workspace — ワークスペース内は自動/);
   written.length = 0;
   await approval.approve({ kind: 'edit', title: '内側', detail: '', outsideWorkspace: false });
-  assert.match(written.join(''), /自動承認/);
+  assert.deepEqual(written, []);
   approval.setPolicy('none');
   written.length = 0;
   await approval.approve({ kind: 'edit', title: '内側', detail: '', outsideWorkspace: false });

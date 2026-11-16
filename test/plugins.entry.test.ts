@@ -178,6 +178,8 @@ test('empty and malformed plugin settings retain ordinary chat and command help'
 
 test('bare startup can select a worker, approve its edits and collect its result', t => {
   const f = sandbox(t);
+  fs.mkdirSync(f.home, { recursive: true });
+  fs.writeFileSync(path.join(f.home, 'config.json'), JSON.stringify({ permissions: 'none' }));
   const output = f.run([], '/connect fixed/scripted\n/agents run\n2\nImplement fixture\ny\ny\ny\n/exit\n');
   assert.match(output, /子の実行結果: ok/);
   assert.match(output, /modkh-worker \/ /);

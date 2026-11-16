@@ -145,3 +145,51 @@ test('reasoning and transcript stream into the scrollback instead of being erase
     assert.match(view, /│ MoDKH/, 'the live status block stays on screen');
   } finally { t.ui.close(); }
 });
+
+test('the active child uses a right-hand pane and remains visible after narrowing', async () => {
+  const t = terminal(110, 30);
+  try {
+    t.ui.write('▶ You: 調査\n');
+    t.ui.setActivity('子エージェントの結果を待機中');
+    t.ui.setSubagent({ pluginId: 'modkh-explorer', task: '設定ファイルを調査', phase: 'モデル応答を待機中' });
+    assert.match(t.text(), /子エージェントの結果を待機中 +│ サブエージェント/);
+    assert.match(t.text(), /│ モデル応答を待機中 · 0秒/);
+    assert.match(t.text(), /│ 設定ファイルを調査 +│/);
+    t.output.columns = 40;
+    t.output.emit('resize');
+    assert.match(t.text(), /│ モデル応答を待機中 · 0秒/);
+    assert.match(t.text(), /│ modkh-explorer/);
+    assert.match(t.text(), /│ 設定ファイルを調査/);
+    assert.ok(t.text().split('\n').every(line => textWidth(line) <= 40));
+
+    const approved = t.ui.ask('承認: y で実行');
+    t.ui.setSubagent({ pluginId: 'modkh-explorer', task: '設定ファイルを調査', phase: '承認待ち' });
+    assert.match(t.text(), /承認: y で実行/);
+    assert.match(t.text(), /承認待ち/);
+    t.key('y', 'y');
+    t.key('return');
+    assert.equal(await approved, 'y');
+
+    t.ui.setSubagent(null);
+    assert.doesNotMatch(t.text(), /modkh-explorer|承認待ち/);
+  } finally { t.ui.close(); }
+});
+
+test('an approval temporarily takes the input without consuming the follow-up draft', async () => {
+  const t = terminal();
+  try {
+    t.ui.write('▶ You: 調査\n');
+    const sent: string[] = [];
+    const finish = t.ui.beginFollowups(text => { sent.push(text); return null; });
+    t.key('a', '追記');
+    const approval = t.ui.ask('承認: y で実行');
+    assert.match(t.text(), /承認: y で実行/);
+    t.key('y', 'y');
+    t.key('return');
+    assert.equal(await approval, 'y');
+    assert.match(t.text(), /│ 追記/);
+    t.key('return');
+    assert.deepEqual(sent, ['追記']);
+    finish([]);
+  } finally { t.ui.close(); }
+});

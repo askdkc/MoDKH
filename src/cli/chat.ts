@@ -229,6 +229,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       return { ref, create: () => makeModel(ref, baseUrl, 0, key, { timeoutMs }) };
     },
     progress: message => ui.write(`${message}\n`),
+    activity: status => ui.setSubagent?.(status),
   });
   // Analysis must never delay an edit. After a write the tool already reports success, so this
   // runs in the background and its result is attached to the next read of the same file.
@@ -298,6 +299,19 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     };
     // Stop処理の回収が終わるまで、重ねたSIGINTで所有子を置き去りにしない。
     process.on('SIGINT', onSigint);
+    const followups: string[] = [];
+    const finishFollowups = activeModel && ui.beginFollowups?.(message => {
+      if (ac.signal.aborted) return '中止処理中です';
+      if (followups.length >= 8) return '追加の依頼は8件まで送信待ちにできます';
+      followups.push(message);
+      return null;
+    });
+    const takeFollowups = () => {
+      const messages = followups.splice(0);
+      if (messages.length) ui.setReasoning?.(null);
+      for (const message of messages) ui.write(`\n▶ You: ${message}\n`);
+      return messages;
+    };
     try {
       let memoryText: string | null = null;
       if (config.memory.enabled && !direct && input.trim()) {
@@ -329,16 +343,19 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           ui.setReasoning?.(null);
           ui.write(`\n▶ ${call.name} ${summarizeArgs(call.args)}\n`);
         },
+        onToolStart: ({ name }: { name: string }) => ui.setActivity?.(name === 'run_subagent'
+          ? '子エージェントの結果を待機中' : 'ツールを実行中'),
         onToolResult: (r: { status: string; output: string }) => {
+          ui.setActivity?.('ツール結果を処理中');
           const output = r.output.split('\n');
           ui.write(`  (結果: ${r.status}) ${output[0].slice(0, 240)}\n`);
           for (const line of output.slice(1, 13)) ui.write(`  ${line.slice(0, 240)}\n`);
           if (output.length > 13) ui.write(`  … 残り${output.length - 13}行（全文はセッション記録）\n`);
         },
       };
-      const outcome = direct
-        ? await runDirectAgent(direct, session, registry, cwd, ac.signal, approval, ui)
-        : await runAgentLoop(session.messages, {
+      const directOutcome = direct && await runDirectAgent(direct, session, registry, cwd, ac.signal, approval, ui);
+      const continueInChat = !directOutcome || (directOutcome.outcome === 'complete' && followups.length > 0 && !ac.signal.aborted);
+      const outcome = continueInChat ? await runAgentLoop(session.messages, {
         model: activeModel!,
         registry,
         root: cwd,
@@ -350,12 +367,14 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           for (const warning of context.warnings) ui.write(`(スキル: ${warning})\n`);
         } },
         checkpoint,
+        takeFollowups,
         analyze,
         maxTurns,
         skills: !lisp,
         jobs,
         ...(reasoningLevel ? { reasoning: reasoningLevel } : {}),
-      });
+      }) : directOutcome;
+      finishFollowups?.(followups.splice(0));
       // 本作業の証拠と状態を先に確定する。メモリ保存はこれを変更しない。
       ui.setReasoning?.(null);
       checkpoint();
@@ -385,6 +404,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       }
 
     } finally {
+      finishFollowups?.(followups.splice(0));
       ui.setActivity?.(null);
       process.removeListener('SIGINT', onSigint);
       // 中断・エラー時も、その時点までの応答をセッションに残す
@@ -537,7 +557,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       }
       if (line === '/help') {
         ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /allow: 承認ポリシー  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n'
-          + '/reasoning off|minimal|low|medium|high [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信 / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');
+          + '/reasoning off|minimal|low|medium|high [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信（実行中の追加依頼はテキストのみ） / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');
         continue;
       }
       if (line.startsWith('/head ')) { if (!model) { ui.write('/connect でモデルを接続してください\n'); continue; } await runTurn(line.slice(6), model); continue; }

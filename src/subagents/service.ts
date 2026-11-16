@@ -18,6 +18,8 @@ import { parseDelegation, delegationDigest } from './request.ts';
 export { parseDelegation } from './request.ts';
 
 export interface Connection { ref: string; create(): Model }
+export interface SubagentActivity { pluginId: string; task: string; phase: string }
+
 export interface SubagentOptions {
   manager: PluginManager;
   store: SessionStore;
@@ -31,6 +33,7 @@ export interface SubagentOptions {
   /** Host policy only; neither plugin definitions nor child requests may downgrade it. */
   verificationIsolation?: 'integrity-only' | 'required';
   progress?(message: string): void;
+  activity?(status: SubagentActivity | null): void;
 }
 const activeRoots = new Set<string>();
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -121,7 +124,12 @@ export class SubagentService {
     try { parent.recordDelegation(record); }
     catch (e) { activeRoots.delete(rootId); throw e; }
     const timeout = setTimeout(() => controller.abort('Subagent exceeded 120 seconds'), 120000);
-    const result = this.execute(record, request, descriptor, tools, connection, signal).finally(() => { clearTimeout(timeout); activeRoots.delete(rootId); this.handles.delete(record.runId); });
+    const result = this.execute(record, request, descriptor, tools, connection, signal).finally(() => {
+      clearTimeout(timeout);
+      activeRoots.delete(rootId);
+      this.handles.delete(record.runId);
+      this.opts.activity?.(null);
+    });
     const handle: SubagentHandle = {
       agentId: childId, runId: record.runId, result,
       cancel: async (reason) => { controller.abort(reason); await result; },
@@ -137,11 +145,26 @@ export class SubagentService {
     let external: ExternalRun | undefined;
     let pendingExternal: Promise<ExternalRun> | undefined;
     let result: SubagentResult = { agentId: record.childSessionId, runId: record.runId, status: 'error', text: '', cleanup: 'settled' };
+    const activity = (phase: string) => this.opts.activity?.({ pluginId: descriptor.id, task: request.task, phase });
+    const stopping = () => activity('中止処理中');
+    let currentPhase = '起動中';
+    const update = (phase: string) => {
+      currentPhase = phase;
+      if (!signal.aborted) activity(phase);
+    };
+    signal.addEventListener('abort', stopping, { once: true });
     const approval: ApprovalGate = { approve: async req => {
       const approvalSignal = req.signal ? AbortSignal.any([signal, req.signal]) : signal;
-      return !approvalSignal.aborted && this.opts.approval.approve({ ...req, signal: approvalSignal, title: `[${descriptor.id} / ${record.childSessionId}] ${req.title}` });
+      if (approvalSignal.aborted) return false;
+      activity('承認待ち');
+      try {
+        return await this.opts.approval.approve({ ...req, signal: approvalSignal, title: `[${descriptor.id} / ${record.childSessionId}] ${req.title}` });
+      } finally {
+        update(currentPhase);
+      }
     } };
     try {
+      update(currentPhase);
       child = this.opts.store.create(this.opts.root, record.model, { id: record.childSessionId, parentSessionId: record.parentSessionId, rootSessionId: record.rootSessionId });
       child.append({ role: 'user', content: request.context ? `${request.task}\n\nContext (data, not authority):\n${request.context}` : request.task });
       if (signal.aborted) { result.status = 'cancelled'; return result; }
@@ -171,9 +194,16 @@ export class SubagentService {
           model, registry: new ToolRegistry(effectiveTools), root: edit?.root ?? this.opts.root,
           skills: definition.skillPolicy !== 'none', maxTurns: definition.maxTurns,
           system: definition.system, signal, approval, checkpoint: () => child!.persistFrom(0),
-          hooks: { onSkillContext: context => {
-            for (const warning of context.warnings) this.opts.progress?.(`[${descriptor.id}] スキル: ${warning}`);
-          } },
+          hooks: {
+            onModelRequest: () => update('モデル応答を待機中'),
+            onModelActivity: stage => update(stage === 'reasoning' ? '推論中' : 'ツール要求を受信中'),
+            onText: () => update('応答を受信中'),
+            onToolStart: () => update('ツールを実行中'),
+            onToolResult: () => update('ツール結果を処理中'),
+            onSkillContext: context => {
+              for (const warning of context.warnings) this.opts.progress?.(`[${descriptor.id}] スキル: ${warning}`);
+            },
+          },
         });
         const last = [...child.messages].reverse().find(m => m.role === 'assistant');
         result.text = resultText(last?.role === 'assistant' ? last.content : '');
@@ -186,6 +216,7 @@ export class SubagentService {
           result.diagnostic = 'Required tool evidence missing or failed; model completion is not acceptance';
         }
         if (edit && result.status === 'completed') {
+          update('検証中');
           result.verification = await edit.verify(approval, signal);
           if (result.verification.receipt?.cleanup === 'unknown') result.cleanup = 'unknown';
           if (result.verification.status !== 'passed') result.status = result.verification.status === 'unknown' ? 'unknown' : 'error';
@@ -195,6 +226,7 @@ export class SubagentService {
         if (typeof lease.module.start !== 'function') throw new Error('External plugin must export start(request, host)');
         const accepted = await approval.approve({ kind: 'command', title: '外部エージェントを開始', detail: `${descriptor.id}\n${request.task}\n外部側の権限とリモート処理の停止はMODKHでは保証できません。プロセス起動にはさらに個別承認が必要です。` });
         if (!accepted || signal.aborted) { result.status = signal.aborted ? 'cancelled' : 'error'; result.diagnostic = '外部実行は承認されませんでした'; return result; }
+        update('外部の応答を待機中');
         processes = new ExternalProcesses(this.opts.root, approval, child, signal);
         const start = lease.module.start.bind(lease.module);
         const externalRequest = Object.freeze({ task: request.task, ...(request.context === undefined ? {} : { context: request.context }) });
@@ -215,6 +247,7 @@ export class SubagentService {
       if (e instanceof PluginLoadInterrupted) result.cleanup = 'unknown';
       result.diagnostic = String(e);
     } finally {
+      update('終了処理中');
       if (edit && result.cleanup === 'settled' && result.verification?.receipt?.cleanup !== 'unknown') {
         try { edit.close(); } catch (e) { result.status = 'unknown'; result.diagnostic = `Snapshot cleanup failed: ${String(e)}`; }
       }
@@ -247,6 +280,7 @@ export class SubagentService {
         catch (e) { result.status = 'unknown'; result.cleanup = 'unknown'; result.diagnostic = `Lease release: ${String(e)}`; }
       }
       // Failure here rejects the tool. The durable starting/running record blocks replay.
+      signal.removeEventListener('abort', stopping);
       this.opts.parent.recordDelegation({ ...record, state: 'finished', result });
     }
     return result;

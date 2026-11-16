@@ -70,7 +70,7 @@ for (const resume of [false, true]) {
       assert.equal(fs.readFileSync(path.join(root, 'src/config.ts'), 'utf8'), 'export const reasoning = "on";\n');
       // The default policy approves in-root effects automatically; any prompt would have hung
       // the run because no `y` answers are supplied.
-      assert.equal((output.match(/\(自動承認: /g) ?? []).length, 2, output.slice(-2000));
+      assert.doesNotMatch(output, /\(自動承認: /, 'tool activity and its results need no separate auto-approval notice');
       assert.doesNotMatch(output, /承認要求/, 'the default policy must not prompt inside the workspace');
       const last = received[4].body.messages.filter(m => m.role === 'tool').map(m => JSON.parse(m.content));
       assert.ok(last.some(r => r.status === 'ok' && r.output.includes('requested setting is enabled') && r.output.includes('# pass 1')), JSON.stringify(last.at(-1)));

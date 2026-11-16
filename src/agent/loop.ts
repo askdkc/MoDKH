@@ -15,6 +15,7 @@ export interface LoopHooks {
   onUsage?(usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }): void;
   onText?(delta: string): void;
   onToolCall?(call: ToolCall): void;
+  onToolStart?(call: ToolCall): void;
   onToolResult?(r: ToolResult): void;
 }
 
@@ -33,6 +34,8 @@ export interface AgentLoopOptions {
   maxTurns?: number;
   /** Persist newly appended messages synchronously; failure prevents further effects. */
   checkpoint?(): void;
+  /** Follow-ups are consumed only between complete assistant/tool exchanges. */
+  takeFollowups?(): string[];
   /** Optional post-effect analysis; its failure never changes the tool result or replays an effect. */
   analyze?(file: string, kind: 'read' | 'write'): Promise<string | null>;
   /** Background-job registry owned by the caller; absent means foreground execution only. */
@@ -82,12 +85,18 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
     messages.push(message);
     opts.checkpoint?.();
   };
+  const appendFollowups = (): boolean => {
+    const followups = opts.takeFollowups?.() ?? [];
+    for (const content of followups) append({ role: 'user', content });
+    return followups.length > 0;
+  };
   for (let turn = 0; turn < maxTurns; turn++) {
     if (opts.signal.aborted) return { outcome: 'interrupted' };
     // A background job that settled since the last step is input the model has not seen.
     // Injecting it as a user turn keeps the notification inside the normal message contract.
     const notices = opts.jobs?.takeNotices() ?? [];
     if (notices.length > 0) append({ role: 'user', content: `(バックグラウンドジョブの完了通知)\n${notices.join('\n\n')}` });
+    appendFollowups();
     let text = '';
     const calls: ToolCall[] = [];
     let stopReason: 'stop' | 'tool-calls' | 'aborted' | 'error' | undefined;
@@ -139,6 +148,7 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
         append({ role: 'user', content: `(バックグラウンドジョブの完了通知)\n${pending.join('\n\n')}` });
         continue;
       }
+      if (stopReason === 'stop' && turn + 1 < maxTurns && appendFollowups()) continue;
       return stopReason === 'stop' ? { outcome: 'complete' }
         : { outcome: 'error', errorMessage: 'ツール終了イベントに呼び出しがない' };
     }
@@ -163,6 +173,7 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
           output: `前回要求(${unresolved.call.id})が結果不明で、同一操作または別操作と確認できない。新しいIDでも再送せず状態を確認する` };
       } else {
         ledger.set(call.id, { call });
+        opts.hooks?.onToolStart?.(call);
         result = await opts.registry.executeOne(call, {
           root: opts.root, approval: opts.approval, signal: opts.signal,
           ...(opts.analyze ? { analyze: opts.analyze } : {}),

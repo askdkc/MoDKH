@@ -154,7 +154,7 @@ export class TranscriptColorizer {
     if (/^#{1,6} /.test(trimmed)) return `\x1b[${palette.heading}m${raw}\x1b[0m`;
     if (/^▶ You:/.test(raw)) return `\x1b[${palette.user}m${raw}\x1b[0m`;
     if (/^▶ /.test(raw)) return `\x1b[${palette.tool}m${raw}\x1b[0m`;
-    if (/^\(自動承認:|^\(承認\)|^\(拒否\)|^\(中断|^\(接続|^\(モデル|^\(推論/.test(trimmed)
+    if (/^\(承認\)|^\(拒否\)|^\(中断|^\(接続|^\(モデル|^\(推論/.test(trimmed)
       || /^ {0,2}\(結果\./.test(trimmed) || /^ {0,2}\(結果:/.test(raw) || /^ {0,2}\(エラー/.test(trimmed)) {
       this.inDiff = false;
       return `\x1b[${palette.result}m${raw}\x1b[0m`;

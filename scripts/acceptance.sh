@@ -34,7 +34,11 @@ printf '# modkh サンプル\n' > "$PROJ/README.md"
 OUT1=$(printf '作業を開始して\n/exit\n' | "$CLI" chat --model fixed/scripted --cwd "$PROJ")
 echo "$OUT1" | grep -q '(応答終了' || { echo "FAIL: 最初のセッションが完了しなかった"; echo "$OUT1"; exit 1; }
 echo "$OUT1" | grep -q 'OUT_OF_ROOT' || { echo "FAIL: ルート外参照の拒否が観測されない"; echo "$OUT1"; exit 1; }
-echo "$OUT1" | grep -q '(自動承認: ' || { echo "FAIL: 既定の workspace ポリシーが自動承認しない"; echo "$OUT1"; exit 1; }
+if echo "$OUT1" | grep -Eq '\(自動承認: |承認要求'; then
+  echo "FAIL: ワークスペース内の自動承認で不要な通知または確認が表示された"
+  echo "$OUT1"
+  exit 1
+fi
 grep -q '固定応答モデルによる追記' "$PROJ/README.md" || { echo "FAIL: 編集が反映されていない"; exit 1; }
 MARKLINES=$(grep -c '実行マーカー' "$PROJ/marker.txt" || true)
 [ "$MARKLINES" = "1" ] || { echo "FAIL: マーカーが1行でない: $MARKLINES"; exit 1; }

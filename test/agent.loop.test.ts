@@ -270,3 +270,26 @@ test('既定の上限は通常の長い作業を通し、暴走だけを止め�
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('follow-ups received during the final answer are sent in order before the turn completes', async () => {
+  const model = new FixedModel([
+    [...delta('first answer'), { type: 'finish', stopReason: 'stop' }],
+    [...delta('updated answer'), { type: 'finish', stopReason: 'stop' }],
+  ]);
+  const messages: AgentMessage[] = [{ role: 'user', content: 'original request' }];
+  const followups: string[] = [];
+  const result = await runAgentLoop(messages, {
+    model, root: process.cwd(), registry: new ToolRegistry([]), approval: new RecordingGate([]),
+    signal: new AbortController().signal, skills: false,
+    hooks: { onText: text => { if (text === 'first answer') followups.push('second request', 'third request'); } },
+    takeFollowups: () => followups.splice(0),
+  });
+  assert.equal(result.outcome, 'complete');
+  assert.deepEqual(model.requests[1].messages, [
+    { role: 'user', content: 'original request' },
+    { role: 'assistant', content: 'first answer' },
+    { role: 'user', content: 'second request' },
+    { role: 'user', content: 'third request' },
+  ]);
+  assert.equal(model.requests.length, 2);
+});

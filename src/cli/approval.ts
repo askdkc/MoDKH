@@ -42,11 +42,7 @@ export class TerminalApprovalGate implements ApprovalGate {
 
   async approve(request: ApprovalRequest): Promise<boolean> {
     const req = request as ApprovalScope;
-    if (!shouldAsk({ policy: this.policy, kind: req.kind, outsideWorkspace: req.outsideWorkspace !== false })) {
-      // Say what ran without asking, so an automatic effect is still visible in the transcript.
-      this.io.write(`(自動承認: ${req.kind} — ${req.title})\n`);
-      return true;
-    }
+    if (!shouldAsk({ policy: this.policy, kind: req.kind, outsideWorkspace: req.outsideWorkspace !== false })) return true;
     this.io.write(`\n--- 承認要求(${req.kind}) ---\n${req.title}\n${req.detail}\n`);
     const answer = await this.askOrInterrupt('実行しますか? [y/N] ', req.signal);
     if (answer === null) {
