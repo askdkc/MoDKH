@@ -201,11 +201,11 @@ test('running language servers are listed in the right-hand pane', async () => {
   try {
     t.ui.write('▶ You: 調査\n', 'user');
     assert.match(t.text(), /│ 言語サーバー 0稼働 +│/);
-    t.ui.setServers([{ id: 'ts', root: '/workspace' }, { id: 'css', root: '/workspace' }]);
+    t.ui.setServers([{ id: 'typescript', root: '/workspace' }, { id: 'typescript', root: '/workspace/packages/test' }]);
     const view = t.text();
     assert.match(view, /│ 言語サーバー 2稼働 +│/, 'the pane gets its own heading');
-    assert.match(view, /│ ts +│/);
-    assert.match(view, /│ css +│/);
+    assert.match(view, /│ typescript · workspace +│/);
+    assert.match(view, /│ typescript · packages\/test +│/);
     t.ui.setUsage({ input: 100, cacheWrite: 5, responses: 1 });
     const sections = t.text().split('\n').map(row => row.slice(row.indexOf('│')));
     const subagents = sections.findIndex(row => row.startsWith('│ サブエージェント'));
@@ -223,10 +223,12 @@ test('running language servers are listed in the right-hand pane', async () => {
     t.output.emit('resize');
     // The list is display state only: a running server never implies analysis succeeded.
     t.ui.setServers([{ id: 'ts', root: '/workspace' }]);
-    assert.doesNotMatch(t.text(), /│ css/);
+    assert.doesNotMatch(t.text(), /packages\/test/);
+    t.ui.setServers([{ id: 'typescript', root: '/workspace/a-very-long-prefix/日本語/project' }]);
+    assert.match(t.text(), /│ typescript · …[^│]*日本語\/project +│/);
     t.ui.setServers([]);
     assert.match(t.text(), /│ 言語サーバー 0稼働 +│/);
-    assert.doesNotMatch(t.text(), /│ ts +│/);
+    assert.doesNotMatch(t.text(), /│ ts · workspace +│/);
   } finally { t.ui.close(); }
 });
 

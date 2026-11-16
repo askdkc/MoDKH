@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { detectLanguage, type LanguageSettings } from '../detect.ts';
+import { detectLanguage, type Detection, type LanguageSettings } from '../detect.ts';
 import { languageById, type LanguageDefinition } from '../catalog.ts';
 import { ensureInstalled, resolveServer } from '../install.ts';
-import { ServerPool, aggregate, realRoot, type Aggregate, type RunningServer } from './pool.ts';
+import { ServerPool, aggregate, realRoot, type Aggregate, type PoolKeyParts, type RunningServer } from './pool.ts';
 import type { ServerDiagnostic } from './client.ts';
 
 export interface LanguageServiceOptions {
@@ -21,6 +21,10 @@ export interface AnalyzeResult {
   servers?: Aggregate['servers'];
   language?: string;
   installed?: boolean;
+}
+
+interface ServerTarget extends PoolKeyParts {
+  fallbackRoot?: string;
 }
 
 const MAX_ANALYZED_FILE_BYTES = 2 * 1024 * 1024;
@@ -48,15 +52,40 @@ export class LanguageService {
   get poolSize(): number { return this.pool.size; }
   /** Running language servers, for display. Callers must not infer readiness from this list. */
   runningServers(): RunningServer[] { return this.pool.running(); }
-  /** The already-running server for a file, if its language/root was analyzed before. */
+  /** The ready server for a file, if its server target was analyzed before. */
   poolFor(file: string, selector?: 'tailwind'): import('./client.ts').LspServer | undefined {
     const detection = this.detect(file);
     if (!detection) return undefined;
-    const id = selector ?? detection.language.id;
-    const configured = this.settings.servers[id];
-    return this.pool.find(realRoot(detection.root), id, JSON.stringify(configured ?? null));
+    const language = selector ? languageById(selector)! : detection.language;
+    if (this.settings.disabled.includes(language.id)) return undefined;
+    const target = this.serverTarget(language, detection);
+    return this.pool.find(this.preferredRoot(target), target.language.id, target.configDigest);
   }
   detect(file: string) { return detectLanguage(file, this.root); }
+
+  private serverTarget(language: LanguageDefinition, detection: Detection): ServerTarget {
+    const { servers, disabled } = this.settings;
+    const configDigest = JSON.stringify(servers[language.id] ?? null);
+    const projectRoot = realRoot(detection.root);
+    if (language.id !== 'typescript' && language.id !== 'tsx') {
+      return { root: projectRoot, language, configDigest };
+    }
+    // tsserver discovers individual tsconfig projects inside the LSP workspace.
+    const shareTypeScript = language.id === 'tsx' && !disabled.includes('typescript')
+      && configDigest === JSON.stringify(servers.typescript ?? null);
+    return {
+      root: this.root,
+      language: shareTypeScript ? languageById('typescript')! : language,
+      configDigest,
+      ...(projectRoot !== this.root ? { fallbackRoot: projectRoot } : {}),
+    };
+  }
+
+  private preferredRoot(target: ServerTarget): string {
+    // Keep using an established project-local server for analysis and navigation alike.
+    const { fallbackRoot, root, language, configDigest } = target;
+    return fallbackRoot && this.pool.find(fallbackRoot, language.id, configDigest) ? fallbackRoot : root;
+  }
 
   /** Analyze a file after a read or a successful write. Never throws. */
   async analyze(file: string, text: string, signal?: AbortSignal, selector?: 'tailwind'): Promise<AnalyzeResult> {
@@ -75,24 +104,30 @@ export class LanguageService {
     if (this.settings.disabled.includes(language.id)) {
       return { status: 'unavailable', language: language.id, detail: `${language.id} は設定で無効` };
     }
-    const key = `${realRoot(detection.root)}::${language.id}::${file}::${text}`;
+    const target = this.serverTarget(language, detection);
+    const key = `${target.root}::${language.id}::${file}::${text}`;
     const running = this.inflight.get(key);
     if (running) return running;
-    const work = this.analyzeOnce(language, detection.root, file, text, signal).finally(() => this.inflight.delete(key));
+    const work = this.analyzeOnce(target, language.id, file, text, signal).finally(() => this.inflight.delete(key));
     this.inflight.set(key, work);
     return work;
   }
 
-  private async analyzeOnce(language: LanguageDefinition, root: string, file: string, text: string, signal?: AbortSignal, selector?: 'tailwind'): Promise<AnalyzeResult> {
+  private async analyzeOnce(target: ServerTarget, languageId: LanguageDefinition['id'], file: string, text: string, signal?: AbortSignal): Promise<AnalyzeResult> {
+    const { language } = target;
     const configured = this.settings.servers[language.id];
-    const resolved = resolveServer(language, { disabled: false, ...(configured ? { server: configured } : {}) });
+    let resolved = resolveServer(language, configured ? { server: configured } : {});
+    // Older installations may have the same server installed under the TSX recipe.
+    if (resolved.status === 'missing' && language.id === 'typescript' && !configured && !this.settings.servers.tsx) {
+      resolved = resolveServer(languageById('tsx')!, {});
+    }
     let launch = resolved.status === 'ready' && resolved.command
       ? { command: resolved.command, args: resolved.args ?? [] }
       : undefined;
     let installed = false;
     if (!launch) {
       if (!this.settings.autoInstall) {
-        return { status: 'unavailable', language: language.id, detail: resolved.detail ?? 'サーバー未導入（自動導入は無効）' };
+        return { status: 'unavailable', language: languageId, detail: resolved.detail ?? 'サーバー未導入（自動導入は無効）' };
       }
       this.progress?.(`${language.id} の言語サーバーを準備しています（初回のみ）…`);
       const outcome = await ensureInstalled(language, {
@@ -101,33 +136,33 @@ export class LanguageService {
         ...(signal ? { signal } : {}),
       });
       if (outcome.status !== 'ready') {
-        return { status: 'unavailable', language: language.id, detail: outcome.detail ?? 'サーバーを準備できません' };
+        return { status: 'unavailable', language: languageId, detail: outcome.detail ?? 'サーバーを準備できません' };
       }
       installed = true;
       const after = resolveServer(language, {});
       if (after.status !== 'ready' || !after.command) {
-        return { status: 'unavailable', language: language.id, detail: '導入後にサーバーを解決できない' };
+        return { status: 'unavailable', language: languageId, detail: '導入後にサーバーを解決できない' };
       }
       launch = { command: after.command, args: after.args ?? [] };
     }
-    const started = await this.pool.acquire(
-      { root: realRoot(root), language, configDigest: JSON.stringify(configured ?? null) },
-      launch,
-      signal,
-    );
+    const root = this.preferredRoot(target);
+    let started = await this.pool.acquire({ ...target, root }, launch, signal);
+    if (started.status === 'unavailable' && target.fallbackRoot && root === target.root && !signal?.aborted && !this.disposed) {
+      started = await this.pool.acquire({ ...target, root: target.fallbackRoot }, launch, signal);
+    }
     if (started.status !== 'ready') {
-      return { status: 'unavailable', language: language.id, installed, detail: started.detail ?? 'サーバーを起動できません' };
+      return { status: 'unavailable', language: languageId, installed, detail: started.detail ?? 'サーバーを起動できません' };
     }
     let sync;
     try {
       sync = await started.server.synchronize(file, text);
     } catch (e) {
-      return { status: 'partial', language: language.id, installed, detail: `診断を取得できません: ${(e as Error).message}` };
+      return { status: 'partial', language: languageId, installed, detail: `診断を取得できません: ${(e as Error).message}` };
     }
     const combined = aggregate([{ id: language.id, status: sync.status, diagnostics: sync.diagnostics }]);
     return {
       status: sync.status === 'observed' ? 'ok' : 'partial',
-      language: language.id,
+      language: languageId,
       installed,
       diagnostics: combined.diagnostics,
       servers: combined.servers,

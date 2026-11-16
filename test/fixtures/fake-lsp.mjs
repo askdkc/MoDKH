@@ -18,16 +18,19 @@ if (mode === 'owned-child') {
   fs.writeFileSync(process.env.FAKE_LSP_CHILD_PID, String(child.pid));
 }
 
-connection.onRequest('initialize', () => ({
-  capabilities: {
-    textDocumentSync: 1,
-    hoverProvider: true,
-    definitionProvider: true,
-    referencesProvider: true,
-    ...(mode.startsWith('pull-') ? { diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false } } : {}),
-  },
-  serverInfo: { name: 'fake', version: '1' },
-}));
+connection.onRequest('initialize', () => {
+  if (mode === 'needs-local-sdk' && !fs.existsSync('local-sdk')) throw new Error('No local SDK');
+  return {
+    capabilities: {
+      textDocumentSync: 1,
+      hoverProvider: true,
+      definitionProvider: true,
+      referencesProvider: true,
+      ...(mode.startsWith('pull-') ? { diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false } } : {}),
+    },
+    serverInfo: { name: 'fake', version: '1' },
+  };
+});
 connection.onNotification('initialized', () => {});
 connection.onRequest('textDocument/diagnostic', () => mode === 'pull-empty' ? { kind: 'full', items: [] } : { kind: 'unchanged', resultId: 'unknown' });
 connection.onNotification('textDocument/didOpen', params => deliver(params));

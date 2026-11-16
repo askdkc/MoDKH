@@ -8,6 +8,61 @@ const chat = process.env.MODKH_TEST_CHAT ?? new URL('../src/cli/chat.ts',import.
 const fixed = process.env.MODKH_TEST_FIXED ?? new URL('../src/model/fixed.ts',import.meta.url).href;
 const step=(id:string,name:string,args:Record<string,unknown>)=>[{type:'tool-call',call:{id,name,args}},{type:'finish',stopReason:'tool-calls'}];
 const done=[{type:'text-delta',text:'integrated'},{type:'finish',stopReason:'stop'}];
+
+test('ordinary chat reaches the Lisp-configured MoA head and returns both formal receipts', async () => {
+  const root = fs.realpathSync(temporaryDirectory('modkh-formal-chat-'));
+  try {
+    const preset = new URL('../experiments/presets/formal.lisp', import.meta.url);
+    const source = fs.readFileSync(preset, 'utf8');
+    fs.writeFileSync(path.join(root, 'agents.lisp'), source);
+    fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ permissions: 'all', language: { autoInstall: false } }));
+    fs.writeFileSync(path.join(root, 'Model.tla'), '---- MODULE Model ----\n====');
+    fs.writeFileSync(path.join(root, 'Model.cfg'), '');
+    fs.writeFileSync(path.join(root, 'Contract.lean'), 'example : True := trivial');
+    const java = path.join(root, 'java');
+    const lean = path.join(root, 'lean');
+    fs.writeFileSync(java, "#!/bin/sh\nprintf 'Model checking completed. No error has been found.\\n1 distinct states found\\n'\n", { mode: 0o700 });
+    fs.writeFileSync(lean, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+    const scripts = [
+      [step('catalog', 'list_subagents', {}), step('zenki', 'run_subagent', { pluginId: 'micro-zenki', task: 'Check the finite model' }),
+        step('goki', 'run_subagent', { pluginId: 'micro-goki', task: 'Check the standalone contract' }), done],
+      [step('tlc', 'verify_tla', { path: 'Model.tla', config: 'Model.cfg' }), done],
+      [step('lean', 'verify_lean', { path: 'Contract.lean' }), done],
+    ];
+    const args = { cwd: root, model: 'fixed/scripted', routing: 'auto', 'lisp-config': 'agents.lisp',
+      'trust-lisp-sha256': sha256(source), java, lean, 'tla-jar': path.join(root, 'tla2tools.jar') };
+    const harness = `import {runChat} from ${JSON.stringify(chat)};
+      import {FixedModel} from ${JSON.stringify(fixed)};
+      import fs from 'node:fs';
+      const models = ${JSON.stringify(scripts)}.map(script => new FixedModel(script));
+      let index = 0;
+      await runChat({args:${JSON.stringify(args)},modelFactory:()=>models[index++]});
+      fs.writeFileSync('requests.json', JSON.stringify(models[0].requests));`;
+    const proc = spawn(process.execPath, ['--input-type=module', '-e', harness], {
+      cwd: root, env: { ...privateEnvironment(root), MODKH_HOME: root, MODKH_PLAIN: '1', NO_COLOR: '1' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let output = '';
+    proc.stdout.on('data', chunk => output += chunk);
+    proc.stderr.on('data', chunk => output += chunk);
+    const timer = setTimeout(() => proc.kill('SIGKILL'), 15000);
+    proc.stdin.end('Model.tla を検証して。\n/exit\n');
+    try {
+      assert.equal(await new Promise((resolve, reject) => { proc.on('error', reject); proc.on('close', resolve); }), 0, output);
+    } finally { clearTimeout(timer); }
+    const requests = JSON.parse(fs.readFileSync(path.join(root, 'requests.json'), 'utf8'));
+    const instruction = source.match(/\(set-head-instruction\s+"([^"]+)"/)?.[1];
+    assert.ok(instruction);
+    assert.ok(requests[0].system.includes(instruction));
+    const results = requests.at(-1).messages.flatMap((m: { role: string; results?: unknown[] }) => m.role === 'tool' ? m.results : []);
+    const delegations = results.filter((r: { name: string }) => r.name === 'run_subagent');
+    assert.equal(delegations.length, 2, output);
+    const [tlc, leanResult] = delegations.map((r: { output: string }) => JSON.parse(r.output).formalEvidence[0]);
+    assert.equal(JSON.parse(tlc.output).status, 'passed');
+    assert.equal(JSON.parse(leanResult.output).code, 'PROOF_UNVERIFIED');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 for (const isolation of ['integrity-only', 'required']) test(isolation === 'required' ? 'real chat entry: required isolation returns not-executed receipt to head' : 'real chat entry: trusted Lisp head delegates bounded edit and receives independent Node receipt',async()=>{
   const root=fs.realpathSync(temporaryDirectory('modkh-cli-entry-')); const home=path.join(root,'home');fs.mkdirSync(home);
   fs.mkdirSync(path.join(root,'src'));fs.mkdirSync(path.join(root,'test'));

@@ -29,6 +29,9 @@ test('public CLI terminal path: logo → completion → seven providers → conn
   }));
   fs.writeFileSync(path.join(home, 'tsconfig.json'), '{}');
   fs.writeFileSync(path.join(home, 'app.ts'), 'const value = 1;\n');
+  fs.mkdirSync(path.join(home, 'test'));
+  fs.writeFileSync(path.join(home, 'test', 'tsconfig.json'), '{}');
+  fs.writeFileSync(path.join(home, 'test', 'app.test.ts'), 'const value = 2;\n');
   const requests: Record<string, unknown>[] = [];
   let releaseChild: (() => void) | undefined;
   const childRequests = new EventEmitter();
@@ -47,16 +50,19 @@ test('public CLI terminal path: logo → completion → seven providers → conn
         choices: [{ index: 0, delta, finish_reason: finish }],
       })}\n\n`);
       const last = request.messages.at(-1);
-      if (last.content === 'inspect-source') {
-        send({ tool_calls: [{ index: 0, id: 'read-source', type: 'function', function: {
-          name: 'read_file', arguments: JSON.stringify({ path: 'app.ts' }),
+      if (last.content === 'inspect-source' || last.content === 'inspect-test') {
+        const source = last.content === 'inspect-source';
+        send({ tool_calls: [{ index: 0, id: source ? 'read-source' : 'read-test', type: 'function', function: {
+          name: 'read_file', arguments: JSON.stringify({ path: source ? 'app.ts' : 'test/app.test.ts' }),
         } }] }, null);
         send({}, 'tool_calls'); res.end('data: [DONE]\n\n');
         return;
       }
-      if (last.tool_call_id === 'read-source') {
-        assert.match(last.content, /const value = 1/);
-        send({ role: 'assistant', content: 'SOURCE_INSPECTED' }, null);
+      if (last.tool_call_id === 'read-source' || last.tool_call_id === 'read-test') {
+        const source = last.tool_call_id === 'read-source';
+        assert.match(last.content, source ? /const value = 1/ : /const value = 2/);
+        assert.match(last.content, /解析: ok typescript/);
+        send({ role: 'assistant', content: source ? 'SOURCE_INSPECTED' : 'TEST_INSPECTED' }, null);
         send({}, 'stop'); res.end('data: [DONE]\n\n');
         return;
       }
@@ -135,7 +141,10 @@ test('public CLI terminal path: logo → completion → seven providers → conn
     assert.match(visible(), /│ 言語サーバー 0稼働/);
     send('inspect-source\r');
     await wait('SOURCE_INSPECTED');
-    await wait(/│ 言語サーバー 1稼働 +│\n.*│ typescript +│/);
+    await wait('何を調べますか');
+    send('inspect-test\r');
+    await wait('TEST_INSPECTED');
+    await wait(/│ 言語サーバー 1稼働 +│\n.*│ typescript · .*tui-entry-[^ │]+ +│/);
     await wait('何を調べますか');
     send('slow\r'); await wait('WAITING_FOR_STOP');
     send('\x03'); await wait('中断しました');
@@ -187,8 +196,8 @@ test('public CLI terminal path: logo → completion → seven providers → conn
     const journal = sessions.map(file => fs.readFileSync(path.join(home, 'sessions', file), 'utf8')).find(text => text.includes('cloud hello'))!;
     const messages = journal.trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'message');
     assert.deepEqual(messages.filter(row => row.message.role === 'user').map(row => row.message.content),
-      ['こんにちは', 'inspect-source', 'slow', 'delegate', '追加の依頼', 'delegate-stop', 'cloud hello', 'local again']);
-    assert.equal(requests.length, 11);
+      ['こんにちは', 'inspect-source', 'inspect-test', 'slow', 'delegate', '追加の依頼', 'delegate-stop', 'cloud hello', 'local again']);
+    assert.equal(requests.length, 13);
     assert.doesNotMatch(output + journal, /tui-cloud-secret/);
     assert.doesNotMatch(journal, /\/connect/);
   } finally {

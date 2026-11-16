@@ -14,6 +14,43 @@ export function transcriptLines(text: string, width: number): TranscriptLine[] {
   return lines.flatMap((line, index) => transcriptLine(line, width, index < lines.length - 1));
 }
 
+/** Rewrap plain text and carry the renderer's self-contained SGR spans across soft breaks. */
+export function reflowTranscript(rows: readonly TranscriptScreenLine[], width: number): TranscriptScreenLine[] {
+  const result: TranscriptScreenLine[] = [];
+  let text = '';
+  let spans: { start: number; end: number; style: string }[] = [];
+  for (const [index, row] of rows.entries()) {
+    let position = 0;
+    for (const match of row.painted.matchAll(/\x1b\[([0-9;]+)m([^\x1b]*)\x1b\[0m|([^\x1b]+)/g)) {
+      const end = Math.min(row.text.length, position + (match[2] ?? match[3]).length);
+      if (match[1] && end > position) spans.push({ start: text.length + position, end: text.length + end, style: match[1] });
+      position = end;
+    }
+    text += row.text;
+    if (!row.newline && index < rows.length - 1) continue;
+    let start = 0;
+    let spanIndex = 0;
+    for (const line of transcriptLine(text, width, row.newline)) {
+      const end = start + line.text.length;
+      let cursor = start;
+      let painted = '';
+      for (; spanIndex < spans.length && spans[spanIndex].start < end; spanIndex++) {
+        const span = spans[spanIndex];
+        const spanStart = Math.max(start, span.start);
+        painted += text.slice(cursor, spanStart);
+        cursor = Math.min(end, span.end);
+        painted += `\x1b[${span.style}m${text.slice(spanStart, cursor)}\x1b[0m`;
+        if (span.end > end) break;
+      }
+      result.push({ ...line, painted: painted + text.slice(cursor, end) });
+      start = end;
+    }
+    text = '';
+    spans = [];
+  }
+  return result;
+}
+
 export interface DragSelection { anchor: ScreenPoint; end: ScreenPoint }
 
 export function selectedTranscript(rows: ReadonlyMap<number, TranscriptScreenLine>, selection: DragSelection) {

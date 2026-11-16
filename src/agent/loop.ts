@@ -33,6 +33,12 @@ export interface AgentLoopOptions {
    * provider sees a byte-identical prefix on every request and can serve cached input.
    */
   skillContext?: SkillContext | null;
+  /**
+   * このターンのモデル要求にだけ付け足す末尾のデータ。セッション履歴には保存しない。
+   * system を書き換えるとキャッシュprefixが毎ターン崩れるため、可変の参考データは
+   * 履歴より後ろに置き、既存メッセージの位置を動かさない。
+   */
+  transientContext?: string | undefined;
   /** このターンでの推論レベル(/reasoning で指定)。省略はプロバイダーの初期値。 */
   reasoning?: import('./types.ts').ReasoningLevel;
   signal: AbortSignal;
@@ -102,6 +108,13 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
     messages.push(message);
     opts.checkpoint?.();
   };
+  // Appended to the projection only: earlier messages keep their bytes and order, so a provider
+  // that caches a common prefix still hits it, while the transcript stays free of turn-local data.
+  const transient = opts.transientContext?.trim() ? opts.transientContext : undefined;
+  const requestMessages = (): AgentMessage[] => {
+    const projection = outgoing();
+    return transient === undefined ? projection : [...projection, { role: 'user', content: transient }];
+  };
   const appendFollowups = (): boolean => {
     const followups = opts.takeFollowups?.() ?? [];
     for (const content of followups) append({ role: 'user', content });
@@ -123,7 +136,7 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
       if (opts.signal.aborted) return { outcome: 'interrupted' };
       opts.hooks?.onModelRequest?.();
       for await (const ev of opts.model.stream({
-        messages: outgoing(), tools: toolSpecs, system,
+        messages: requestMessages(), tools: toolSpecs, system,
         ...(opts.reasoning ? { reasoning: opts.reasoning } : {}),
       }, opts.signal)) {
         if (opts.signal.aborted) break;

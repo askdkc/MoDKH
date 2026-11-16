@@ -195,6 +195,38 @@ test('analysis failure never throws and reports degradation', async () => {
   assert.equal((await service.analyze('anything.ts', 'x')).status, 'unavailable');
 });
 
+test('TypeScript analysis and navigation reuse one workspace server across nested configs', async () => {
+  const nested = path.join(root, 'typescript-workspace', 'test');
+  fs.mkdirSync(nested, { recursive: true });
+  fs.writeFileSync(path.join(nested, 'tsconfig.json'), '{}');
+  const workspace = path.dirname(nested);
+  const source = path.join(workspace, 'app.ts');
+  const testFile = path.join(nested, 'app.test.ts');
+  const view = path.join(nested, 'view.tsx');
+  const launch = { command: process.execPath, args: [fixture] };
+  const service = new LanguageService({
+    root: workspace,
+    settings: { autoInstall: false, disabled: [], installTimeoutMs: 1000, requestTimeoutMs: 2000,
+      servers: { typescript: launch, tsx: launch } },
+  });
+  try {
+    const results = await Promise.all([
+      service.analyze(source, 'const a = 1;'),
+      service.analyze(testFile, 'BROKEN'),
+      service.analyze(view, 'const view = <div />;'),
+    ]);
+    assert.deepEqual(results.map(result => result.status), ['ok', 'ok', 'ok']);
+    assert.equal(results[2]?.language, 'tsx');
+    assert.equal(results[1]?.diagnostics?.[0]?.message, 'BROKEN_FOUND');
+    assert.deepEqual(service.runningServers(), [{ id: 'typescript', root: workspace }]);
+    const server = service.poolFor(testFile);
+    assert.ok(server);
+    assert.equal(server, service.poolFor(source));
+    assert.equal(server, service.poolFor(view));
+    assert.match(await server.hover(testFile, { line: 0, character: 0 }) ?? '', /HOVER 0:0 6/);
+  } finally { await service.close(); }
+});
+
 test('a file without a language is reported as unsupported rather than clean', async () => {
   const service = new LanguageService({
     root,
@@ -204,6 +236,28 @@ test('a file without a language is reported as unsupported rather than clean', a
     const result = await service.analyze(path.join(root, 'notes.txt'), 'hello');
     assert.equal(result.status, 'unavailable');
     assert.match(result.detail ?? '', /対応言語ではない/);
+  } finally { await service.close(); }
+});
+
+test('TypeScript falls back to the project root when the server needs a project-local SDK', async () => {
+  const project = path.join(root, 'local-sdk-workspace', 'nested');
+  fs.mkdirSync(project, { recursive: true });
+  fs.writeFileSync(path.join(project, 'tsconfig.json'), '{}');
+  fs.writeFileSync(path.join(project, 'local-sdk'), '');
+  const service = new LanguageService({
+    root: path.dirname(project),
+    settings: { autoInstall: false, disabled: [], installTimeoutMs: 1000, requestTimeoutMs: 2000,
+      servers: { typescript: { command: process.execPath, args: [fixture, 'needs-local-sdk'] } } },
+  });
+  try {
+    const file = path.join(project, 'app.ts');
+    assert.equal((await service.analyze(file, 'const a = 1;')).status, 'ok');
+    assert.deepEqual(service.runningServers(), [{ id: 'typescript', root: project }]);
+    const server = service.poolFor(file);
+    assert.ok(server);
+    const sibling = path.join(project, 'other.ts');
+    assert.equal((await service.analyze(sibling, 'const b = 2;')).status, 'ok');
+    assert.equal(service.poolFor(sibling), server);
   } finally { await service.close(); }
 });
 

@@ -4,7 +4,7 @@ import { readBundledSkill, MODKH_SKILL_BINDING } from '../agent/bundled-skills.t
 import type { LocalDefinition, PluginDescriptor } from '../plugins/api.ts';
 import { executeBounded, privateEnvironment, temporaryDirectory, sha256 } from './runtime.ts';
 export interface SessionDefinition { descriptor: PluginDescriptor; definition: LocalDefinition }
-export interface LispConfiguration { digest: string; entries: SessionDefinition[] }
+export interface LispConfiguration { digest: string; entries: SessionDefinition[]; headInstruction?: string }
 const TOOLS = new Set(['code_outline', 'code_definition', 'code_references', 'code_diagnostics', 'code_hover', 'edit_file', 'verify_tla', 'verify_lean']);
 const LANGUAGES = new Set(['php', 'common-lisp', 'js', 'ts', 'svelte', 'tailwindcss', 'html', 'css', 'tla', 'lean']);
 const KINDS = new Set(['outline', 'definition', 'references', 'diagnostics', 'hover', 'edit', 'verify']);
@@ -63,9 +63,13 @@ export function validateDefinitions(raw: unknown, digest: string): SessionDefini
 
 // This is Common Lisp evaluated by SBCL, not an S-expression parser in JavaScript.
 const DRIVER = String.raw`
-(defpackage :modkh (:use :cl) (:export :defmicroagent :register-agent :disable-agent :remove-agent :list-agents :set-agent-check))
+(defpackage :modkh (:use :cl) (:export :defmicroagent :register-agent :disable-agent :remove-agent :list-agents :set-agent-check :set-head-instruction))
 (in-package :modkh)
 (defvar *agents* (make-hash-table :test 'equal))
+(defvar *head-instruction* nil)
+(defun set-head-instruction (instruction)
+  (check-type instruction string)
+  (setf *head-instruction* instruction))
 (defun agent-id (id) (string-downcase (string id)))
 (defun register-agent (id &rest fields)
   (setf id (agent-id id))
@@ -102,14 +106,16 @@ const DRIVER = String.raw`
   (let ((*standard-output* (make-broadcast-stream)) (*trace-output* (make-broadcast-stream))
         (*error-output* (make-broadcast-stream)) (*terminal-io* (make-two-way-stream (make-string-input-stream "") (make-broadcast-stream))))
     (load "input.lisp" :verbose nil :print nil))
-  (write-char #\[ protocol)
+  (write-string "{\"headInstruction\":" protocol)
+  (json-value *head-instruction* protocol)
+  (write-string ",\"entries\":[" protocol)
   (loop for row being the hash-values of *agents* for i from 0 do
     (when (> i 0) (write-char #\, protocol)) (write-char #\{ protocol)
     (loop for (key value) on row by #'cddr for j from 0 do
       (when (> j 0) (write-char #\, protocol)) (json-string (string-downcase (symbol-name key)) protocol) (write-char #\: protocol)
       (if (eq key :enabled) (write-string (if value "true" "false") protocol) (json-value value protocol)))
     (write-char #\} protocol))
-  (write-char #\] protocol) (finish-output protocol))
+  (write-string "]}" protocol) (finish-output protocol))
 `;
 
 export async function loadLispConfiguration(file: string, trustedDigest: string, options: { sbcl?: string; signal?: AbortSignal; timeoutMs?: number } = {}): Promise<LispConfiguration> {
@@ -129,6 +135,11 @@ export async function loadLispConfiguration(file: string, trustedDigest: string,
     });
     settled = receipt.cleanup === 'settled';
     if (receipt.state !== 'exited' || receipt.exitCode !== 0) throw new Error(`Lisp evaluation ${receipt.state}/${receipt.exitCode}: ${receipt.stderr.slice(0, 4096)}`);
-    return { digest: trustedDigest, entries: validateDefinitions(JSON.parse(receipt.stdout), trustedDigest) };
+    const { entries, headInstruction } = JSON.parse(receipt.stdout);
+    return {
+      digest: trustedDigest,
+      entries: validateDefinitions(entries, trustedDigest),
+      ...(headInstruction === null ? {} : { headInstruction: string(headInstruction, 'head instruction', 8192) }),
+    };
   } finally { if (settled) fs.rmSync(dir, { recursive: true, force: true }); }
 }

@@ -34,6 +34,8 @@ for (const [label, source] of [
   ['duplicate', `${role} ${role}`], ['unknown field', '(register-agent "micro-x" :bogus t)'],
   ['unknown tool', '(register-agent "micro-x" :tool "run_command" :instruction "x")'],
   ['max turns', '(register-agent "micro-x" :tool "code_outline" :instruction "x" :max-turns 33)'],
+  ['empty head instruction', '(set-head-instruction "   ")'],
+  ['oversized head instruction', '(set-head-instruction (make-string 8193 :initial-element #\\a))'],
   ['too many', '(loop for n below 65 do (register-agent (format nil "micro-~d" n) :tool "code_outline" :instruction "x"))'],
 ]) test(`rejects ${label} without partial registration`, async () => { await assert.rejects(load(`(in-package :modkh) ${source}`)); });
 test('timeout and output limit are never success; minimal environment excludes secrets', async () => {
@@ -55,4 +57,9 @@ test('all eight presets evaluate in real SBCL; 30 observers plus 8 disabled edit
   const roles=configs.flatMap(c=>c.entries);assert.equal(roles.length,38);assert.equal(roles.filter(r=>r.descriptor.enabled).length,30);
   const enabled=await load(fs.readFileSync(new URL('../experiments/presets/ts.lisp',import.meta.url),'utf8')+'\n(set-agent-check "micro-ts-edit" "node --test test/addition.test.mjs" :sources \'("src/addition.mjs") :protected \'("test/addition.test.mjs"))');
   assert.equal(enabled.entries.find(e=>e.descriptor.id==='micro-ts-edit')!.descriptor.enabled,true);
+});
+test('formal preset configures the head workflow and registers both checkers', async () => {
+  const config = await load(fs.readFileSync(new URL('../experiments/presets/formal.lisp', import.meta.url), 'utf8'));
+  assert.match(config.headInstruction ?? '', /MoA/);
+  assert.deepEqual(config.entries.map(({ descriptor }) => descriptor.id).sort(), ['micro-goki', 'micro-zenki']);
 });

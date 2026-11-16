@@ -230,8 +230,11 @@ export class LspServer {
       });
       return state;
     }
+    const languageId = this.id === 'tailwind' || this.id === 'typescript'
+      ? languageForPath(file)?.id ?? (this.id === 'tailwind' ? 'plaintext' : this.id)
+      : this.id;
     await connection.sendNotification('textDocument/didOpen', {
-      textDocument: { uri: pathToFileURL(file).href, languageId: this.id === 'tailwind' ? (languageForPath(file)?.id === 'tsx' ? 'typescriptreact' : languageForPath(file)?.id ?? 'plaintext') : this.id, version: state.version, text },
+      textDocument: { uri: pathToFileURL(file).href, languageId: languageId === 'tsx' ? 'typescriptreact' : languageId, version: state.version, text },
     });
     return state;
   }

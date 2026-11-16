@@ -1,7 +1,8 @@
 import { emitKeypressEvents, type Key } from 'node:readline';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { TerminalMouseInput, type MouseReport } from './terminal-mouse.ts';
-import { selectedTranscript, transcriptLine, transcriptLines, type DragSelection, type TranscriptLine, type TranscriptScreenLine } from './transcript-selection.ts';
+import { reflowTranscript, selectedTranscript, transcriptLine, transcriptLines, type DragSelection, type TranscriptLine, type TranscriptScreenLine } from './transcript-selection.ts';
 import { EMPTY_USAGE, USAGE_HEADING, usageFooter, usageBadgeLine, usageBreakdownLines, type UsageTotals } from './usage.ts';
 import { chars, clean, fitText, textWidth, wrap, editorLayout, verticalCursor, lineEdge } from './editor.ts';
 export { textWidth, fitText } from './editor.ts';
@@ -133,6 +134,22 @@ export interface TerminalOptions {
 }
 const MAX_INPUT_BYTES = 128 * 1024;
 const SIDEBAR_WIDTH = 36;
+
+function serverRow(server: RunningServer, workspace: string): string {
+  const relative = path.relative(workspace, server.root);
+  const outside = path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`);
+  const root = clean(outside ? server.root : relative || path.basename(server.root) || server.root).replace(/[\r\n\t]/g, ' ');
+  const label = `${server.id} · `;
+  const room = SIDEBAR_WIDTH - 4 - textWidth(label);
+  if (textWidth(root) <= room) return label + root;
+  // Keep the distinguishing end of long roots visible within the sidebar.
+  let suffix = '';
+  for (const char of chars(root).reverse()) {
+    if (textWidth(char + suffix) >= room) break;
+    suffix = char + suffix;
+  }
+  return `${label}…${suffix}`;
+}
 /** At most this many language servers are listed; the rest are counted, never silently dropped. */
 const SIDEBAR_SERVER_ROWS = 3;
 const SERVERS_HEADING = '言語サーバー';
@@ -161,8 +178,8 @@ export class TerminalUI implements ChatTerminal {
   private readonly keyInput?: PassThrough;
   private readonly copyText: typeof writeClipboardText;
   private copyQueue = Promise.resolve();
-  private historyRows: TranscriptLine[] = [];
-  private history?: { text: string; width: number; lines: TranscriptLine[]; offset: number; rows: Map<number, TranscriptScreenLine> };
+  private historyRows: TranscriptScreenLine[] = [];
+  private history?: { source: TranscriptScreenLine[]; width: number; lines: TranscriptScreenLine[]; offset: number; rows: Map<number, TranscriptScreenLine> };
   /** まだ改行が来ていない最終行。ライブブロックの一部として再描画する。 */
   private partial = '';
   private partialKind: TranscriptKind = 'system';
@@ -478,7 +495,7 @@ export class TerminalUI implements ChatTerminal {
     const rows = this.visibleTranscript();
     if (!released && button === 0) {
       // Some terminals repeat the press immediately before the release.
-      if (!this.drag && rows.has(point.row) && point.column <= (this.history ? this.columns() : this.width())) {
+      if (!this.drag && rows.has(point.row) && point.column <= this.width()) {
         this.drag = { anchor: point, end: point };
       }
       return;
@@ -540,7 +557,7 @@ export class TerminalUI implements ChatTerminal {
     const visible = new Map<number, TranscriptScreenLine>();
     for (const [row, line] of this.transcriptRows) {
       if (row > count) visible.set(row - count, line);
-      else if (this.mouseInput) this.historyRows.push({ text: line.text, newline: line.newline });
+      else if (this.mouseInput) this.historyRows.push(line);
     }
     this.transcriptRows = visible;
     if (this.historyRows.length > TRANSCRIPT_HISTORY_ROWS) {
@@ -553,9 +570,8 @@ export class TerminalUI implements ChatTerminal {
     this.cancelDrag();
     if (!this.history) {
       if (delta < 0 || !this.historyRows.length) return;
-      const text = [...this.historyRows, ...this.visibleTranscript().values()]
-        .map(line => line.text + (line.newline ? '\n' : '')).join('');
-      this.history = { text, width: 0, lines: [], offset: 0, rows: new Map() };
+      const source = [...this.historyRows, ...this.visibleTranscript().values()];
+      this.history = { source, width: 0, lines: [], offset: 0, rows: new Map() };
       this.inputNotice = '';
       this.output.write('\x1b[?1049h\x1b[?25l');
     }
@@ -567,24 +583,32 @@ export class TerminalUI implements ChatTerminal {
   private renderHistory(): void {
     const history = this.history;
     if (!history) return;
-    const rows = this.rows() - 1;
-    const width = this.columns();
+    const rows = this.rows();
+    const width = this.width();
     if (history.width !== width) {
       history.width = width;
-      history.lines = transcriptLines(history.text, width);
+      history.lines = reflowTranscript(history.source, width);
     }
     const transcript = history.lines;
-    history.offset = Math.min(history.offset, Math.max(1, transcript.length - rows));
+    const bodyRows = rows - 1;
+    history.offset = Math.min(history.offset, Math.max(1, transcript.length - bodyRows));
     const end = Math.max(0, transcript.length - history.offset);
-    const visible = transcript.slice(Math.max(0, end - rows), end);
+    const visible = transcript.slice(Math.max(0, end - bodyRows), end);
     let out = this.clearDragHighlight() + '\x1b[H\x1b[J';
     history.rows.clear();
     visible.forEach((line, index) => {
-      history.rows.set(index + 1, { ...line, painted: line.text });
-      out += `\x1b[${index + 1};1H${line.text}`;
+      history.rows.set(index + 1, line);
+      out += `\x1b[${index + 1};1H${line.painted}`;
     });
-    const hint = this.inputNotice || '会話履歴  ·  ホイール / PgUp / PgDn  ·  Esc 戻る';
-    this.output.write(out + `\x1b[${rows + 1};1H${this.paint(fitText(hint, width), '2')}` + this.drawDragHighlight());
+    const hint = 'MoDKH · 会話履歴 · Esc 戻る';
+    const details = this.inputNotice || this.activity || 'ホイール / PgUp / PgDn';
+    const footer = fitText(`${hint} · ${details}`, width);
+    out += `\x1b[${rows};1H${this.paint(footer, `${this.panelStyle};${this.panelAccent}`)}`;
+    if (this.hasUsagePane()) {
+      const usage = usageBreakdownLines(this.usage ?? EMPTY_USAGE, SIDEBAR_WIDTH - 4);
+      out += this.drawSidebar(rows, this.columns(), this.sidebarLines(rows, usage));
+    }
+    this.output.write(out + this.drawDragHighlight());
   }
 
   private leaveHistory(redraw = true): void {
@@ -751,10 +775,7 @@ export class TerminalUI implements ChatTerminal {
     const childPhase = this.subagent
       ? `${this.subagent.phase} · ${Math.floor((performance.now() - this.subagentStarted) / 1000)}秒` : '';
     const childTask = this.subagent?.task.split(/\r?\n/, 1)[0];
-    // Reserve both status summaries before allocating rows to details.
-    const detailRoom = rows - usageRows.length - 3;
-    const pane = showUsage && this.started && !this.pending && detailRoom >= 3 + Number(this.servers.length > 0)
-      ? this.subagent : null;
+    const pane = showUsage ? this.sidebarSubagent(rows, usageRows.length) : null;
     const editingFollowup = !this.pending && !!this.followup;
     const compactChild = !!this.subagent && !pane;
     const controlWidth = this.controlWidth();
@@ -833,35 +854,10 @@ export class TerminalUI implements ChatTerminal {
       }
       return this.paint(fitted, row.style);
     };
-    const sidebar: string[] = [];
-    if (showUsage) {
-      const serverRoom = detailRoom - (pane ? 3 : 0);
-      const servers = this.servers.slice(0, Math.min(SIDEBAR_SERVER_ROWS, serverRoom));
-      const serverRows = servers.map(server => server.id);
-      const rest = this.servers.length - servers.length;
-      if (rest > 0 && serverRoom > servers.length) serverRows.push(`ほか${rest}件`);
-      // Preserve room for status details on short terminals before adding decoration.
-      const separatorRoom = serverRoom - serverRows.length;
-      const rule = '─'.repeat(SIDEBAR_WIDTH - 4);
-      const divider = separatorRoom >= 6 ? [' ', rule, ' '] : separatorRoom >= 2 ? [rule] : [];
-      sidebar.push('', ...usageRows, ...divider,
-        `${SUBAGENTS_HEADING} ${this.subagent ? 1 : 0}稼働 / 累計${this.delegationCount}`);
-      if (pane) sidebar.push(childPhase, childTask ?? '', pane.pluginId);
-      sidebar.push(...divider, `${SERVERS_HEADING} ${this.servers.length}稼働`, ...serverRows);
-    }
     const rightStart = columns - SIDEBAR_WIDTH;
-    const paintSidebarRow = (content: string): string => {
-      const right = fitText(content, SIDEBAR_WIDTH - 4);
-      const border = this.paint('│', ACCENT);
-      const heading = content.startsWith(USAGE_HEADING) || content.startsWith(SUBAGENTS_HEADING) || content.startsWith(SERVERS_HEADING);
-      const style = heading ? `${this.panelStyle};1` : this.panelStyle;
-      const padding = ' '.repeat(SIDEBAR_WIDTH - 3 - textWidth(right));
-      const panel = this.paint(` ${right}${padding}`, style);
-      return border + panel + border;
-    };
     const controls = lines.map(row => ' '.repeat(controlMargin) + styled(row, controlWidth));
     if (stackUsage) {
-      controls.splice(controls.length - 2, 0, ...usageRows.map(row => ' '.repeat(rightStart) + paintSidebarRow(row)));
+      controls.splice(controls.length - 2, 0, ...usageRows.map(row => ' '.repeat(rightStart) + this.paintSidebarRow(row)));
     }
     // 会話が始まる前のウェルカム: ロゴ+案内を中央に整える。
     const marginStyled = (row: { text: string; style: string }): string => marginPrefix + styled(row);
@@ -956,14 +952,7 @@ export class TerminalUI implements ChatTerminal {
     for (let i = 0; i < liveCount; i++) {
       out += `\x1b[${liveStart + i};1H\x1b[K${body[i]}` + (i === liveCount - 1 ? '' : '\r\n');
     }
-    if (showUsage) {
-      for (let i = 0; i < rows; i++) {
-        const content = sidebar[i];
-        const panel = content ? paintSidebarRow(content)
-          : this.color ? this.paint(' '.repeat(SIDEBAR_WIDTH), this.panelStyle) : '';
-        if (panel) out += `\x1b[${i + 1};${rightStart + 1}H${panel}`;
-      }
-    }
+    if (showUsage) out += this.drawSidebar(rows, columns, this.sidebarLines(rows, usageRows));
     this.sidebarPainted = showUsage;
     const cursorLiveRow = Math.min(rows, liveStart + editorStartIdx + (cursor.row - this.editorScroll));
     const cursorCol = Math.min(columns, controlMargin + 3 + cursor.column);
@@ -971,6 +960,50 @@ export class TerminalUI implements ChatTerminal {
     this.cursorRow = cursorLiveRow;
     this.output.write(out);
   };
+
+  private sidebarSubagent(rows: number, usageHeight: number): SubagentActivity | null {
+    return this.started && !this.pending && rows - usageHeight - 3 >= 3 + Number(this.servers.length > 0)
+      ? this.subagent : null;
+  }
+
+  private sidebarLines(rows: number, usageRows: string[]): string[] {
+    const pane = this.sidebarSubagent(rows, usageRows.length);
+    const serverRoom = rows - usageRows.length - 3 - (pane ? 3 : 0);
+    const servers = this.servers.slice(0, Math.min(SIDEBAR_SERVER_ROWS, serverRoom));
+    const serverRows = servers.map(server => serverRow(server, this.cwd));
+    const rest = this.servers.length - servers.length;
+    if (rest > 0 && serverRoom > servers.length) serverRows.push(`ほか${rest}件`);
+    const separatorRoom = serverRoom - serverRows.length;
+    const rule = '─'.repeat(SIDEBAR_WIDTH - 4);
+    const divider = separatorRoom >= 6 ? [' ', rule, ' '] : separatorRoom >= 2 ? [rule] : [];
+    const sidebar = ['', ...usageRows, ...divider,
+      `${SUBAGENTS_HEADING} ${this.subagent ? 1 : 0}稼働 / 累計${this.delegationCount}`];
+    if (pane) sidebar.push(`${pane.phase} · ${Math.floor((performance.now() - this.subagentStarted) / 1000)}秒`,
+      pane.task.split(/\r?\n/, 1)[0], pane.pluginId);
+    sidebar.push(...divider, `${SERVERS_HEADING} ${this.servers.length}稼働`, ...serverRows);
+    return sidebar;
+  }
+
+  private paintSidebarRow(content: string): string {
+    const right = fitText(content, SIDEBAR_WIDTH - 4);
+    const border = this.paint('│', ACCENT);
+    const heading = content.startsWith(USAGE_HEADING) || content.startsWith(SUBAGENTS_HEADING) || content.startsWith(SERVERS_HEADING);
+    const style = heading ? `${this.panelStyle};1` : this.panelStyle;
+    const padding = ' '.repeat(SIDEBAR_WIDTH - 3 - textWidth(right));
+    const panel = this.paint(` ${right}${padding}`, style);
+    return border + panel + border;
+  }
+
+  private drawSidebar(rows: number, columns: number, sidebar: string[]): string {
+    const empty = this.paint(' '.repeat(SIDEBAR_WIDTH), this.panelStyle);
+    let out = '';
+    for (let i = 0; i < rows; i++) {
+      const content = sidebar[i];
+      const panel = content ? this.paintSidebarRow(content) : this.color ? empty : '';
+      if (panel) out += `\x1b[${i + 1};${columns - SIDEBAR_WIDTH + 1}H${panel}`;
+    }
+    return out;
+  }
 
   private eraseSidebar(rows: number, column: number): string {
     return Array.from({ length: rows }, (_, i) => `\x1b[${i + 1};${column}H\x1b[K`).join('');

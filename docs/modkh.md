@@ -66,7 +66,7 @@ Examples inside the chat:
 /agents route ts outline Inspect src/example.ts.
 ```
 
-`--routing auto` is an optional conservative deterministic router, not LLM judgment. Unsupported/ambiguous requests go back to the head. Mixed intents, negation, conditionals, multiple files, URLs and outside paths do not directly dispatch a role.
+`--routing auto` is an optional conservative deterministic router, not LLM judgment. Unsupported/ambiguous requests go back to the head. Mixed intents, negation, conditionals, multiple files, URLs and outside paths do not directly dispatch a role. If the trusted configuration uses `set-head-instruction`, normal chat input always goes to the head so its workflow can coordinate multiple roles. Explicit `/agents` commands still dispatch directly.
 
 ## Formal tools
 

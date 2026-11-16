@@ -90,10 +90,16 @@ test('CLIの記憶検索結果はモデル入力に届き、過去の参考デ�
   assert.deepEqual(calls.filter((c) => c.name === 'memory_recall').map((c) => c.args?.query),
     ['first-task', 'second-task']);
   assert.equal(requests.length, 2);
-  assert.match(requests[0].messages.find((m) => m.role === 'system')?.content ?? '', /REFERENCE_FOR_first-task/);
+  // Recalled data rides on the newest input, not on the system prompt: a changed system suffix
+  // would invalidate the provider's cached prefix for the whole transcript.
+  const firstSystem = requests[0].messages.find((m) => m.role === 'system')?.content ?? '';
   const secondSystem = requests[1].messages.find((m) => m.role === 'system')?.content ?? '';
-  assert.match(secondSystem, /REFERENCE_FOR_second-task/);
-  assert.doesNotMatch(secondSystem, /REFERENCE_FOR_first-task/);
+  assert.doesNotMatch(firstSystem, /REFERENCE_FOR_/);
+  assert.equal(secondSystem, firstSystem, 'the policy prefix is byte-identical across turns');
+  const lastUser = (body: { messages: WireMessage[] }) => [...body.messages].reverse().find((m) => m.role === 'user');
+  assert.match(lastUser(requests[0])?.content ?? '', /REFERENCE_FOR_first-task/);
+  assert.match(lastUser(requests[1])?.content ?? '', /REFERENCE_FOR_second-task/);
+  assert.doesNotMatch(lastUser(requests[1])?.content ?? '', /REFERENCE_FOR_first-task/);
   assert.ok(requests[1].messages.some((m) => m.role === 'user' && m.content === 'first-task'));
   assert.ok(requests[1].messages.some((m) => m.role === 'user' && m.content === 'second-task'));
   const messages = events.filter((event) => event.type === 'message').map((event) => event.message);

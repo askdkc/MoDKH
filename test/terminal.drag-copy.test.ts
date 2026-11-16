@@ -48,7 +48,12 @@ test('releasing a drag copies the selected transcript without wrapping, sidebar 
   assert.match(screen, /\x1b\[\?1002l/);
 });
 
-test('a wheel-scrolled transcript supports reverse drag and restores the draft on Escape', async () => {
+test('wheel history keeps TUI styling, supports reverse drag and restores the draft on Escape', async t => {
+  const previousNoColor = process.env.NO_COLOR;
+  delete process.env.NO_COLOR;
+  t.after(() => {
+    if (previousNoColor !== undefined) process.env.NO_COLOR = previousNoColor;
+  });
   const input = new PassThrough() as unknown as ReadStream;
   input.isRaw = false;
   input.setRawMode = (raw) => { input.isRaw = raw; return input; };
@@ -64,10 +69,14 @@ test('a wheel-scrolled transcript supports reverse drag and restores the draft o
   try {
     const prompt = ui.next(AbortSignal.timeout(5000));
     ui.write('▶ You: start\n', 'user');
+    ui.write('▶ run_command\n');
     for (let i = 0; i < 35; i++) ui.write(`記録 ${i}\n`, 'answer');
     input.write('draft');
     input.write('\x1b[<64;2;5M'.repeat(20));
-    const history = screen.slice(screen.lastIndexOf('\x1b[?1049h'));
+    const history = screen.slice(screen.lastIndexOf('\x1b[H\x1b[J'));
+    assert.match(history, /\x1b\[[0-9;]+m▶ run_command\x1b\[0m/);
+    assert.match(history, /トークン使用量/);
+    assert.match(history, /MoDKH.*会話履歴/);
     const first = screenFrom(history, output.rows).findIndex(line => line.startsWith('記録 0')) + 1;
     assert.ok(first > 0);
     input.write(`\x1b[<0;1;${first}M\x1b[<0;1;${first}m`);
@@ -77,6 +86,12 @@ test('a wheel-scrolled transcript supports reverse drag and restores the draft o
     input.write(`[<0;4;${first}M\x1b[<32;2;${first}M\x1b[<0;2;${first}m`);
     await setImmediate();
     assert.deepEqual(copies, ['記録']);
+    output.columns = 12;
+    output.emit('resize');
+    const resized = screen.slice(screen.lastIndexOf('\x1b[H\x1b[J'));
+    assert.match(resized, /\x1b\[[0-9;]+m▶ \x1b\[0m/);
+    assert.match(resized, /\x1b\[[0-9;]+mrun_command\x1b\[0m/);
+    assert.doesNotMatch(resized, /トークン使用量/);
     input.write('\x1b');
     await setTimeout(600);
     input.write('\r');

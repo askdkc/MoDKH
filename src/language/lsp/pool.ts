@@ -31,6 +31,7 @@ interface Entry {
   key: string;
   root: string;
   id: string;
+  starting?: Promise<StartedServer>;
   /** Incremented on each acquisition; idle entries are released after a grace period. */
   lastUsed: number;
 }
@@ -83,6 +84,7 @@ export class ServerPool {
     const existing = this.entries.get(key);
     if (existing) {
       existing.lastUsed = Date.now();
+      if (existing.starting) return { ...await existing.starting, reused: true };
       if (existing.server.running) return { server: existing.server, reused: true, status: 'ready' };
       this.entries.delete(key);
     }
@@ -98,20 +100,29 @@ export class ServerPool {
       root: parts.root,
       requestTimeoutMs: this.options.requestTimeoutMs,
     });
-    this.entries.set(key, { server, key, root: parts.root, id: parts.language.id, lastUsed: Date.now() });
+    const entry: Entry = { server, key, root: parts.root, id: parts.language.id, lastUsed: Date.now() };
+    this.entries.set(key, entry);
+    entry.starting = this.startEntry(entry, signal);
+    return entry.starting;
+  }
+
+  private async startEntry(entry: Entry, signal?: AbortSignal): Promise<StartedServer> {
+    const { server, key } = entry;
     try {
       await server.start(signal);
       return { server, reused: false, status: 'ready' };
     } catch (e) {
-      this.entries.delete(key);
+      if (this.entries.get(key)?.server === server) this.entries.delete(key);
       await server.dispose();
       return { server, reused: false, status: 'unavailable', detail: e instanceof Error ? e.message : String(e) };
+    } finally {
+      delete entry.starting;
     }
   }
 
   find(root: string, id: string, configDigest: string): LspServer | undefined {
     const entry = this.entries.get(serverKey(realRoot(root), id, configDigest));
-    return entry?.server.running ? entry.server : undefined;
+    return entry?.server.running && !entry.starting ? entry.server : undefined;
   }
 
   private releaseOldestIdle(): void {
