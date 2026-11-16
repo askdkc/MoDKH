@@ -38,7 +38,7 @@ test('a real TUI conversation uses 85% of the width and shows provider reasoning
       })}\n\n`);
       // A provider reasoning delta followed by an answer, so both paths are exercised.
       chunk({ role: 'assistant', reasoning_content: 'REASONING_VISIBLE_MARKER を確認します。' }, null);
-      chunk({ content: 'ANSWER_MARKER' }, null);
+      chunk({ content: 'ANSWER_MARKER こんにちは。\n\nQUESTION_MARKER 何をお手伝いしましょうか？' }, null);
       chunk({}, 'stop');
       res.end('data: [DONE]\n\n');
     });
@@ -48,7 +48,7 @@ test('a real TUI conversation uses 85% of the width and shows provider reasoning
   try {
     child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(fixture(200, 40))}`, entry], {
       cwd: home,
-      env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '0', TERM: 'xterm-256color' },
+      env: { ...process.env, NO_COLOR: undefined, MODKH_HOME: home, MODKH_PLAIN: '0', TERM: 'xterm-256color' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let output = '';
@@ -66,6 +66,7 @@ test('a real TUI conversation uses 85% of the width and shows provider reasoning
       }
     };
     await wait('何を調べますか');
+    assert.match(output, /\x1b\[48;5;\d+;1;39m 何を調べますか/);
     const welcomeWidth = widest();
     assert.ok(welcomeWidth <= 80, `welcome stays compact: ${welcomeWidth}`);
 
@@ -73,11 +74,16 @@ test('a real TUI conversation uses 85% of the width and shows provider reasoning
     await wait('接続しました');
     child.stdin!.write('調べて\r');
     await wait('ANSWER_MARKER');
+    await wait('応答終了');
     const conversationWidth = widest();
     assert.ok(conversationWidth >= 160 && conversationWidth <= 200,
       `conversation should use ~85% of 200 columns, got ${conversationWidth}`);
     assert.match(stripVTControlCharacters(output), /REASONING_VISIBLE_MARKER/, 'reasoning is displayed');
     assert.match(stripVTControlCharacters(output), /\(推論\)/, 'reasoning is labelled');
+    assert.match(output, /\x1b\[90mREASONING_VISIBLE_MARKER/);
+    assert.match(output, /\x1b\[1;39mANSWER_MARKER/);
+    assert.match(output, /\x1b\[1;39mQUESTION_MARKER/);
+    assert.doesNotMatch(output, /\x1b\[90m(?:ANSWER|QUESTION)_MARKER/);
 
     child.stdin!.write('/exit\r');
     await once(child, 'close');

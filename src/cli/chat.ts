@@ -320,7 +320,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         onModelActivity: (stage: 'reasoning' | 'tool-input') => ui.setActivity?.(stage === 'reasoning' ? 'モデルが推論中… Ctrl+Cで中止' : 'ツール要求を受信中… Ctrl+Cで中止'),
         // Reasoning is display-only: it never joins assistant content or the persisted messages.
         onReasoning: (delta: string) => ui.setReasoning?.(delta),
-        onText: (d: string) => { ui.setReasoning?.(null); ui.setActivity?.('モデル応答を受信中… Ctrl+Cで中止'); ui.write(d); },
+        onText: (d: string) => { ui.setReasoning?.(null); ui.setActivity?.('モデル応答を受信中… Ctrl+Cで中止'); ui.write(d, 'answer'); },
         onToolCall: (call: { name: string; args: Record<string, unknown> }) => {
           ui.setReasoning?.(null);
           ui.write(`\n▶ ${call.name} ${summarizeArgs(call.args)}\n`);

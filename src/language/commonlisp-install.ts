@@ -36,6 +36,8 @@ export function roswellAsset(assets: ReleaseAsset[], platform: HostPlatform, gli
   return asset;
 }
 
+export const COMMON_LISP_BUILD_OUTPUT_BYTES = 16 * 1024 * 1024;
+
 interface Stage { name: string; state: 'running' | 'passed' | 'failed'; receipt?: ExecutionReceipt; detail?: string }
 const repositories = [CL_LSP_REPOSITORY] as const;
 const failure = (error: unknown): string => {
@@ -69,9 +71,9 @@ export async function installCommonLisp(target: string, signal?: AbortSignal) {
     catch (e) { entry.state = 'failed'; entry.detail = failure(e); record(); throw new Error(`Common Lisp ${name}: ${failure(e)}`); }
   };
   const run = (name: string, command: string, args: string[], cwd = root) => stage(name, async entry => {
-    const receipt = await executeBounded(command, args, { cwd, env, inputDigest: sha256(JSON.stringify([command,args])), timeoutMs: 20 * 60_000, maxOutputBytes: 512 * 1024, signal: deadline });
+    const receipt = await executeBounded(command, args, { cwd, env, inputDigest: sha256(JSON.stringify([command,args])), timeoutMs: 20 * 60_000, maxOutputBytes: name === 'bundled-runtime-install' ? COMMON_LISP_BUILD_OUTPUT_BYTES : 512 * 1024, outputOverflow: name === 'bundled-runtime-install' ? 'tail' : 'stop', signal: deadline });
     entry.receipt = receipt; settled &&= receipt.cleanup === 'settled';
-    if (receipt.state !== 'exited' || receipt.exitCode !== 0 || receipt.cleanup !== 'settled') throw new Error(`${receipt.state}/${receipt.exitCode} cleanup=${receipt.cleanup}: stderr=${receipt.stderr.slice(-1500)} stdout=${receipt.stdout.slice(-1500)}`);
+    if (receipt.state !== 'exited' || receipt.exitCode !== 0 || receipt.cleanup !== 'settled') throw new Error(`${receipt.state}/${receipt.exitCode} cleanup=${receipt.cleanup} cause=${receipt.terminationReason ?? receipt.state}: stderr=${receipt.stderr.slice(-1500)} stdout=${receipt.stdout.slice(-1500)}`);
     return receipt.stdout;
   });
   try {

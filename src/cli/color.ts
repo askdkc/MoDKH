@@ -1,6 +1,6 @@
 /**
  * トランスクリプトの行単位の色分け。外部依存なし。
- * - 推論ブロック((推論)から次の構造マーカーまで)は薄い色
+ * - 推論はグレー、回答の本文は端末の前景色で太字
  * - diff(+/-/@@/---/+++)は追加=緑・削除=赤
  * - ``` コードブロック内は簡易トークナイザー(文字列・コメント・キーワード・数値)
  * ライト/ダーク両方で読みやすいよう背景判定ごとにパレットを替える。
@@ -120,11 +120,13 @@ export function highlightCodeLine(line: string, palette: Palette): string {
   });
 }
 
-export type ColorMode = 'text' | 'reasoning' | 'code';
+export const READABLE_TEXT_STYLE = '1;39';
+export type TranscriptKind = 'system' | 'answer' | 'reasoning';
+export type ColorMode = 'text' | 'code';
 
 export interface ColorizerState { mode: ColorMode; inDiff: boolean }
 
-/** 連続する行に状態(推論・コードブロック・diff)を引き継いで色を付ける。 */
+/** コードブロックとdiffの状態を行間で引き継いで色を付ける。 */
 export class TranscriptColorizer {
   private mode: ColorMode = 'text';
   private inDiff = false;
@@ -133,30 +135,22 @@ export class TranscriptColorizer {
   state(): ColorizerState { return { mode: this.mode, inDiff: this.inDiff }; }
   restore(state: ColorizerState): void { this.mode = state.mode; this.inDiff = state.inDiff; }
 
-  line(raw: string, palette: Palette): string {
+  line(raw: string, palette: Palette, kind: TranscriptKind = 'system'): string {
     const trimmed = raw.trim();
     const blank = trimmed.length === 0;
-    if (this.mode === 'reasoning') {
-      if (/^(▶ |#{1,3} |--- 承認要求|\(推論\)|```)/.test(raw) || /^ {0,2}(結果|エラー)/.test(trimmed)) {
-        this.mode = 'text';
-      } else {
-        return blank ? raw : `\x1b[${palette.reasoning}m${raw}\x1b[0m`;
-      }
-    } else if (this.mode === 'code') {
+    if (kind === 'reasoning') return blank ? raw : `\x1b[${palette.reasoning}m${raw}\x1b[0m`;
+    if (this.mode === 'code') {
       if (/^(\s*)(```|~~~)/.test(raw)) { this.mode = 'text'; return `\x1b[${palette.reasoning}m${raw}\x1b[0m`; }
       return highlightCodeLine(raw, palette);
     }
     if (blank) return raw;
-    if (trimmed === '(推論)' || /^(推論)$/.test(trimmed)) {
-      this.mode = 'reasoning';
-      return `\x1b[${palette.reasoning}m${raw}\x1b[0m`;
-    }
     if (/^(\s*)(```|~~~)/.test(raw)) {
       this.mode = 'code';
       return `\x1b[${palette.reasoning}m${raw}\x1b[0m`;
     }
     const diff = this.diffLine(trimmed, raw, palette);
     if (diff !== null) return diff;
+    if (kind === 'answer') return `\x1b[${READABLE_TEXT_STYLE}m${raw}\x1b[0m`;
     if (/^#{1,6} /.test(trimmed)) return `\x1b[${palette.heading}m${raw}\x1b[0m`;
     if (/^▶ You:/.test(raw)) return `\x1b[${palette.user}m${raw}\x1b[0m`;
     if (/^▶ /.test(raw)) return `\x1b[${palette.tool}m${raw}\x1b[0m`;

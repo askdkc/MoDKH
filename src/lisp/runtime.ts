@@ -14,6 +14,9 @@ export interface ExecutionReceipt {
   stderr: string;
   inputDigest: string;
   cleanup: 'settled' | 'unknown';
+  outputBytes?: number;
+  outputTruncated?: boolean;
+  terminationReason?: 'aborted' | 'timed-out' | 'output-limit' | 'unknown';
 }
 export function privateEnvironment(home: string): NodeJS.ProcessEnv {
   return { PATH: process.env.PATH ?? '/usr/bin:/bin', LANG: process.env.LANG ?? 'C.UTF-8',
@@ -27,6 +30,8 @@ export function temporaryDirectory(prefix: string): string { return fs.mkdtempSy
 export function executeBounded(command: string, args: string[], options: {
   cwd: string; env: NodeJS.ProcessEnv; inputDigest: string; timeoutMs: number;
   maxOutputBytes?: number; signal?: AbortSignal;
+  /** Trusted verbose builds may retain a bounded tail instead of being killed. */
+  outputOverflow?: 'stop' | 'tail';
 }): Promise<ExecutionReceipt> {
   const base: ExecutionReceipt = { state: 'not-started', exitCode: null, signal: null, stdout: '', stderr: '', inputDigest: options.inputDigest, cleanup: 'settled' };
   if (options.signal?.aborted) return Promise.resolve(base);
@@ -48,7 +53,7 @@ export function executeBounded(command: string, args: string[], options: {
       clearTimeout(timer); clearTimeout(deadline); clearInterval(poll);
       options.signal?.removeEventListener('abort', abort);
       child.stdout?.destroy(); child.stderr?.destroy();
-      resolve({ ...base, state: unknown ? 'unknown' : stopped ?? (base.exitCode === null ? 'not-started' : 'exited'), cleanup: unknown ? 'unknown' : 'settled' });
+      resolve({ ...base, outputBytes: bytes, ...(stopped ? { terminationReason: stopped as ExecutionReceipt['terminationReason'] } : {}), state: unknown ? 'unknown' : stopped ?? (base.exitCode === null ? 'not-started' : 'exited'), cleanup: unknown ? 'unknown' : 'settled' });
     };
     const stop = (state: ExecutionReceipt['state']) => {
       stopped ??= state; kill();
@@ -61,6 +66,28 @@ export function executeBounded(command: string, args: string[], options: {
     if (options.signal?.aborted) abort();
     const append = (key: 'stdout' | 'stderr', data: Buffer) => {
       const budget = options.maxOutputBytes ?? 256 * 1024;
+      if (options.outputOverflow === 'tail') {
+        bytes += data.length;
+        const addition = decoders[key].write(data);
+        const text = base[key] + addition;
+        const buffer = Buffer.from(text);
+        const other = key === 'stdout' ? 'stderr' : 'stdout';
+        const otherBuffer = Buffer.from(base[other]);
+        let otherStart = Math.max(0, otherBuffer.length - Math.max(0, budget - Buffer.byteLength(addition)));
+        if (otherStart > 0) {
+          base.outputTruncated = true;
+          while (otherStart < otherBuffer.length && (otherBuffer[otherStart] & 0xc0) === 0x80) otherStart++;
+          base[other] = otherBuffer.subarray(otherStart).toString('utf8');
+        }
+        const limit = Math.max(0, budget - Buffer.byteLength(base[other]));
+        let start = Math.max(0, buffer.length - limit);
+        if (start > 0) {
+          base.outputTruncated = true;
+          while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) start++;
+        }
+        base[key] = buffer.subarray(start).toString('utf8');
+        return;
+      }
       const room = Math.max(0, budget - bytes);
       base[key] += decoders[key].write(data.subarray(0, room)); bytes += data.length;
       if (bytes > budget) stop('output-limit');
@@ -68,7 +95,7 @@ export function executeBounded(command: string, args: string[], options: {
     child.stdout?.on('data', (data: Buffer) => append('stdout', data));
     child.stderr?.on('data', (data: Buffer) => append('stderr', data));
     child.on('error', error => { base.stderr = error.message.slice(0, 4096); });
-    child.on('exit', () => { if (alive()) stop('unknown'); });
+    child.on('exit', (code, signal) => { base.exitCode = code; base.signal = signal; if (alive()) stop('unknown'); });
     child.on('close', (code, signal) => { closed = true; base.stdout += decoders.stdout.end(); base.stderr += decoders.stderr.end(); base.exitCode = code; base.signal = signal; finish(); });
   });
 }

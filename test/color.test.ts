@@ -36,20 +36,15 @@ test('palettes differ between light and dark for the colors that need it', () =>
   }
 });
 
-test('reasoning blocks are dimmed until the next structural marker', () => {
-  const c = new TranscriptColorizer();
-  const header = c.line('(推論)', dark);
-  const body = c.line('まずファイルを読みます。', dark);
-  const next = c.line('▶ read_file (略)', dark);
-  assert.match(header, /\x1b\[9[0-9]?m/);
-  assert.equal(body, `\x1b[${dark.reasoning}mまずファイルを読みます。\x1b[0m`);
-  assert.doesNotMatch(next, /\x1b\[90m/);
-
-  const c2 = new TranscriptColorizer();
-  c2.line('(推論)', dark);
-  c2.line('paragraph one', dark);
-  c2.line('', dark); // 空行はブロックの終わりではない
-  assert.equal(c2.line('paragraph two', dark), `\x1b[${dark.reasoning}mparagraph two\x1b[0m`);
+test('reasoning stays gray even when it contains Markdown or resembles a tool message', () => {
+  for (const palette of [light, dark]) {
+    const colorizer = new TranscriptColorizer();
+    for (const line of ['(推論)', '## 検討', '▶ read_file (略)', '```ts', 'const x = 1']) {
+      assert.equal(colorizer.line(line, palette, 'reasoning'), `\x1b[90m${line}\x1b[0m`);
+    }
+    assert.equal(colorizer.line('何を調べますか？', palette, 'answer'), '\x1b[1;39m何を調べますか？\x1b[0m');
+    assert.equal(colorizer.line('会話終了', palette), '会話終了');
+  }
 });
 
 test('diff lines get add/del colors from the header until a non-diff line', () => {

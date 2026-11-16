@@ -11,8 +11,10 @@ import {
   classifyBackground,
   parseOscBackground,
   paletteFor,
+  READABLE_TEXT_STYLE,
   type ColorizerState,
   type Palette,
+  type TranscriptKind,
 } from './color.ts';
 
 /** `pinned` rows stay on top and are never filtered away; they are actions, not selections. */
@@ -21,7 +23,7 @@ export interface ChatTerminal {
   readonly interactive: boolean;
   readonly imageCount?: number;
   takeImages?(): ImageAttachment[];
-  write(text: string): void;
+  write(text: string, kind?: TranscriptKind): void;
   next(signal?: AbortSignal): Promise<string | null>;
   unread(line: string): void;
   ask(title: string, signal?: AbortSignal, secret?: boolean): Promise<string | null>;
@@ -119,9 +121,10 @@ export class TerminalUI implements ChatTerminal {
   private pending?: Pending;
   private queued: string[] = [];
   /** スクロールバックへ確定待ちの完成行(折り返し済み)。 */
-  private queue: string[] = [];
+  private queue: { text: string; kind: TranscriptKind }[] = [];
   /** まだ改行が来ていない最終行。ライブブロックの一部として再描画する。 */
   private partial = '';
+  private partialKind: TranscriptKind = 'system';
   private started = false;
   /** 会話開始前の案内行(ウェルカムブロックに表示し、会話開始時に本文へ流す)。 */
   private bootLines: string[] = [];
@@ -254,7 +257,8 @@ export class TerminalUI implements ChatTerminal {
       : Math.max(8, Math.min(columns - 2, 80));
   }
 
-  write(text: string): void { this.appendTranscript(text); this.render(); }  setModel(model: string | null): void { this.model = model; this.render(); }
+  write(text: string, kind: TranscriptKind = 'system'): void { this.appendTranscript(text, kind); this.render(); }
+  setModel(model: string | null): void { this.model = model; this.render(); }
   setActivity(activity: string | null): void { if (this.activity !== activity) { this.activity = activity; this.render(); } }
   setUsage(usage: UsageTotals): void { this.usage = usage; this.render(); }
   /** Accumulate one reasoning delta, or flush the finished block into the transcript with `null`. */
@@ -262,7 +266,7 @@ export class TerminalUI implements ChatTerminal {
     if (delta !== null) { this.reasoning = (this.reasoning + delta).slice(-20_000); this.render(); return; }
     const text = this.reasoning.trimEnd();
     this.reasoning = '';
-    if (text) this.appendTranscript(`\n(推論)\n${text}\n`);
+    if (text) this.appendTranscript(`\n(推論)\n${text}\n`, 'reasoning');
     this.render();
   }
   unread(line: string): void { this.queued.unshift(line); }
@@ -399,19 +403,24 @@ export class TerminalUI implements ChatTerminal {
    * トランスクリプトへ追記する。完成行は直ちに折り返して出力待ちキューへ。
    * 会話の始まり(`▶`)を検出したら、それ以降の行を広めの幅で折り返す。
    */
-  private appendTranscript(text: string): void {
+  private appendTranscript(text: string, kind: TranscriptKind): void {
     let source = (this.partial + text).replace(/\r\n?/g, '\n');
+    let lineKind = this.partial ? this.partialKind : kind;
     if (/(^|\n)▶/.test(text) || /https:\/\//.test(text)) this.started = true;
     const width = this.width();
     for (;;) {
       const at = source.indexOf('\n');
-      if (at < 0) { this.partial = source; break; }
+      if (at < 0) {
+        this.partial = source;
+        this.partialKind = lineKind;
+        break;
+      }
       const logicalLine = source.slice(0, at);
       source = source.slice(at + 1);
       // 会話が始まる前の案内行はウェルカムブロックへ(会話開始時に一括で出力する)。
-      if (!this.started) { this.bootLines.push(logicalLine); continue; }
-      for (const wrapped of wrap(logicalLine, width)) this.queue.push(wrapped);
-      this.partial = '';
+      if (!this.started) this.bootLines.push(logicalLine);
+      else for (const wrapped of wrap(logicalLine, width)) this.queue.push({ text: wrapped, kind: lineKind });
+      lineKind = kind;
     }
   }
 
@@ -432,7 +441,7 @@ export class TerminalUI implements ChatTerminal {
     const paintMargin = Math.max(0, Math.floor((this.columns() - width) / 2));
     const marginPrefix = ' '.repeat(Math.min(paintMargin, Math.max(0, this.columns() - 6)));
     const stream = this.queue.splice(0, this.queue.length)
-      .map(line => this.color ? this.colorizer.line(line, this.palette) : line);
+      .map(({ text, kind }) => this.color ? this.colorizer.line(text, this.palette, kind) : text);
     this.colorizerState = this.colorizer.state();
     // 会話が始まった瞬間、ウェルカム(ロゴ+案内)を一度だけ本文へ流し込む。
     if (this.started && !this.bootFlushed) {
@@ -451,8 +460,9 @@ export class TerminalUI implements ChatTerminal {
     const inputRows = Math.min(Math.max(1, rows - 8), Math.max(composer ? 3 : 1, editor.lines.length));
     const options = this.options();
 
-    const partialLines = wrap(this.partial, width);
-    const partialCount = this.partial ? partialLines.length : 0;
+    const partialLines = this.partial ? wrap(this.partial, width)
+      .map(line => marginPrefix + (this.color ? this.fork().line(line, this.palette, this.partialKind) : line)) : [];
+    const partialCount = partialLines.length;
     // ライブの推論は見出し含めて表示。はみ出すときは古い行(先頭)から落とす。
     const reasoningText = this.reasoning.trimEnd() === '' ? [] :
       wrap(`(推論)\n${this.reasoning.trimEnd()}`, width);
@@ -466,7 +476,7 @@ export class TerminalUI implements ChatTerminal {
     if (options) {
       const height = Math.max(1, Math.min(options.length || 1, Math.max(2, rows - (partialCount + liveReasoning.length) - 6), 8));
       const start = Math.max(0, Math.min(this.selection - height + 1, options.length - height));
-      optionsLines.push({ text: this.pending?.choices ? this.pending.title : 'Commands', style: '1' });
+      optionsLines.push({ text: this.pending?.choices ? this.pending.title : 'Commands', style: READABLE_TEXT_STYLE });
       if (!options.length) optionsLines.push({ text: '該当なし — 検索語を変える / Esc で戻る', style: '2' });
       const matched = options.filter(choice => !choice.pinned).length;
       options.slice(start, start + height).forEach((choice, i) => {
@@ -487,7 +497,7 @@ export class TerminalUI implements ChatTerminal {
     for (let i = 0; i < inputRows; i++) {
       const line = editor.lines[this.editorScroll + i] ?? '';
       const placeholder = i === 0 && !this.text ? (this.pending?.choices ? 'Search…' : this.pending?.title ?? this.activity ?? '処理中… Ctrl+C で中止') : '';
-      lines.push({ text: `│ ${line || placeholder}`, style: '' });
+      lines.push({ text: `│ ${line || placeholder}`, style: placeholder && this.pending ? READABLE_TEXT_STYLE : '' });
     }
     const attachments = composer && this.images.length ? ` · 画像${this.images.length}枚 (Ctrl+Xで削除)` : '';
     const status = this.inputNotice && !this.pending?.secret ? this.inputNotice : `MoDKH  ·  ${this.model ?? '未接続 — /connect'}${attachments}`;
@@ -533,7 +543,7 @@ export class TerminalUI implements ChatTerminal {
       body = [
         ...welcome.map(row => marginStyled(row)),
         ...Array.from({ length: midPad }, () => marginPrefix),
-        ...(this.partial ? partialLines.map(line => marginPrefix + (this.color ? this.fork().line(line, this.palette) : line)) : []),
+        ...partialLines,
         ...liveReasoning.map(row => marginPrefix + this.paint(fitText(row.text, width), row.style)),
         // lines にはコマンドメニュー(optionsLines)が含まれる。二重に展開しない。
         ...lines.map(marginStyled),
@@ -541,7 +551,7 @@ export class TerminalUI implements ChatTerminal {
       editorStartIdx = welcome.length + midPad + partialCount + liveReasoning.length + optionsLines.length + 1;
     } else {
       body = [
-        ...(this.partial ? partialLines.map(line => marginPrefix + (this.color ? this.fork().line(line, this.palette) : line)) : []),
+        ...partialLines,
         ...liveReasoning.map(row => marginPrefix + this.paint(fitText(row.text, width), row.style)),
         // lines にはコマンドメニュー(optionsLines)が含まれる。二重に展開しない。
         ...lines.map(marginStyled),
