@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { executeBounded, privateEnvironment } from '../lisp/runtime.ts';
+import { CL_LSP_REPOSITORY } from './commonlisp-bundled.ts';
 import { installCommonLisp, reusableCommonLisp } from './commonlisp-install.ts';
 import { installPhpantom } from './native.ts';
 import { hostPlatform } from './platform.ts';
@@ -23,7 +24,7 @@ interface StateFile {
   version: 1;
   servers: Record<string, InstalledServer>;
   /** Recorded reasons for languages that failed and must not be retried within the same turn. */
-  failures?: Record<string, { reason: string; at: string; retryable?: boolean }>;
+  failures?: Record<string, { reason: string; at: string; retryable?: boolean; recipe?: string }>;
 }
 
 const LOCK_STALE_MS = 10 * 60_000;
@@ -236,14 +237,14 @@ export async function ensureInstalled(language: LanguageDefinition, options: { a
   }
   if (!options.autoInstall) return { status: 'unavailable', detail: '自動導入は無効です' };
   const remembered = readState().failures?.[language.id];
-  if (remembered && (remembered.retryable === false || Date.now() - Date.parse(remembered.at) < 60000)) return { status: 'unavailable', detail: `前回の導入失敗: ${remembered.reason}` };
+  if (remembered && (language.id !== 'commonlisp' || remembered.recipe === CL_LSP_REPOSITORY) && (remembered.retryable === false || Date.now() - Date.parse(remembered.at) < 60000)) return { status: 'unavailable', detail: `前回の導入失敗: ${remembered.reason}` };
   try {
     if (language.id === 'php' || language.id === 'commonlisp') {
       const target = serverRoot(language);
       await withLock(target, async () => {
         if (resolveServer(language, {}).status === 'ready') return;
         const prior = readState().failures?.[language.id];
-        if (prior && (prior.retryable === false || Date.now() - Date.parse(prior.at) < 60000)) throw new Error(`Previous install failed: ${prior.reason}`);
+        if (prior && (language.id !== 'commonlisp' || prior.recipe === CL_LSP_REPOSITORY) && (prior.retryable === false || Date.now() - Date.parse(prior.at) < 60000)) throw new Error(`Previous install failed: ${prior.reason}`);
         const result = await (language.id === 'php' ? installPhpantom : installCommonLisp)(target, options.signal);
         const state = readState();
         state.servers[language.id] = { command: result.command, args: [], version: result.version, digest: result.digest, installedAt: new Date().toISOString() };
@@ -256,7 +257,7 @@ export async function ensureInstalled(language: LanguageDefinition, options: { a
     // Remembering the failure is best effort: an unwritable home must not escape as a crash.
     try {
       const state = readState();
-      state.failures = { ...(state.failures ?? {}), [language.id]: { reason: reason.slice(0, 500), at: new Date().toISOString(), retryable: !/ENOSPC|Insufficient disk|unknown/.test(reason) } };
+      state.failures = { ...(state.failures ?? {}), [language.id]: { ...(language.id === 'commonlisp' ? { recipe: CL_LSP_REPOSITORY } : {}), reason: reason.slice(0, 500), at: new Date().toISOString(), retryable: !/ENOSPC|Insufficient disk|unknown/.test(reason) } };
       writeState(state);
     } catch { /* the caller still receives the original reason below */ }
     return { status: 'error', detail: reason };

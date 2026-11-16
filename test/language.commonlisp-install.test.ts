@@ -73,23 +73,28 @@ test('an incomplete or modified managed CL prefix cannot be reused',async()=>{
  try {
   fs.writeFileSync(command,'fixture launcher');const digest=sha256(fs.readFileSync(command));
   assert.equal(reusableCommonLisp(command,digest),false);
-  fs.writeFileSync(path.join(root,'install-receipt.json'),JSON.stringify({status:'ready-for-lexical-definition',launcherSha256:digest,stages:[{name:'lsp-initialize',state:'passed'},{name:'lexical-definition',state:'passed'}]}));
+  fs.writeFileSync(path.join(root,'install-receipt.json'),JSON.stringify({repository:'askdkc/cl-lsp',status:'ready-for-lexical-definition',launcherSha256:digest,stages:[{name:'lsp-initialize',state:'passed'},{name:'lexical-definition',state:'passed'}]}));
   assert.equal(reusableCommonLisp(command,digest),true);
+  const receiptPath=path.join(root,'install-receipt.json');
+  const legacy=JSON.parse(fs.readFileSync(receiptPath,'utf8')); delete legacy.repository;
+  fs.writeFileSync(receiptPath,JSON.stringify(legacy));
+  assert.equal(reusableCommonLisp(command,digest),false, 'legacy supplier receipt is not reused');
+  legacy.repository='askdkc/cl-lsp'; fs.writeFileSync(receiptPath,JSON.stringify(legacy));
   fs.appendFileSync(command,'modified');assert.equal(reusableCommonLisp(command,digest),false);
  } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
 
-test('failed installation preserves Qlot stack trace before removing the attempt', async () => {
+test('failed installation preserves installer log before removing the attempt', async () => {
  const root=temporaryDirectory('modkh-cl-evidence-'), oldFetch=globalThis.fetch;
  globalThis.fetch=async()=>{
   const attempt=fs.readdirSync(root).find(n=>n.startsWith('attempt-'))!;
-  fs.writeFileSync(path.join(root,attempt,'home/qlot-error-test.log'),'fixture stack trace: ASN1_STRING_data');
+  fs.writeFileSync(path.join(root,attempt,'home/installer-error-test.log'),'fixture installer error');
   throw new Error('fixture install failure');
  };
  try {
   await assert.rejects(installCommonLisp(root), /fixture install failure/);
   const receipt=JSON.parse(fs.readFileSync(path.join(root,'last-failure.json'),'utf8'));
-  assert.equal(receipt.diagnostics['qlot-error-test.log'],'fixture stack trace: ASN1_STRING_data');
+  assert.equal(receipt.diagnostics['installer-error-test.log'],'fixture installer error');
   assert.equal(fs.readdirSync(root).some(n=>n.startsWith('attempt-')),false);
  } finally {globalThis.fetch=oldFetch; fs.rmSync(root,{recursive:true,force:true});}
 });

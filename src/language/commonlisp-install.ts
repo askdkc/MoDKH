@@ -1,9 +1,7 @@
 import fs from 'node:fs';
-import { prepareDarwinTls } from './commonlisp-tls.ts';
 import path from 'node:path';
 import { download } from './native.ts';
-import { commonLispRegistry, commonLispSystemProbe } from './commonlisp-systems.ts';
-import { installLemDependencies, resolvedNativeBuildDirectory } from './commonlisp-dependencies.ts';
+import { installBundledCommonLisp, CL_LSP_REPOSITORY } from './commonlisp-bundled.ts';
 import { hostPlatform, type HostPlatform, type ReleaseAsset } from './platform.ts';
 import { executeBounded, privateEnvironment, sha256, type ExecutionReceipt } from '../lisp/runtime.ts';
 import { LspServer } from './lsp/client.ts';
@@ -39,7 +37,7 @@ export function roswellAsset(assets: ReleaseAsset[], platform: HostPlatform, gli
 }
 
 interface Stage { name: string; state: 'running' | 'passed' | 'failed'; receipt?: ExecutionReceipt; detail?: string }
-const repositories = ['lem-project/lem', 'cxxxr/cl-lsp'] as const;
+const repositories = [CL_LSP_REPOSITORY] as const;
 const failure = (error: unknown): string => {
   if (!(error instanceof Error)) return String(error);
   const cause = error.cause as { code?: string; message?: string } | undefined;
@@ -103,37 +101,12 @@ export async function installCommonLisp(target: string, signal?: AbortSignal) {
       await run(`source:${repo}`, 'git', ['-c', 'protocol.file.allow=never', 'clone', '--depth=1', `https://github.com/${repo}.git`, destination]);
       revisions[repo] = (await run(`revision:${repo}`, 'git', ['rev-parse', 'HEAD'], destination)).trim();
     }
-    const tls = platform.os === 'darwin' ? await stage('tls-library-selection', () => prepareDarwinTls(root, run)) : undefined;
-    report.tls = tls;
-    const dependencies = await stage('lem-dependency-environment', () =>
-      installLemDependencies(root, path.join(projects, 'lem'), ros, rosHome, run, tls?.file));
-    report.dependencies = dependencies;
-    // Roswell consumes QUICKLISP_HOME before -s loads. Its backend children inherit it too.
-    env.QUICKLISP_HOME = dependencies.home;
-    const registry = commonLispRegistry(projects);
-    env.CL_SOURCE_REGISTRY = registry;
-    const discoveryFile = path.join(root, 'discover-systems.lisp');
-    fs.writeFileSync(discoveryFile, '(require :asdf)\n' + commonLispSystemProbe(registry));
-    const discovery = await run('asdf-system-discovery', ros, ['-Q', '-l', discoveryFile, '-q']);
-    if (!discovery.split(/\r?\n/).includes('MODKH_ASDF_DISCOVERY_OK')) throw new Error('ASDF discovery exited without completion evidence');
-    report.asdfDiscovery = discovery;
-    const native = resolvedNativeBuildDirectory(discovery, root);
-    for (const tool of ['autoconf', 'automake', 'aclocal', 'autoheader', platform.os === 'darwin' ? 'glibtoolize' : 'libtoolize']) {
-      await run(`native-tool:${tool}`, tool, ['--version']);
-    }
-    await run('native-build', 'make', [`PREFIX=${prefix}`], native);
-    await run('native-install', 'make', [`PREFIX=${prefix}`, 'install'], native);
-    const library = platform.os === 'darwin' ? 'libasyncprocess.dylib' : 'libasyncprocess.so';
-    if (!fs.existsSync(path.join(prefix, 'lib', library))) throw new Error(`Native library missing: ${library}`);
-    // Fixed host bootstrap, never a project ASDF file. No GUI frontend is loaded.
-    const startup = path.join(root, 'startup.lisp');
-    fs.writeFileSync(startup, `(setf *debugger-hook* (lambda (condition hook) (declare (ignore hook)) (princ condition *error-output*) (sb-ext:exit :code 1)))\n(ros:ensure-asdf)\n(require :asdf)\n(asdf:clear-source-registry)\n(asdf:initialize-source-registry '${registry})\n${tls ? `(load ${JSON.stringify(tls.file)})\n` : ''}(ql:quickload :cffi :silent t)\n(push #P${JSON.stringify(prefix + '/lib/')} cffi:*foreign-library-directories*)\n(ql:quickload '(\"cl-lsp\" \"swank\" \"micros\") :silent t)\n`);
-    const capability = '(progn (assert (fboundp (find-symbol "ADD-PACKAGE-LOCAL-NICKNAME" "SB-EXT"))) (assert (fboundp (find-symbol "RUN-PROGRAM" "UIOP"))) (assert (fboundp (find-symbol "MAIN" "CL-LSP"))) (format t "SBCL=~A ASDF=~A~%" (lisp-implementation-version) (asdf:asdf-version)) (write-line "MODKH_CL_READY"))';
-    const warmed = await run('runtime-warmup', ros, ['-Q', '-l', startup, '-e', capability, '-q']);
-    if (!warmed.split(/\r?\n/).includes('MODKH_CL_READY')) throw new Error('Warmup exit0 without dedicated completion marker');
-    // The backend starts `ros` through PATH, so both frontend and backend receive this private env.
+    report.repository = CL_LSP_REPOSITORY;
+    const bundled = await installBundledCommonLisp(root, path.join(projects, 'cl-lsp'), ros, run);
+    report.bundled = bundled;
+    // Both frontend and backend receive only this installation's private environment.
     const command = path.join(root, 'cl-lsp');
-    fs.writeFileSync(command, `#!/bin/sh\ncd ${quote(root)} || exit 1\nexec /usr/bin/env -i ${Object.entries(env).filter(([,v])=>v!==undefined).map(([k,v])=>quote(`${k}=${v}`)).join(' ')} ${quote(ros)} -Q -l ${quote(startup)} -e '(cl-lsp:main)'\n`, { mode: 0o700 });
+    fs.writeFileSync(command, `#!/bin/sh\ncd ${quote(root)} || exit 1\nexec /usr/bin/env -i ${Object.entries(env).filter(([,v])=>v!==undefined).map(([k,v])=>quote(`${k}=${v}`)).join(' ')} ${quote(bundled.command)} --stdio\n`, { mode: 0o700 });
     const fixture = path.join(root, 'probe.lisp'), text = '(let ((value 1)) value)\n';fs.writeFileSync(fixture,text);
     const server = new LspServer({ id:'commonlisp', command,args:[],root,requestTimeoutMs:15000,inheritEnv:false,env:env as Record<string,string> });
     try {
@@ -154,14 +127,14 @@ export async function installCommonLisp(target: string, signal?: AbortSignal) {
     } finally { try { await server.dispose(); } catch (e) { settled=false; throw e; } }
     report.launcherSha256=sha256(fs.readFileSync(command));
     report.status='ready-for-lexical-definition';report.finishedAt=new Date().toISOString();record();succeeded=true;
-    return { command,args:[],version:`cl-lsp@${revisions['cxxxr/cl-lsp']}`,digest:sha256(fs.readFileSync(command)),receipt:report };
+    return { command,args:[],version:`cl-lsp@${revisions[CL_LSP_REPOSITORY]}`,digest:sha256(fs.readFileSync(command)),receipt:report };
   } finally {
     if (!succeeded) {
       report.status='failed';report.finishedAt=new Date().toISOString();record();
       // Keep diagnostic evidence before deleting this failed attempt's private caches.
       const diagnostics: Record<string, string> = {};
       for (const name of fs.readdirSync(home)) {
-        if (!/^qlot-error-[A-Za-z0-9_-]+\.log$/.test(name)) continue;
+        if (!/^[A-Za-z0-9_-]+\.log$/.test(name)) continue;
         const file = path.join(home, name), stat = fs.lstatSync(file);
         if (stat.isFile() && stat.size <= 2 * 1024 * 1024) diagnostics[name] = fs.readFileSync(file, 'utf8');
       }
@@ -177,7 +150,7 @@ export async function installCommonLisp(target: string, signal?: AbortSignal) {
 export function reusableCommonLisp(command: string, digest: string): boolean {
   try {
     const receipt = JSON.parse(fs.readFileSync(path.join(path.dirname(command), 'install-receipt.json'), 'utf8'));
-    return receipt.status === 'ready-for-lexical-definition' && receipt.launcherSha256 === digest
+    return receipt.repository === CL_LSP_REPOSITORY && receipt.status === 'ready-for-lexical-definition' && receipt.launcherSha256 === digest
       && sha256(fs.readFileSync(command)) === digest
       && receipt.stages.some((s: Stage) => s.name === 'lsp-initialize' && s.state === 'passed')
       && receipt.stages.some((s: Stage) => s.name === 'lexical-definition' && s.state === 'passed');

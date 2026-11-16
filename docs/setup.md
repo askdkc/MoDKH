@@ -7,8 +7,8 @@
 | MoDKHの起動・ビルド | Node.js（package.jsonのengines準拠）、npm。ソース取得にはGit |
 | npm依存 | `npm ci` でpackage-lock.jsonどおりに導入。個別のグローバル導入は不要 |
 | Lisp担当設定・補助構文診断 | SBCL。ASDF/QuicklispやLSPは設定評価には不要 |
-| CL-LSPの構築 | Cコンパイラ、make、tar/bzip2、Git、HTTPS接続。専用領域へRoswell、SBCL、ASDF、Quicklisp、Qlot、Lem、CL-LSPを導入 |
-| Lisp依存の取得・TLS | curl、CA証明書、OpenSSL。Lemの依存一覧は取得した `qlfile` が正本 |
+| CL-LSPの構築 | Cコンパイラ、make、tar/bzip2、Git、HTTPS接続。専用領域へRoswell、SBCL、ASDFとaskdkc/cl-lspを導入。Lisp依存はCL-LSPに同梱 |
+| 導入時のHTTPS通信 | curl、CA証明書。CL-LSP用のOpenSSL設定やQlotは不要 |
 | 前鬼（TLC） | Javaと公式の `tla2tools.jar` |
 | 後鬼（Lean） | Lean。elanでtoolchainを管理可能 |
 | 文法WASMの再構築 | Tree-sitter CLIとEmscripten。通常buildは同梱用の既存WASMをコピーするため不要 |
@@ -20,9 +20,9 @@ npmの直接依存はAI SDK（`ai`、`@ai-sdk/anthropic`、`deepseek`、`google`
 ```sh
 # 未導入の場合のみ
 xcode-select --install
-brew install node git sbcl curl openssl ca-certificates autoconf automake libtool
+brew install node git sbcl curl ca-certificates
 
-# Roswell/Qlotを手動で使う場合のみ
+# Roswellを手動で使う場合のみ
 brew install roswell
 
 # 前鬼を使う場合のみ。システムJavaの置換は不要
@@ -38,9 +38,9 @@ brew install emscripten tree-sitter-cli
 ## Arch Linux
 
 ```sh
-sudo pacman -Syu --needed base-devel nodejs npm git sbcl curl openssl ca-certificates tar bzip2
+sudo pacman -Syu --needed base-devel nodejs npm git sbcl curl ca-certificates tar bzip2
 
-# Roswell/Qlotを手動で使う場合のみ
+# Roswellを手動で使う場合のみ
 sudo pacman -S --needed roswell
 
 # 前鬼を使う場合のみ
@@ -52,28 +52,18 @@ sudo pacman -S --needed emscripten tree-sitter-cli
 
 上記はArch Linuxの公式パッケージ向けです。Linuxの実CL-LSP・隔離機構をこのREADME更新で実機検証したものではありません。
 
-## Roswell・Quicklisp・Qlot
+## Common Lisp
 
-以下は**手動管理を選ぶ場合**の両OS共通手順です。`~/.roswell` を作成・更新するため、MoDKHの専用自動導入とは別です。既存設定がある場合は内容を確認してから実行します。
+MoDKHは [askdkc/cl-lsp](https://github.com/askdkc/cl-lsp) を専用領域に導入します。同梱の `vendor/` とheadless installerを使用し、別のLem・Qlot・OpenSSL設定は不要です。取得revisionと同梱ソース一覧のdigestを記録し、LSPの初期化・同期・定義応答を確認します。
+
+手動で管理する場合のみ、次を実行します（`~/.roswell` を更新します）。
 
 ```sh
-ros setup
-ros install fukamachi/qlot
-export PATH="$HOME/.roswell/bin:$PATH"
-ros --version
-qlot --version
-sbcl --version
+ros install askdkc/cl-lsp
+~/.roswell/bin/cl-lsp --help
 ```
 
-`qlot --version` は表示後に終了コード255を返す実装があります。これだけで導入失敗とは判断できません。MoDKHはCLIのロード・関数の存在・専用の完了出力を確認します。
-
-`export` は現在のシェルだけに適用します。RoswellはQuicklispを準備し、Qlotはプロジェクトの `qlfile` に記載された依存を解決します。SBCLを直接使う既存環境では、Quicklispは[公式導入手順](https://www.quicklisp.org/beta/#installation)に従います。通常の `~/.quicklisp` とRoswellのQuicklispは別環境です。
-
-CL-LSPのREADMEにある `ros install lem-project/lem cxxxr/cl-lsp` は、このMacでLemの導入途中に失敗しました。成功確認済みの手順として扱わないでください。`System "micros" not found` はLemの依存環境が不完全、または現在のQuicklisp/ASDFから見えていないことを示します。Lemを取得しただけでは依存解決は完了しません。
-
-macOSではインストール済みHomebrew OpenSSLのペアを実ロードし、CL+SSLが必要とする `ASN1_STRING_data` などを確認します。互換のあるものを専用プロセスで明示指定し、標準のOpenSSLリンクは変更しません。互換ライブラリがなければ導入を拒否します。Qlotの失敗ログは `language/servers/commonlisp/last-failure.json` の `diagnostics` に保存します（通常の設定ディレクトリは `~/.config/modkh`）。
-
-MoDKH側は取得したLemの `qlfile` を専用領域で `qlot install --no-deps` に渡し、`QUICKLISP_HOME` をCL-LSPと内部プロセスで共有します。生成lock、段階別結果、ASDFの解決先を記録します。実ダウンロード・LSP応答の検証は未完了です。QlotやSBCLの導入成功だけでCL-LSPの動作成功とはしません。
+Roswellが既存checkoutを再利用して古いコードを読む場合は、そのcheckoutを更新してから再導入します。MoDKHの自動導入は新しい専用checkoutを取得します。
 
 既に動くCL-LSPがある場合は `~/.config/modkh/config.json` の既存設定に次を統合します。
 
@@ -119,4 +109,4 @@ modkh chat --lisp-config experiments/presets/formal.lisp --trust-lisp-sha256 REV
 
 CL/Svelteの実WASMは未同梱であり、Emscriptenを入れるだけでは有効になりません。強いOS検証隔離も未提供です。[機能ごとの検証状況](modkh-verification.md)
 
-公式情報：[Homebrew SBCL](https://formulae.brew.sh/formula/sbcl)・[Roswell](https://formulae.brew.sh/formula/roswell)・[Arch SBCL](https://archlinux.org/packages/extra/x86_64/sbcl/)・[Arch Roswell](https://archlinux.org/packages/extra/x86_64/roswell/)・[Qlot](https://github.com/fukamachi/qlot)・[Lem](https://github.com/lem-project/lem)・[CL-LSP](https://github.com/cxxxr/cl-lsp)
+公式情報：[Homebrew SBCL](https://formulae.brew.sh/formula/sbcl)・[Roswell](https://formulae.brew.sh/formula/roswell)・[Arch SBCL](https://archlinux.org/packages/extra/x86_64/sbcl/)・[Arch Roswell](https://archlinux.org/packages/extra/x86_64/roswell/)・[CL-LSP](https://github.com/askdkc/cl-lsp)
