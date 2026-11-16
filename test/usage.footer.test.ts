@@ -24,38 +24,40 @@ function terminal(columns = 100, rows = 30) {
   };
 }
 
-test('usage appears on one line at the bottom and never displaces the composer', () => {
+test('usage stays on the right before a response, while editing, and beside child activity', async () => {
   const t = terminal(120, 40);
   try {
     const input = t.ui.next();
+    const pane = () => t.frame().lines.filter(line =>
+      /トークン消費量|未キャッシュ入力|キャッシュ読み取り|キャッシュ書き込み|│ 出力/.test(line));
+    assert.equal(pane().length, 5);
+    assert.match(pane()[0], /│ トークン消費量 +— +│/);
     t.ui.write('▶ You: report usage\n');
-    t.ui.setUsage({ input: 4_501_874, output: 410_226, cacheRead: 137_384_576, cacheWrite: 0, responses: 1 });
-    const frame = t.frame();
-    const line = frame.lines.find(entry => entry.includes('tok')) ?? '';
-    assert.match(line, /4\.5M|4,501,874/);
-    // 137.4M cached reads against 4.5M uncached input is a 100% input-side hit rate; the
-    // screenshot's 97% counts cache over every token, which this footer does not claim.
-    assert.match(line, /cache 100%/, 'cache hit ratio is derived from the reported numbers');
-    assert.match(line, /410k|410,226/);
-    // It sits on the bottom status row, right-aligned next to the working directory, and
-    // carries the breakdown inside the badge itself.
-    const index = frame.lines.findIndex(entry => entry.includes('tok'));
-    const composer = frame.lines.findIndex(entry => entry.includes('│'));
-    assert.ok(index > composer, 'usage must follow the composer, not displace it');
-    const bottom = frame.lines.at(-1)!;
-    assert.match(bottom, /tok/, 'the usage is the bottom-right status');
-    assert.match(bottom, /workspace|\/Users|パス|ルート/, 'the working directory shares the bottom row');
-    assert.ok(bottom.indexOf('workspace') < bottom.indexOf('tok') - 0, 'the usage status is right of the cwd');
-    // 最下段はステータス行で、端末幅いっぱいに cwd(左)と使用量(右)を並べる。
-    // 会話本文と違い中央寄せの余白は付かない(コピーする本文ではないが、余白の焼き込みを避ける)。
-    const trimmed = bottom.trim();
-    assert.ok(textWidth(bottom) <= 120, `the bottom status fits the terminal: ${textWidth(bottom)}`);
-    assert.equal(textWidth(bottom), 120, 'the status row spans the terminal width');
-    assert.ok(bottom.endsWith(trimmed.slice(-4)) || textWidth(trimmed) <= 120, 'no content is clipped');
-    // The composer still works with the footer present.
-    t.input.emit('keypress', '/exit', {});
+    t.ui.setUsage({ input: 278_100_000, uncachedInput: 5_100_000, output: 374_000, cacheRead: 273_000_000, cacheWrite: 0, responses: 1 });
+    const ready = pane();
+    assert.equal(ready.length, 5);
+    for (const [line, value] of ready.map((line, i) => [line, ['278.5M', '5.1M', '273M', '0', '374K'][i]])) {
+      assert.ok(textWidth(line.split('│').at(-2) ?? '') < 40, line);
+      assert.match(line, new RegExp(` +${value.replace('.', '\\.')} +│$`));
+      assert.equal(textWidth(line), 120);
+    }
+    t.input.emit('keypress', '下書き', {});
     t.input.emit('keypress', '', { name: 'return' });
-    void input;
+    assert.equal(await input, '下書き');
+
+    t.ui.setSubagent({ pluginId: 'modkh-explorer', task: '資料を確認', phase: 'モデル応答を待機中' });
+    assert.match(t.frame().lines.join('\n'), /│ サブエージェント/);
+    assert.equal(pane().length, 5);
+    t.output.columns = 45;
+    t.output.emit('resize');
+    assert.equal(pane().length, 5);
+    assert.ok(pane().every(line => textWidth(line) === 45));
+    t.output.columns = 120;
+    t.output.emit('resize');
+    assert.equal(pane().length, 5);
+    t.ui.setSubagent(null);
+    assert.equal(pane().length, 5);
+    assert.doesNotMatch(t.frame().lines.join('\n'), /│ サブエージェント/);
   } finally { t.ui.close(); }
 });
 
@@ -71,7 +73,7 @@ test('usage footer fits a narrow terminal and omits detail instead of wrapping',
   } finally { t.ui.close(); }
 });
 
-test('no usage is shown before any model response and NO_COLOR keeps it plain', () => {
+test('NO_COLOR keeps the persistent usage pane plain', () => {
   const previous = process.env.NO_COLOR;
   try {
     delete process.env.NO_COLOR;
@@ -79,14 +81,14 @@ test('no usage is shown before any model response and NO_COLOR keeps it plain', 
     try {
       assert.equal(t.frame().lines.some(entry => entry.includes('tok')), false);
       t.ui.setUsage({ input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, responses: 1 });
-      assert.match(t.frame().raw, /tok/);
+      assert.match(t.frame().raw, /トークン消費量/);
     } finally { t.ui.close(); }
     process.env.NO_COLOR = '1';
     const plain = terminal();
     try {
       plain.ui.setUsage({ input: 1000, output: 200, cacheRead: 500, cacheWrite: 0, responses: 1 });
       assert.doesNotMatch(plain.frame().raw, /\x1b\[[0-9;]*m/);
-      assert.match(plain.frame().lines.join('\n'), /tok/);
+      assert.match(plain.frame().lines.join('\n'), /トークン消費量/);
     } finally { plain.ui.close(); }
   } finally { if (previous === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = previous; }
 });

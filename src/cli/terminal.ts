@@ -1,5 +1,5 @@
 import { emitKeypressEvents, type Key } from 'node:readline';
-import { usageFooter, usageBadgeLine, type UsageTotals } from './usage.ts';
+import { EMPTY_USAGE, usageFooter, usageBadgeLine, usageBreakdownLines, type UsageTotals } from './usage.ts';
 import { chars, clean, fitText, textWidth, wrap, wrapText, editorLayout, verticalCursor, lineEdge } from './editor.ts';
 export { textWidth, fitText } from './editor.ts';
 import { readClipboardImage, type ClipboardReader } from './clipboard.ts';
@@ -112,7 +112,7 @@ class PlainTerminal implements ChatTerminal {
 type Pending = { finish: (value: string | null) => void; title: string; choices?: readonly Choice[]; secret?: boolean; composer?: boolean };
 export interface TerminalOptions { readClipboardImage?: ClipboardReader }
 const MAX_INPUT_BYTES = 128 * 1024;
-const SUBAGENT_PANE_WIDTH = 34;
+const SIDEBAR_WIDTH = 34;
 /**
  * メインスクリーンに流し込むストリーミングUI。
  * - 完成したトランスクリプト行は一度だけ出力し、その後は端末のスクロールバックへ流れる
@@ -294,11 +294,24 @@ export class TerminalUI implements ChatTerminal {
   }
 
   private hasSidePane(): boolean {
-    return !!this.subagent && !this.pending && this.columns() >= 80 && this.rows() >= 11;
+    return !!this.subagent && !this.pending && this.started && this.hasUsagePane() && this.columns() >= 80 && this.rows() >= 11;
+  }
+
+  private hasUsagePane(): boolean {
+    return this.columns() >= SIDEBAR_WIDTH + 28 && this.rows() >= 9;
+  }
+
+  private controlMargin(): number {
+    return this.started ? 0 : Math.floor((this.columns() - this.width()) / 2);
+  }
+
+  private controlWidth(): number {
+    const right = this.hasUsagePane() ? SIDEBAR_WIDTH : 0;
+    return Math.min(this.width(), this.columns() - right - this.controlMargin());
   }
 
   private editorWidth(): number {
-    return Math.max(5, this.columns() - (this.hasSidePane() ? SUBAGENT_PANE_WIDTH + 5 : 3));
+    return Math.max(5, this.controlWidth() - 3);
   }
 
   setSubagent(activity: SubagentActivity | null): void {
@@ -523,22 +536,21 @@ export class TerminalUI implements ChatTerminal {
     const composer = !this.pending || this.pending.composer;
     const editor = editorLayout(displayText, this.editorWidth());
     const cursor = editor.positions[Math.min(this.cursor, editor.positions.length - 1)];
-    const inputRows = Math.min(Math.max(1, rows - 8), Math.max(composer ? 3 : 1, editor.lines.length));
+    const showUsage = this.hasUsagePane();
+    const stackUsage = !showUsage && columns >= SIDEBAR_WIDTH && rows >= 14;
+    const usageRows = showUsage || stackUsage
+      ? usageBreakdownLines(this.usage ?? EMPTY_USAGE, SIDEBAR_WIDTH - 4) : [];
+    const stackedHeight = stackUsage ? usageRows.length : 0;
+    const inputRows = Math.min(Math.max(1, rows - 8 - stackedHeight), Math.max(composer ? 3 : 1, editor.lines.length));
     const options = this.options();
     const childPhase = this.subagent
       ? `${this.subagent.phase} · ${Math.floor((performance.now() - this.subagentStarted) / 1000)}秒` : '';
-    const paneWidth = SUBAGENT_PANE_WIDTH;
     const childTask = this.subagent?.task.split(/\r?\n/, 1)[0];
     const pane = this.hasSidePane() ? this.subagent : null;
-    const sidePane = pane ? ['サブエージェント', childPhase, childTask ?? ''] : [];
     const editingFollowup = !this.pending && !!this.followup;
-    const compactChild = !!this.subagent && sidePane.length === 0;
-    const withPane = (text: string, content: string): string => {
-      const left = fitText(text, width - paneWidth - 2);
-      const right = fitText(content, paneWidth - 4);
-      return left + ' '.repeat(width - paneWidth - textWidth(left))
-        + `│ ${right}` + ' '.repeat(paneWidth - 3 - textWidth(right)) + '│';
-    };
+    const compactChild = !!this.subagent && !pane;
+    const controlWidth = this.controlWidth();
+    const controlMargin = this.controlMargin();
 
     const partialLines = this.partial ? wrapText(this.partial, width)
       .map(line => (this.color ? this.fork().line(line, this.palette, this.partialKind) : line)) : [];
@@ -546,7 +558,7 @@ export class TerminalUI implements ChatTerminal {
     // ライブの推論は見出し含めて表示。はみ出すときは古い行(先頭)から落とす。
     const reasoningText = this.reasoning.trimEnd() === '' ? [] :
       wrapText(`(推論)\n${this.reasoning.trimEnd()}`, width);
-    const reservedForBody = 1 /* divider */ + inputRows + 4 /* status/hints/cwd+footer */ + (options ? 2 : 0) + partialCount;
+    const reservedForBody = 1 /* divider */ + inputRows + 4 /* status/hints/cwd+footer */ + (options ? 2 : 0) + partialCount + stackedHeight;
     const maxReasoning = Math.max(0, Math.min(rows - reservedForBody - 1, 24));
     const liveReasoning = reasoningText.length === 0 ? [] :
       reasoningText.slice(Math.max(0, reasoningText.length - maxReasoning))
@@ -555,7 +567,7 @@ export class TerminalUI implements ChatTerminal {
     const optionsLines: { text: string; style: string }[] = [];
     if (options) {
       const maxOptions = this.pending?.choices ? 8 : COMMANDS.length;
-      const height = Math.max(1, Math.min(options.length || 1, Math.max(2, rows - (partialCount + liveReasoning.length) - 6), maxOptions));
+      const height = Math.max(1, Math.min(options.length || 1, Math.max(2, rows - (partialCount + liveReasoning.length) - 6 - stackedHeight), maxOptions));
       const start = Math.max(0, Math.min(this.selection - height + 1, options.length - height));
       optionsLines.push({ text: this.pending?.choices ? this.pending.title : 'Commands', style: READABLE_TEXT_STYLE });
       if (!options.length) optionsLines.push({ text: '該当なし — 検索語を変える / Esc で戻る', style: '2' });
@@ -579,8 +591,7 @@ export class TerminalUI implements ChatTerminal {
       const line = editor.lines[this.editorScroll + i] ?? '';
       const placeholder = i === 0 && !this.text ? (this.pending?.choices ? 'Search…' : this.pending?.title ?? this.activity ?? '処理中… Ctrl+C で中止') : '';
       let text = `│ ${line || placeholder}`;
-      if (sidePane[i] !== undefined) text = withPane(text, sidePane[i]);
-      else if (!this.pending && this.subagent && (!editingFollowup || (!this.text && i > 0))) {
+      if (compactChild && !this.pending && this.subagent && (!editingFollowup || (!this.text && i > 0))) {
         text = `│ ${[childPhase, this.subagent.pluginId, childTask][i] ?? ''}`;
       }
       lines.push({ text, style: placeholder && this.pending ? READABLE_TEXT_STYLE : '' });
@@ -588,28 +599,53 @@ export class TerminalUI implements ChatTerminal {
     const attachments = composer && this.images.length ? ` · 画像${this.images.length}枚 (Ctrl+Xで削除)` : '';
     const status = this.inputNotice && !this.pending?.secret ? this.inputNotice : `MoDKH  ·  ${this.model ?? '未接続 — /connect'}${attachments}`;
     const modelStatus = `│ ${compactChild && (this.pending || editingFollowup) ? childPhase : status}`;
-    lines.push({ text: pane ? withPane(modelStatus, pane.pluginId) : modelStatus, style: ACCENT });
+    lines.push({ text: modelStatus, style: ACCENT });
     const hints = editingFollowup ? `${compactChild && this.inputNotice ? this.inputNotice + '  ' : ''}Enter 追加の依頼を送信  Ctrl+C 中止`
       : !this.pending ? 'Ctrl+C 中止（入力は応答完了後）' : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
       : composer ? 'Enter 送信  Ctrl+J 改行  Ctrl+V 画像  Cmd+V テキスト' : 'Enter 決定  Ctrl+C 中止';
     lines.push({ text: hints, style: '2' });
-    // 最下段: 作業ルート(左)とトークン使用量のステータス(右)。狭い時はルートだけ。
-    const usageStatus = this.usage ? usageBadgeLine(this.usage, Math.max(0, width - textWidth(this.cwd) - 3)) : '';
+    // 右側の内訳を置けない端末では、最下段に使用量の要約を残す。
+    const badgeRoom = controlWidth - textWidth(this.cwd) - 2;
+    const usageStatus = usageRows.length ? '' : this.usage?.responses
+      ? usageBadgeLine(this.usage, controlWidth) : '計 — tok';
     const usageWidth = textWidth(usageStatus);
     const cwdWidth = textWidth(this.cwd);
-    const bottom = usageStatus.length > 0 && width - cwdWidth - usageWidth >= 2
-      ? `${this.cwd}${' '.repeat(width - cwdWidth - usageWidth)}${usageStatus}`
-      : this.cwd;
+    const bottom = usageStatus && badgeRoom >= usageWidth
+      ? `${this.cwd}${' '.repeat(controlWidth - cwdWidth - usageWidth)}${usageStatus}`
+      : usageStatus ? usageStatus.padStart(controlWidth - usageWidth + usageStatus.length) : this.cwd;
     lines.push({ text: bottom, style: '2' });
 
-    const styled = (row: { text: string; style: string }): string => {
-      const fitted = fitText(row.text, width);
+    const styled = (row: { text: string; style: string }, maxWidth = width): string => {
+      const fitted = fitText(row.text, maxWidth);
       if (row.text.startsWith('│ ')) {
-        const padded = fitted + ' '.repeat(Math.max(0, width - textWidth(fitted)));
+        const padded = fitted + ' '.repeat(Math.max(0, maxWidth - textWidth(fitted)));
         return this.paint('│', ACCENT) + this.paint(padded.slice(1), `${this.panelStyle}${row.style ? `;${row.style}` : ''}`);
       }
       return this.paint(fitted, row.style);
     };
+    const sidebar = showUsage ? usageRows : [];
+    if (pane) sidebar.unshift('', 'サブエージェント', childPhase, childTask ?? '', pane.pluginId);
+    const extraRows = Math.max(0, sidebar.length - lines.length);
+    // 子と使用量の両方を表示している間も入力欄とカーソル位置を保つ。
+    lines.splice(lines.length - 2, 0, ...Array.from({ length: extraRows }, () => ({ text: '', style: '' })));
+    const rightStart = columns - SIDEBAR_WIDTH;
+    const sidebarStart = lines.length - sidebar.length;
+    const paintSidebarRow = (content: string): string => {
+      const right = fitText(content, SIDEBAR_WIDTH - 4);
+      const border = this.paint('│', ACCENT);
+      const style = content.startsWith('トークン消費量') ? `${this.panelStyle};1` : this.panelStyle;
+      const padding = ' '.repeat(SIDEBAR_WIDTH - 3 - textWidth(right));
+      const panel = this.paint(` ${right}${padding}`, style);
+      return border + panel + border;
+    };
+    const controls = lines.map((row, i) => {
+      const left = ' '.repeat(controlMargin) + styled(row, controlWidth);
+      const content = sidebar[i - sidebarStart];
+      return content ? left + ' '.repeat(rightStart - textWidth(left)) + paintSidebarRow(content) : left;
+    });
+    if (stackUsage) {
+      controls.splice(controls.length - 2, 0, ...usageRows.map(row => ' '.repeat(rightStart) + paintSidebarRow(row)));
+    }
     // 会話が始まる前のウェルカム: ロゴ+案内を中央に整える。
     const marginStyled = (row: { text: string; style: string }): string => marginPrefix + styled(row);
     let body: string[] = [];
@@ -633,7 +669,7 @@ export class TerminalUI implements ChatTerminal {
         ...partialLines,
         ...liveReasoning.map(row => marginPrefix + this.paint(fitText(row.text, width), row.style)),
         // lines にはコマンドメニュー(optionsLines)が含まれる。二重に展開しない。
-        ...lines.map(marginStyled),
+        ...controls,
       ];
       editorStartIdx = welcome.length + midPad + partialCount + liveReasoning.length + optionsLines.length + 1;
     } else {
@@ -642,7 +678,7 @@ export class TerminalUI implements ChatTerminal {
         ...partialLines,
         ...liveReasoning.map(row => this.paint(fitText(row.text, width), row.style)),
         // lines にはコマンドメニュー(optionsLines)が含まれる。二重に展開しない。
-        ...lines.map(styled),
+        ...controls,
       ];
     }
     // 最下部ブロックは1行以上の余白を残して画面に収める。はみ出すときは上侧から落とす。
@@ -694,7 +730,7 @@ export class TerminalUI implements ChatTerminal {
       out += `\x1b[${liveStart + i};1H\x1b[K${body[i]}` + (i === liveCount - 1 ? '' : '\r\n');
     }
     const cursorLiveRow = Math.min(rows, liveStart + editorStartIdx + (cursor.row - this.editorScroll));
-    const cursorCol = Math.min(this.columns(), 3 + cursor.column);
+    const cursorCol = Math.min(columns, controlMargin + 3 + cursor.column);
     out += `\x1b[${cursorLiveRow};${cursorCol}H` + (this.pending || editingFollowup ? '\x1b[?25h' : '\x1b[?25l');
     this.cursorRow = cursorLiveRow;
     this.output.write(out);

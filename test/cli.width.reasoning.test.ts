@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import { stripVTControlCharacters } from 'node:util';
-import { screenFrom } from './tui.screen.ts';
+import { screenFrom, withoutRightPane } from './tui.screen.ts';
 
 const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
@@ -54,9 +54,9 @@ test('a real TUI conversation uses the full terminal width and shows provider re
     let output = '';
     child.stdout!.on('data', data => { output += data; });
     // ウェルカムは端末中央寄せ(余白込みで広がらない)。本文幅を測るため余白を除く。
-    const widest = (): number => {
+    const widest = (welcome = false): number => {
       const lines = screenFrom(output, 40);
-      return Math.max(...lines.map(line => [...line.trim()].length));
+      return Math.max(...lines.map(line => [...(welcome ? withoutRightPane(line) : line).trim()].length));
     };
     const wait = async (text: string): Promise<void> => {
       const deadline = Date.now() + 8000;
@@ -67,7 +67,7 @@ test('a real TUI conversation uses the full terminal width and shows provider re
     };
     await wait('何を調べますか');
     assert.match(output, /\x1b\[48;5;\d+;1;39m 何を調べますか/);
-    const welcomeWidth = widest();
+    const welcomeWidth = widest(true);
     assert.ok(welcomeWidth <= 80, `welcome stays compact: ${welcomeWidth}`);
 
     child.stdin!.write(`/connect compatible/x --base-url http://127.0.0.1:${(server.address() as AddressInfo).port}/v1\r`);

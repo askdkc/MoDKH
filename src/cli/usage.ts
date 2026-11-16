@@ -88,7 +88,10 @@ export function usageBadgeLine(usage: UsageTotals, maxWidth?: number): string {
 const breakdownNumber = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
 
 export function usageBreakdown(usage: UsageTotals): string {
-  if (usage.responses === 0) return 'トークン使用量はまだ報告されていません';
+  return usage.responses === 0 ? 'トークン使用量はまだ報告されていません' : usageBreakdownLines(usage).join('\n');
+}
+
+export function usageBreakdownLines(usage: UsageTotals, minWidth = 0): string[] {
   const total = usage.input === undefined && usage.output === undefined
     ? undefined : (usage.input ?? 0) + (usage.output ?? 0);
   const rows: [string, number | undefined][] = [
@@ -100,6 +103,6 @@ export function usageBreakdown(usage: UsageTotals): string {
   ];
   const labels = Math.max(...rows.map(([label]) => textWidth(label)));
   const values = rows.map(([, value]) => value === undefined ? '—' : breakdownNumber.format(value));
-  const width = Math.max(...values.map(value => value.length));
-  return rows.map(([label], i) => label + ' '.repeat(labels - textWidth(label) + 2) + values[i].padStart(width)).join('\n');
+  const width = Math.max(minWidth - labels - 2, ...values.map(textWidth));
+  return rows.map(([label], i) => label + ' '.repeat(labels - textWidth(label) + 2 + width - textWidth(values[i])) + values[i]);
 }

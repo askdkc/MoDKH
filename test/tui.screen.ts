@@ -59,3 +59,6 @@ export function screenFrom(raw: string, rows = 40): string[] {
 }
 
 export function screenText(rows: string[]): string { return rows.join('\n'); }
+export function withoutRightPane(line: string): string {
+  return line.endsWith('│') ? line.split('│').slice(0, -2).join('│') : line;
+}

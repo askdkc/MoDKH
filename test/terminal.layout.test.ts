@@ -4,7 +4,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { PassThrough } from 'node:stream';
 import type { ReadStream, WriteStream } from 'node:tty';
 import { TerminalUI, textWidth } from '../src/cli/terminal.ts';
-import { screenFrom, screenText } from './tui.screen.ts';
+import { screenFrom, screenText, withoutRightPane } from './tui.screen.ts';
 
 function terminal(columns = 100, rows = 30) {
   const input = new PassThrough() as unknown as ReadStream;
@@ -55,7 +55,7 @@ test('the welcome block stays compact, and a conversation uses the full width wi
     const welcome = t.text().split('\n');
     // ウェルカムは端末全体の中央に寄せられる。コンテンツ幅は80列で、
     // 余白(margin)を除いた本文は80列以内。
-    const used = Math.max(...welcome.map(line => textWidth(line.trim())));
+    const used = Math.max(...welcome.map(line => textWidth(withoutRightPane(line).trim())));
     assert.ok(used <= 80, `welcome stays compact: ${used}`);
     const logoRows = welcome.filter(line => line.trim().startsWith('█'));
     assert.ok(logoRows.some(line => line.includes('███╗   ███╗')), 'wordmark includes M');
