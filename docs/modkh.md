@@ -6,7 +6,7 @@ MoDKH (Mixture of DKH) is distributed as `modkh`, exposing only the `modkh` comm
 
 See [Lisp presets](presets.md) for a single-preset example.
 
-SBCL must already be installed. Without `--lisp-config`, ordinary MODKH behavior remains available. With it, builtin/installed plugins are excluded for this session, the head has read/language/delegation tools only, and editing/formal checking is delegated. Hermes cannot be used as the head because its remote tools bypass this boundary. Normal input always goes through the head model unless `--routing auto` is explicitly supplied.
+Ordinary `modkh` includes language-specific observation roles alongside the generic agents and installed plugins. The head can delegate to these roles and retains its ordinary editing tools. Loading a custom `--lisp-config` requires SBCL. In that session the supplied roles replace the default catalog, the head has read/language/delegation tools only, and editing/formal checking is delegated. Hermes cannot be used as the custom Lisp head because its remote tools bypass this boundary. Normal input goes through the head model unless `--routing auto` is explicitly supplied.
 
 The trusted Lisp file is **arbitrary OS code**, not sandboxed configuration. Its input bytes are snapshotted, hash checked, and evaluated with startup files disabled in a private temporary HOME/TMPDIR and a minimal environment. Additional files loaded by that trusted code are not recursively covered by the hash. Relative loads resolve in the snapshot directory. Review any absolute dependencies separately. There is no implicit reload or workspace discovery.
 

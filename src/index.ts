@@ -10,7 +10,7 @@ const HELP = `modkh ${VERSION} — MoDKH (Mixture of DKH)
 
 使い方:
   modkh [--model <provider>/<model>] [--cwd <dir>] [--resume <id>] [--base-url <url>]
-      (サブコマンドなしで起動すると対話ハーネスを開く)
+      (対話ハーネスを開く。言語別の調査担当は /agents で確認)
   modkh chat --model <provider>/<model> [--cwd <dir>] [--resume <id>] [--base-url <url>]
   modkh chat --lisp-config agents.lisp --trust-lisp-sha256 SHA256 [--sbcl PATH] [--verification-isolation required|integrity-only]
       [--routing auto] [--lean PATH] [--java PATH --tla-jar PATH]

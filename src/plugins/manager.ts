@@ -6,6 +6,7 @@ import { configDir } from '../cli/config.ts';
 import { fields, inspectPackage, object, pluginId } from './package.ts';
 import type { PackageSnapshot } from './package.ts';
 import type { SessionDefinition } from '../lisp/config.ts';
+import { builtinMicroagents } from '../lisp/builtin-agents.ts';
 import type { PluginDescriptor } from './api.ts';
 import { SubagentRegistry } from './registry.ts';
 
@@ -97,6 +98,11 @@ export class PluginManager {
         } catch (e) { diagnostics.push(`${id}: ${String(e)}`); }
       }
     } catch (e) { diagnostics.push(`Built-in plugins unavailable: ${String(e)}`); }
+    try {
+      for (const { descriptor } of builtinMicroagents()) {
+        registry.register({ ...descriptor, enabled: !catalog.disabledBuiltins.includes(descriptor.id) });
+      }
+    } catch (e) { diagnostics.push(`Built-in microagents unavailable: ${String(e)}`); }
     for (const [id, row] of Object.entries(catalog.plugins)) {
       try {
         const snapshot = inspectPackage(this.packagePath(id, row.digest));
@@ -181,16 +187,23 @@ export class PluginManager {
       const descriptor = this.discover().registry.get(id);
       if (!descriptor?.enabled) throw new Error(`Plugin unavailable or disabled: ${id}`);
       if (descriptor.digest !== digest) throw new Error('Plugin changed before dispatch');
+      const microagent = descriptor.builtin && !descriptor.entry
+        ? builtinMicroagents().find(entry => entry.descriptor.id === id)
+        : undefined;
       const directory = descriptor.builtin ? path.join(this.builtinDir, id) : this.packagePath(id, digest);
       const leases = path.join(this.base(), 'leases', id);
       fs.mkdirSync(leases, { recursive: true, mode: 0o700 });
       const lease = path.join(leases, `${randomUUID()}.json`);
       fs.writeFileSync(lease, JSON.stringify({ pid: process.pid, digest }), { flag: 'wx', mode: 0o600, flush: true });
-      return { descriptor: { ...descriptor }, directory, lease };
+      return { descriptor: { ...descriptor }, directory, lease, microagent };
     });
     let released = false;
     const release = () => { if (!released) { fs.unlinkSync(admitted.lease); released = true; } };
     try {
+      if (admitted.microagent) {
+        const definition = admitted.microagent.definition;
+        return { descriptor: admitted.descriptor, module: { define: () => structuredClone(definition) }, release };
+      }
       if (inspectPackage(admitted.directory).digest !== digest) throw new Error('Plugin changed before import');
       const module = await importWithSignal(`${pathToFileURL(path.join(admitted.directory, admitted.descriptor.entry)).href}?digest=${digest}`, signal);
       return { descriptor: admitted.descriptor, module, release };

@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import http from 'node:http';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 
 const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 test('public CLI discovers built-in subagent plugins without starting a model', () => {
@@ -24,7 +27,80 @@ test('/agents is discoverable without connecting a model', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /modkh-explorer/);
     assert.match(r.stdout, /modkh-worker/);
+    assert.match(r.stdout, /modkh-micro-ts-outline/);
+    assert.match(r.stdout, /modkh-micro-svelte-diagnostics/);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('bare CLI dispatches two language roles and returns both results to the parent', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-default-moa-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, 'home');
+  fs.mkdirSync(home);
+  fs.writeFileSync(path.join(root, 'client.ts'), 'export function typedClient(): string { return "ok"; }');
+  fs.writeFileSync(path.join(root, 'server.js'), 'export function jsServer() { return "ok"; }');
+  const toolCall = (id: string, name: string, args: object) => ({
+    tool_calls: [{ index: 0, id, type: 'function', function: { name, arguments: JSON.stringify(args) } }],
+  });
+  const ask = (language: string, path: string) => toolCall(`delegate-${language}`, 'run_subagent', {
+    pluginId: `modkh-micro-${language}-outline`, task: `Inspect ${path}`,
+  });
+  const steps = [
+    toolCall('roles', 'list_subagents', {}),
+    ask('ts', 'client.ts'),
+    toolCall('ts-outline', 'code_outline', { path: 'client.ts' }),
+    { content: 'TypeScript outline inspected' },
+    ask('js', 'server.js'),
+    toolCall('js-outline', 'code_outline', { path: 'server.js' }),
+    { content: 'JavaScript outline inspected' },
+    { content: 'Both language results integrated' },
+  ];
+  const requests: { messages: unknown[]; tools: { function: { name: string } }[] }[] = [];
+  const server = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const request = JSON.parse(Buffer.concat(chunks).toString());
+    const step = steps[requests.push(request) - 1];
+    if (!step) { res.writeHead(500).end(); return; }
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const send = (delta: object, finish_reason: string | null) => res.write(`data: ${JSON.stringify({
+      id: 'default-moa', object: 'chat.completion.chunk', created: 1, model: 'fixture',
+      choices: [{ index: 0, delta, finish_reason }],
+    })}\n\n`);
+    send({ role: 'assistant', ...step }, null);
+    send({}, 'tool_calls' in step ? 'tool_calls' : 'stop');
+    res.end('data: [DONE]\n\n');
+  }).listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
+    model: 'compatible/fixture',
+    modelBaseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
+    language: { autoInstall: false },
+  }));
+  const child = spawn(process.execPath, [entry], {
+    cwd: root, env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' },
+    stdio: ['pipe', 'pipe', 'pipe'], timeout: 15000,
+  });
+  let output = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { output += chunk; });
+  child.stdin.end('client.ts と server.js の構造を調べ、結果をまとめて。\n/exit\n');
+  const [exitCode] = await once(child, 'close');
+  assert.equal(exitCode, 0, output);
+  assert.match(output, /Both language results integrated/);
+  assert.equal(requests.length, steps.length, output);
+  const firstRequest = JSON.stringify(requests[0].messages);
+  assert.match(firstRequest, /ユーザーから分担の指定がない場合も/);
+  assert.match(firstRequest, /対象言語ごとに委譲/);
+  for (const index of [2, 5]) {
+    assert.deepEqual(requests[index].tools.map(tool => tool.function.name), ['code_outline']);
+  }
+  assert.match(JSON.stringify(requests[3].messages), /typedClient/);
+  assert.match(JSON.stringify(requests[6].messages), /jsServer/);
+  const parentMessages = JSON.stringify(requests[7].messages);
+  assert.match(parentMessages, /TypeScript outline inspected/);
+  assert.match(parentMessages, /JavaScript outline inspected/);
 });
 
 function sandbox(t: { after(fn: () => void): void }) {
@@ -84,6 +160,11 @@ test('empty and malformed plugin settings retain ordinary chat and command help'
   const f = sandbox(t);
   f.run(['plugin', 'disable', 'modkh-explorer']);
   f.run(['plugin', 'disable', 'modkh-worker']);
+  const builtinRoles = [...f.run(['plugin', 'list']).matchAll(/^\s*(modkh-micro-[\w-]+)/gm)].map(match => match[1]);
+  assert.ok(builtinRoles.length > 0);
+  fs.writeFileSync(path.join(f.home, 'config.json'), JSON.stringify({
+    subagents: Object.fromEntries(builtinRoles.map(id => [id, { disabled: true }])),
+  }));
   assert.match(f.run([], '/agents\n/help\n/exit\n'), /利用可能な子はありません/);
   f.run(['plugin', 'enable', 'modkh-explorer']);
   f.run(['plugin', 'enable', 'modkh-worker']);

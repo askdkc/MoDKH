@@ -1,5 +1,9 @@
 # Lispプリセット
 
+引数なしの `modkh` には、PHP・Common Lisp・JavaScript・TypeScript・Svelte・HTML・CSS・Tailwind CSS の調査担当が組み込まれています。親モデルが依頼を分割して順に委譲し、結果をまとめます。たとえば、対応するモデルに接続して「`src/client.ts` と `src/server.js` の構造を調べ、共通点をまとめて」と依頼できます。担当は `/agents` に `modkh-micro-` で始まる名前で表示されます。
+
+組み込み担当を登録するために SBCL は不要です。診断や参照検索などには言語別の機能が必要です。以下の Lisp プリセットは、担当を独自に編成したり、検証付き編集を設定したりする場合に使います。
+
 [プリセット一覧](../experiments/presets/)から使う言語のファイルを選びます。SBCLを用意し、ファイルを置いたプロジェクトで実行します。以下はリポジトリのルートでTypeScript用を使う例です。
 
 ```sh
