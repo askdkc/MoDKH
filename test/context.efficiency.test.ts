@@ -47,7 +47,11 @@ test('earlier tool projections are never rewritten when later results arrive', (
   // A rewritten body changes already-sent messages, which invalidates the provider's cache.
   const big = (n: number) => `HEADER${n}\n` + Array.from({ length: 4000 }, (_, i) => `line ${n}-${i} ${'x'.repeat(40)}\n`).join('') + 'TAIL';
   const messages: AgentMessage[] = [{ role: 'user', content: 'go' }, { role: 'assistant', content: '' }];
-  const snapshots: Map<string, string>[] = [];
+  const batch = Array.from({ length: 10 }, (_, i) =>
+    ({ callId: `batch-${i}`, name: 'run_command', status: 'ok' as const, output: big(i) }));
+  messages.push({ role: 'tool', results: batch });
+  const snapshots = [toolContext(messages)];
+  assert.doesNotMatch(snapshots[0].get('2:9')!, /HEADER9/);
   for (let step = 0; step < 6; step++) {
     messages.push({ role: 'tool', results: [{ callId: `c${step}`, name: 'run_command', status: 'ok', output: big(step) }] });
     snapshots.push(toolContext(messages));

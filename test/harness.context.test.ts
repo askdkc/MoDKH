@@ -90,8 +90,8 @@ test('context prefixes preserve UTF-8 and repeated receipt objects do not erase 
   const messages: AgentMessage[] = Array.from({ length: 16 }, () => ({ role: 'tool', results: [shared] }));
   const wire = toResponsesInput(messages).map(item => JSON.parse(item.output!));
   assert.match(wire.at(-1).output, /SHARED_SENTINEL/);
-  assert.doesNotMatch(wire[0].output, /SHARED_SENTINEL/);
+  assert.equal(wire[0].output, wire.at(-1).output);
   assert.ok(wire.every(item => item.status === 'unknown'));
-  assert.ok(wire.reduce((sum, item) => sum + Buffer.byteLength(item.output), 0) < 140 * 1024);
+  assert.ok(wire.every(item => Buffer.byteLength(item.output) <= 16 * 1024));
   assert.equal(shared.output.length, 40016);
 });

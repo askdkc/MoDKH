@@ -42,7 +42,8 @@ test('pinned skill context keeps the system prompt byte-identical across tool st
       ],
       [...delta('done'), { type: 'finish', stopReason: 'stop' }],
     ]);
-    const pinned = { text: '\n[skill]\n固定本文\n', selected: ['skill'], warnings: [], bytes: 20 };
+    const text = '\n[skill]\n固定本文\n';
+    const pinned = { text, selected: ['skill'], sections: [{ name: 'skill', text }], warnings: [], bytes: Buffer.byteLength(text) };
     await runAgentLoop([{ role: 'user', content: '何か' }], {
       model, registry: new ToolRegistry(defaultTools()), root,
       system: 'STABLE', skillContext: pinned,

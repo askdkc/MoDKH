@@ -63,7 +63,8 @@ with tempfile.TemporaryDirectory(prefix='modkh-pty-') as home:
                OLLAMA_BASE_URL=f'http://127.0.0.1:{server.server_port}/v1')
     env.pop('MODKH_PLAIN', None)
     env.pop('NO_COLOR', None)  # This isolated run verifies blue; unit tests cover NO_COLOR.
-    child = subprocess.Popen([NODE, str(ENTRY)], stdin=slave, stdout=slave, stderr=slave, env=env)
+    child = subprocess.Popen([NODE, str(ENTRY)], stdin=slave, stdout=slave, stderr=slave,
+                             env=env, start_new_session=True)
     output = b''
     checkpoint = 0
 
@@ -72,12 +73,10 @@ with tempfile.TemporaryDirectory(prefix='modkh-pty-') as home:
         deadline = time.monotonic() + timeout
         target = text.encode()
         while target not in output[checkpoint:]:
-            if child.poll() is not None:
-                raise AssertionError(f'CLI exited {child.returncode}: {output[-4000:]!r}')
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise AssertionError(f'Missing {text!r}: {output[-6000:]!r}')
-            ready, _, _ = select.select([master], [], [], remaining)
+            ready, _, _ = select.select([master], [], [], min(remaining, 0.1))
             if ready:
                 try:
                     output += os.read(master, 65536)
@@ -85,6 +84,8 @@ with tempfile.TemporaryDirectory(prefix='modkh-pty-') as home:
                     if error.errno != errno.EIO:
                         raise
                     raise AssertionError(f'PTY closed before {text!r}') from error
+            elif child.poll() is not None:
+                raise AssertionError(f'CLI exited {child.returncode}: {output[-4000:]!r}')
 
     def send(data):
         global checkpoint
@@ -93,12 +94,12 @@ with tempfile.TemporaryDirectory(prefix='modkh-pty-') as home:
 
     try:
         wait_for('何を調べますか')
-        assert '██████'.encode() in output and b'MODKH' in output
         wait_for('\x1b[?25h')
-        welcome = output.rsplit(b'\x1b[H', 1)[-1].decode()
-        lines = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', welcome).split('\r\n')
-        editor_row = next(i for i, line in enumerate(lines) if '何を調べますか' in line)
-        logo_row = next(i for i, line in enumerate(lines) if '██████' in line)
+        welcome = output.decode()
+        assert 'MoDKH  ·  Coding Harness' in welcome
+        painted_rows = re.findall(r'\x1b\[(\d+);1H([^\r\n]*)', welcome)
+        editor_row = next(int(row) for row, text in painted_rows if '何を調べますか' in text)
+        logo_row = next(int(row) for row, text in painted_rows if '██████' in text)
         assert 14 <= editor_row <= 23, f'editor is not near the center: {editor_row}'
         assert 0 < editor_row - logo_row <= 12, 'logo and input are disconnected'
         assert '\x1b[34m' in welcome and '\x1b[35m' not in welcome, 'expected blue accents'
@@ -112,6 +113,8 @@ with tempfile.TemporaryDirectory(prefix='modkh-pty-') as home:
         wait_for('Ollama')
         send('\r')
         wait_for('ollama/llama3.2')
+        send('\x1b[B')
+        wait_for('› ollama/llama3.2')
         send('\r')
         wait_for('接続しました: ollama/llama3.2')
         send('こんにちは\r')
@@ -126,9 +129,14 @@ with tempfile.TemporaryDirectory(prefix='modkh-pty-') as home:
         wait_for('Hermes Agent')
         send('\x1b')
         wait_for('何を調べますか')
+        checkpoint = len(output)
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 16, 42, 0, 0))
-        child.send_signal(signal.SIGWINCH)
+        # A real terminal signals the foreground group, including a recorder's chat child.
+        os.killpg(child.pid, signal.SIGWINCH)
+        wait_for('\x1b[2J')
         send('/exit\r')
+        # Drain redraws and the final cleanup frame before waiting for the process.
+        wait_for('\x1b[?2004l')
         child.wait(timeout=8)
         assert child.returncode == 0, child.returncode
         # Raw mode must be restored even after Stop and terminal resize.
@@ -143,7 +151,7 @@ with tempfile.TemporaryDirectory(prefix='modkh-pty-') as home:
     finally:
         release.set()
         if child.poll() is None:
-            child.kill()
+            os.killpg(child.pid, signal.SIGKILL)
             child.wait()
         os.close(master)
         os.close(slave)

@@ -4,10 +4,14 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { parseImages } from '../agent/images.ts';
 import type { AgentMessage, ToolCall, ToolResult } from '../agent/types.ts';
+import { safeBoundary, type CompactionState } from '../agent/compaction.ts';
 import type { DelegationRecord } from '../subagents/types.ts';
 import { parseDelegation, delegationDigest } from '../subagents/request.ts';
 
 export type SessionStatus = 'active' | 'complete' | 'interrupted' | 'error' | 'turn-limit';
+
+/** 圧縮要約の保存上限。壊れた・巨大な記録で入力が膨らむのを防ぐ。 */
+export const MAX_SUMMARY_CHARS = 20_000;
 
 /** JSONL の1行目。セッションの基本情報。seq は同ディレクトリ内の作成順(一覧の決定的並び替え用)。 */
 export interface SessionHeader {
@@ -36,6 +40,8 @@ type SessionEvent =
   | { type: 'delegation'; record: DelegationRecord }
   | (MemoryObservation & { type: 'memory'; at: string })
   | { type: 'status'; status: SessionStatus; at: string; diagnostic?: string }
+  /** 圧縮の記録。messages index の from 以降を生のまま送るという意味だけを持ち、原文は消さない。 */
+  | { type: 'compaction'; summary: string; from: number; at: string; keptTurns: number }
   | { type: 'message'; message: AgentMessage };
 
 export interface SessionSummary {
@@ -119,6 +125,8 @@ export class Session {
   messages: AgentMessage[] = [];
   status: SessionStatus = 'active';
   lastError?: string;
+  /** 直近の圧縮状態。未圧縮なら undefined。原文の messages は常に全文。 */
+  compaction?: CompactionState;
   id: string;
   /** ヘッダの作成時刻(ワークスペース記録に使う)。古いファイルは作成時刻がない。 */
   createdAt = '';
@@ -170,7 +178,13 @@ export class Session {
         session.model = ev.model;
         session.modelBaseUrl = ev.baseUrl;
       } else if (ev.type === 'delegation') session.acceptDelegation(ev.record);
-      else if (ev.type === 'status') {
+      else if (ev.type === 'compaction') {
+        // 妥当な index だけを受け入れる。壊れた記録は無視して全文送信へ戻す(安全側)。
+        if (Number.isSafeInteger(ev.from) && ev.from > (session.compaction?.from ?? 0)
+            && ev.from < session.messages.length && typeof ev.summary === 'string' && ev.summary.trim()) {
+          session.compaction = { summary: ev.summary.slice(0, MAX_SUMMARY_CHARS), from: ev.from };
+        }
+      } else if (ev.type === 'status') {
         session.status = ev.status;
         session.lastError = typeof ev.diagnostic === 'string' ? ev.diagnostic.slice(0, 2048) : undefined;
       }
@@ -194,6 +208,9 @@ export class Session {
       const results = [...pending.values()].map(call => session.recoverPending(call));
       session.messages.push({ role: 'tool', results });
       if (results.some(result => result.status === 'unknown')) session.status = 'interrupted';
+    }
+    if (session.compaction && safeBoundary(session.messages, session.compaction.from) !== session.compaction.from) {
+      session.compaction = undefined;
     }
     return session;
   }
@@ -235,6 +252,15 @@ export class Session {
     this.write({ ...observation, type: 'memory', at: new Date().toISOString() });
   }
 
+  /**
+   * 圧縮を記録する。原文の messages は変更しない(監査・再実行防止の根拠を保つ)。
+   * 書き込みに失敗した場合はメモリ上の状態も戻し、保存と表示の不一致を作らない。
+   */
+  recordCompaction(state: CompactionState, keptTurns: number): void {
+    this.write({ type: 'compaction', summary: state.summary, from: state.from, keptTurns, at: new Date().toISOString() });
+    this.compaction = { ...state };
+  }
+
   setConnection(model: string, baseUrl?: string): void {
     this.write({ type: 'connection', model, ...(baseUrl ? { baseUrl } : {}) });
     this.model = model;
@@ -247,6 +273,8 @@ export class Session {
     this.write({ type: 'status', status, at: new Date().toISOString(), ...(detail ? { diagnostic: detail } : {}) });
     this.status = status; this.lastError = detail;
   }
+
+  get delegationCount(): number { return this.delegationLog.size; }
 
   delegations(): DelegationRecord[] { return [...this.delegationLog.values()].map(record => structuredClone(record)); }
 

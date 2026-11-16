@@ -14,6 +14,7 @@ export interface TaskSkill {
 export interface SkillContext {
   text: string;
   selected: string[];
+  sections: { name: string; text: string }[];
   warnings: string[];
   bytes: number;
 }
@@ -111,47 +112,32 @@ function localCatalog(root: string, warnings: string[], builtin: readonly TaskSk
   }
 }
 
-/** Per user turn, not per tool step. Never append instructions to persistent conversation history. */
-/**
- * Merge freshly selected guidance into the text already sent to the provider.
- *
- * The provider caches a byte-identical prefix, so re-deriving the whole block per message
- * threw away every cached token after the system prompt when the topic changed. Sections are
- * only ever appended here, keeping the earlier prefix untouched within one session.
- */
+/** Keep delivered instructions verbatim, adding whole sections within the session budget. */
 export function mergeSkillContext(previous: SkillContext | undefined, next: SkillContext): SkillContext {
-  if (previous === undefined || previous.text.length === 0) return next;
-  if (next.text.length === 0) return previous;
-  // A new section starts at the binding header; the body of `next` follows it.
-  const header = '\n\n' + MODKH_SKILL_BINDING;
-  const body = next.text.startsWith(header) ? next.text.slice(header.length) : next.text;
-  const absent = next.selected.filter(name => !previous.selected.includes(name));
-  if (absent.length === 0) return previous;
-  // Keep only the sections for skills that were not already delivered.
-  const kept: string[] = [];
-  const seen = new Set<string>();
-  for (const name of absent) {
-    const marker = `\n[${name}]\n`;
-    const start = body.indexOf(marker);
-    if (start < 0) continue;
-    const end = body.indexOf('\n[', start + marker.length);
-    const section = body.slice(start, end < 0 ? undefined : end);
-    if (seen.has(section)) continue;
-    seen.add(section);
-    kept.push(section);
+  if (!previous?.text) return next;
+  let { text, bytes } = previous;
+  const sections = [...previous.sections];
+  const warnings = [...next.warnings];
+  for (const section of next.sections) {
+    if (previous.selected.includes(section.name)) continue;
+    const size = Buffer.byteLength(section.text);
+    if (bytes + size > SKILL_CONTEXT_BYTES) {
+      warnings.push(`${section.name}: 注入上限を超えるため本文全体を省略`);
+      continue;
+    }
+    text += section.text;
+    bytes += size;
+    sections.push(section);
   }
-  if (kept.length === 0) return previous;
-  const text = previous.text + kept.join('');
-  if (Buffer.byteLength(text) > SKILL_CONTEXT_BYTES) return previous;
-  const warnings = [...previous.warnings, ...next.warnings];
-  return { text, selected: [...previous.selected, ...absent], warnings, bytes: Buffer.byteLength(text) };
+  return { text, bytes, sections, selected: sections.map(section => section.name), warnings };
 }
 
+/** Select guidance for a user turn without changing the conversation journal. */
 export function prepareSkillContext(task: string, root: string): SkillContext {
   const warnings: string[] = [];
   let canonical: string;
   try { canonical = fs.realpathSync(root); }
-  catch { return { text: '', selected: [], warnings: ['作業ルートを確認できないためスキル注入を省略'], bytes: 0 }; }
+  catch { return { text: '', selected: [], sections: [], warnings: ['作業ルートを確認できないためスキル注入を省略'], bytes: 0 }; }
   let builtin: TaskSkill[] = [];
   try { builtin = builtinCatalog(); }
   catch { warnings.push('同梱スキル一覧を読めないため注入を省略'); }
@@ -168,7 +154,7 @@ export function prepareSkillContext(task: string, root: string): SkillContext {
   const selected = [...new Set(order)].filter(name => names.has(name)).map(name => catalog.find(skill => skill.name === name)).filter((skill): skill is TaskSkill => !!skill);
   const header = '\n\n' + MODKH_SKILL_BINDING;
   let text = '';
-  const delivered: string[] = [];
+  const sections: SkillContext['sections'] = [];
   const bodies = new Set<string>();
   for (const skill of selected) {
     let body: string;
@@ -182,7 +168,7 @@ export function prepareSkillContext(task: string, root: string): SkillContext {
     }
     text = (text || header) + section;
     bodies.add(body);
-    delivered.push(skill.name);
+    sections.push({ name: skill.name, text: section });
   }
-  return { text, selected: delivered, warnings, bytes: Buffer.byteLength(text) };
+  return { text, selected: sections.map(section => section.name), sections, warnings, bytes: Buffer.byteLength(text) };
 }

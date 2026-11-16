@@ -171,9 +171,9 @@ test('the active child uses a right-hand pane and remains visible after narrowin
   try {
     t.ui.write('▶ You: 調査\n', 'user');
     t.ui.setActivity('子エージェントの結果を待機中');
-    t.ui.setSubagent({ pluginId: 'modkh-explorer', task: '設定ファイルを調査', phase: 'モデル応答を待機中' });
+    t.ui.setSubagent({ pluginId: 'modkh-explorer', task: '設定ファイルを調査', phase: 'モデル応答を待機中' }, 1);
     assert.match(t.text(), /子エージェントの結果を待機中/);
-    assert.match(t.text(), /│ サブエージェント +│/);
+    assert.match(t.text(), /│ サブエージェント 1稼働 \/ 累計1 +│/);
     assert.match(t.text(), /│ モデル応答を待機中 · 0秒/);
     assert.match(t.text(), /│ 設定ファイルを調査 +│/);
     t.output.columns = 40;
@@ -184,14 +184,14 @@ test('the active child uses a right-hand pane and remains visible after narrowin
     assert.ok(t.text().split('\n').every(line => textWidth(line) <= 40));
 
     const approved = t.ui.ask('承認: y で実行');
-    t.ui.setSubagent({ pluginId: 'modkh-explorer', task: '設定ファイルを調査', phase: '承認待ち' });
+    t.ui.setSubagent({ pluginId: 'modkh-explorer', task: '設定ファイルを調査', phase: '承認待ち' }, 1);
     assert.match(t.text(), /承認: y で実行/);
     assert.match(t.text(), /承認待ち/);
     t.key('y', 'y');
     t.key('return');
     assert.equal(await approved, 'y');
 
-    t.ui.setSubagent(null);
+    t.ui.setSubagent(null, 1);
     assert.doesNotMatch(t.text(), /modkh-explorer|承認待ち/);
   } finally { t.ui.close(); }
 });
@@ -200,17 +200,33 @@ test('running language servers are listed in the right-hand pane', async () => {
   const t = terminal(110, 30);
   try {
     t.ui.write('▶ You: 調査\n', 'user');
-    assert.doesNotMatch(t.text(), /言語サーバー/, 'nothing is listed before a server runs');
+    assert.match(t.text(), /│ 言語サーバー 0稼働 +│/);
     t.ui.setServers([{ id: 'ts', root: '/workspace' }, { id: 'css', root: '/workspace' }]);
     const view = t.text();
-    assert.match(view, /│ 言語サーバー +│/, 'the pane gets its own heading');
+    assert.match(view, /│ 言語サーバー 2稼働 +│/, 'the pane gets its own heading');
     assert.match(view, /│ ts +│/);
     assert.match(view, /│ css +│/);
+    t.ui.setUsage({ input: 100, cacheWrite: 5, responses: 1 });
+    const sections = t.text().split('\n').map(row => row.slice(row.indexOf('│')));
+    const subagents = sections.findIndex(row => row.startsWith('│ サブエージェント'));
+    const servers = sections.findIndex(row => row.startsWith('│ 言語サーバー'));
+    for (const heading of [subagents, servers]) {
+      assert.match(sections[heading - 3], /^│ +│$/);
+      assert.match(sections[heading - 2], /^│ ─+ +│$/);
+      assert.match(sections[heading - 1], /^│ +│$/);
+    }
+    t.output.rows = 9;
+    t.output.emit('resize');
+    assert.match(t.text(), /│ サブエージェント 0稼働 \/ 累計0 +│/);
+    assert.match(t.text(), /│ 言語サーバー 2稼働 +│/);
+    t.output.rows = 30;
+    t.output.emit('resize');
     // The list is display state only: a running server never implies analysis succeeded.
     t.ui.setServers([{ id: 'ts', root: '/workspace' }]);
     assert.doesNotMatch(t.text(), /│ css/);
     t.ui.setServers([]);
-    assert.doesNotMatch(t.text(), /言語サーバー/);
+    assert.match(t.text(), /│ 言語サーバー 0稼働 +│/);
+    assert.doesNotMatch(t.text(), /│ ts +│/);
   } finally { t.ui.close(); }
 });
 

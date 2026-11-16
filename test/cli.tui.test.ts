@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { screenFrom } from './tui.screen.ts';
 
@@ -23,8 +23,15 @@ const preload = `
 
 test('public CLI terminal path: logo → completion → seven providers → connect → response → Stop → child progress → recover → exit', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-tui-entry-'));
+  const fixtureLsp = new URL('./fixtures/fake-lsp.mjs', import.meta.url).pathname;
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
+    language: { autoInstall: false, servers: { typescript: { command: process.execPath, args: [fixtureLsp, 'clean'] } } },
+  }));
+  fs.writeFileSync(path.join(home, 'tsconfig.json'), '{}');
+  fs.writeFileSync(path.join(home, 'app.ts'), 'const value = 1;\n');
   const requests: Record<string, unknown>[] = [];
   let releaseChild: (() => void) | undefined;
+  const childRequests = new EventEmitter();
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', data => { body += data; });
@@ -40,6 +47,19 @@ test('public CLI terminal path: logo → completion → seven providers → conn
         choices: [{ index: 0, delta, finish_reason: finish }],
       })}\n\n`);
       const last = request.messages.at(-1);
+      if (last.content === 'inspect-source') {
+        send({ tool_calls: [{ index: 0, id: 'read-source', type: 'function', function: {
+          name: 'read_file', arguments: JSON.stringify({ path: 'app.ts' }),
+        } }] }, null);
+        send({}, 'tool_calls'); res.end('data: [DONE]\n\n');
+        return;
+      }
+      if (last.tool_call_id === 'read-source') {
+        assert.match(last.content, /const value = 1/);
+        send({ role: 'assistant', content: 'SOURCE_INSPECTED' }, null);
+        send({}, 'stop'); res.end('data: [DONE]\n\n');
+        return;
+      }
       if (last.content === 'delegate' || last.content === 'delegate-stop') {
         send({ role: 'assistant', tool_calls: [{
           index: 0, id: last.content, type: 'function', function: {
@@ -55,6 +75,7 @@ test('public CLI terminal path: logo → completion → seven providers → conn
           send({}, 'stop'); res.end('data: [DONE]\n\n');
         };
         res.flushHeaders();
+        childRequests.emit('started');
         return;
       }
       if (last.role === 'tool' || last.content === '追加の依頼') {
@@ -110,14 +131,22 @@ test('public CLI terminal path: logo → completion → seven providers → conn
     send('\x1b[B'); await wait('› ollama/llama3.2');
     send('\r'); await wait('接続しました: ollama/llama3.2');
     send('こんにちは\r'); await wait('TUI_RESPONSE_OK:こんにちは'); await wait('何を調べますか');
+    assert.match(visible(), /│ サブエージェント 0稼働 \/ 累計0/);
+    assert.match(visible(), /│ 言語サーバー 0稼働/);
+    send('inspect-source\r');
+    await wait('SOURCE_INSPECTED');
+    await wait(/│ 言語サーバー 1稼働 +│\n.*│ typescript +│/);
+    await wait('何を調べますか');
     send('slow\r'); await wait('WAITING_FOR_STOP');
     send('\x03'); await wait('中断しました');
     send('delegate\r');
     await wait('子エージェントの結果を待機中');
-    await wait('│ サブエージェント');
+    await wait('│ サブエージェント 1稼働 / 累計1');
     await wait(/│ モデル応答を待機中 · [1-9]\d*秒 +│/);
     assert.doesNotMatch(visible(), /ツール要求を受信中/);
     assert.match(visible(), /│ inspect fixture for delegate +│/);
+    // Rendering the wait phase can precede arrival of the child request at the fixture.
+    if (!releaseChild) await once(childRequests, 'started', { signal: AbortSignal.timeout(5000) });
     const beforeFollowup = requests.length;
     send('追加の依頼\r');
     await wait('追加の依頼を受け付けました');
@@ -126,7 +155,7 @@ test('public CLI terminal path: logo → completion → seven providers → conn
     releaseChild();
     await wait('DELEGATION_RECOVERED');
     await wait('何を調べますか');
-    assert.doesNotMatch(visible(), /│ サブエージェント/);
+    assert.match(visible(), /│ サブエージェント 0稼働 \/ 累計1/);
     send('delegate-stop\r');
     await wait(/│ モデル応答を待機中 · [1-9]\d*秒 +│/);
     send('保留の依頼\r');
@@ -135,7 +164,7 @@ test('public CLI terminal path: logo → completion → seven providers → conn
     await wait('中断しました');
     await wait('│ 保留の依頼');
     send('\x15'); await wait('何を調べますか');
-    assert.doesNotMatch(visible(), /│ サブエージェント/);
+    assert.match(visible(), /│ サブエージェント 0稼働 \/ 累計2/);
     send('/connect\r'); await wait('Hermes Agent');
     send('cloud'); await wait('│ cloud');
     send('\r'); await wait('OLLAMA_API_KEY を入力');
@@ -158,8 +187,8 @@ test('public CLI terminal path: logo → completion → seven providers → conn
     const journal = sessions.map(file => fs.readFileSync(path.join(home, 'sessions', file), 'utf8')).find(text => text.includes('cloud hello'))!;
     const messages = journal.trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'message');
     assert.deepEqual(messages.filter(row => row.message.role === 'user').map(row => row.message.content),
-      ['こんにちは', 'slow', 'delegate', '追加の依頼', 'delegate-stop', 'cloud hello', 'local again']);
-    assert.equal(requests.length, 9);
+      ['こんにちは', 'inspect-source', 'slow', 'delegate', '追加の依頼', 'delegate-stop', 'cloud hello', 'local again']);
+    assert.equal(requests.length, 11);
     assert.doesNotMatch(output + journal, /tui-cloud-secret/);
     assert.doesNotMatch(journal, /\/connect/);
   } finally {

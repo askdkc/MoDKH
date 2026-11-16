@@ -25,6 +25,13 @@ export interface LiteConfig {
   reasoning?: unknown;
   /** モデル応答の無通信タイムアウト(ms)。1〜上限で検証し、不正値は使わない。 */
   timeoutMs?: unknown;
+  /** 圧縮で生のまま残す直近ターン数。parseKeepTurns で検証する。 */
+  compactionKeepTurns?: unknown;
+  /**
+   * 会話本文がこのサイズ(推定UTF-8バイト)に達したら自動で圧縮する。既定は128 KiB、0で無効。
+   * トークン数やプロバイダーのコンテキスト上限とは別の目安。
+   */
+  compactionAutoBytes?: unknown;
   diagnostics?: string[];
 }
 
@@ -90,6 +97,8 @@ function toLiteConfig(parsed: Record<string, unknown>): LiteConfig {
     modelBaseUrl: parsed.modelBaseUrl,
     reasoning: parsed.reasoning,
     timeoutMs: parsed.timeoutMs,
+    compactionKeepTurns: parsed.compactionKeepTurns,
+    compactionAutoBytes: parsed.compactionAutoBytes,
     memory: {
       enabled: memory?.enabled === true,
       command: memory?.command ?? DEFAULT_CONFIG.memory.command,

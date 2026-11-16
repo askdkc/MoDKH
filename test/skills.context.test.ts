@@ -73,10 +73,13 @@ test('budget never truncates skill instructions and changed files are refreshed 
 test('mergeSkillContext appends new guidance and never rewrites the earlier prefix', t => {
   const root = fixture(t);
   const first = prepareSkillContext('fix the cache hit rate', root);
-  const second = prepareSkillContext('コミットメッセージを書いて', root);
+  catalog(root, [entry('custom')]);
+  fs.writeFileSync(path.join(root, 'custom.md'), 'FIRST_LINE\n[section]\nKEEP_THIS_LINE');
+  const second = prepareSkillContext('$custom コミットメッセージを書いて', root);
   assert.ok(first.text.length > 0 && second.text.length > 0, 'both turns select guidance');
   const merged = mergeSkillContext(first, second);
   assert.ok(merged.text.startsWith(first.text), 'previously sent bytes stay verbatim');
+  assert.match(merged.text, /FIRST_LINE\n\[section\]\nKEEP_THIS_LINE/);
   // Re-merging already delivered guidance is a no-op, so a repeated topic cannot grow the prompt.
   assert.equal(mergeSkillContext(merged, second).text, merged.text);
   // An unrelated message must not shrink guidance the session already paid for.

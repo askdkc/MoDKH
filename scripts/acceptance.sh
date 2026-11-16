@@ -120,7 +120,7 @@ echo "$OUTMODELS" | grep -q '1. fixed/scripted' || { echo 'FAIL: 検索候補が
 echo "$OUTMODELS" | grep -q '接続中: fixed/scripted' || { echo 'FAIL: モデル選択が反映されない'; exit 1; }
 MODKH_TEST_ENTRY="$CLI" MODKH_TEST_CHAT="$WORK/install/node_modules/modkh/dist/cli/chat.js" MODKH_TEST_TERMINAL="$WORK/install/node_modules/modkh/dist/cli/terminal.js" node --test --test-reporter=tap \
   "$ROOT/test/cli.interactive.test.ts" "$ROOT/test/cli.safety.test.ts" \
-  "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.memory.test.ts" "$ROOT/test/cli.tui.test.ts" \
+  "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.compaction.test.ts" "$ROOT/test/cli.memory.test.ts" "$ROOT/test/cli.tui.test.ts" \
   "$ROOT/test/cli.agenticreplay.test.ts" "$ROOT/test/terminal.drag-copy.test.ts" \
   "$ROOT/test/plugins.entry.test.ts" "$ROOT/test/composer.flow.test.ts" "$ROOT/test/cli.harness.test.ts"
 

@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { AgentMessage, Model, TokenUsage, ToolCall, ToolResult, ToolSpec } from './types.ts';
 import { ToolRegistry } from '../tools/registry.ts';
 import { prepareSkillContext, type SkillContext } from './skills.ts';
+import { projectCompacted, type CompactionState } from './compaction.ts';
 
 export interface LoopHooks {
   /** Selected guidance and byte size, not a provider token/cost measurement. */
@@ -46,6 +47,13 @@ export interface AgentLoopOptions {
   analyze?(file: string, kind: 'read' | 'write'): Promise<string | null>;
   /** Background-job registry owned by the caller; absent means foreground execution only. */
   jobs?: import('../tools/jobs.ts').JobRegistry;
+  /**
+   * 圧縮済みの要約。指定すると、モデルへは [要約 + この位置以降の生メッセージ] を送る。
+   * `messages` 自体(保存・監査・再実行防止の台帳)は全文のまま維持する。
+   */
+  compaction?: CompactionState;
+  /** Inspect the current projection between complete model/tool exchanges. */
+  autoCompact?(outgoing: AgentMessage[]): Promise<CompactionState | undefined>;
 }
 
 /** complete means response finished, not verified achievement of the user's goal. */
@@ -87,6 +95,9 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
   const skills = opts.skills === false ? undefined : (opts.skillContext ?? prepareSkillContext(task?.content ?? '', opts.root));
   if (skills) opts.hooks?.onSkillContext?.(skills);
   const system = skills?.text ? (opts.system ?? '') + skills.text : opts.system;
+  // The provider sees the projection; the transcript keeps the full text for audit and replay safety.
+  let compaction = opts.compaction;
+  const outgoing = (): AgentMessage[] => compaction ? projectCompacted(messages, compaction) : messages;
   const append = (message: AgentMessage) => {
     messages.push(message);
     opts.checkpoint?.();
@@ -108,9 +119,11 @@ export async function runAgentLoop(messages: AgentMessage[], opts: AgentLoopOpti
     let stopReason: 'stop' | 'tool-calls' | 'aborted' | 'error' | undefined;
     let errorMessage: string | undefined;
     try {
+      if (opts.autoCompact) compaction = await opts.autoCompact(outgoing()) ?? compaction;
+      if (opts.signal.aborted) return { outcome: 'interrupted' };
       opts.hooks?.onModelRequest?.();
       for await (const ev of opts.model.stream({
-        messages, tools: toolSpecs, system,
+        messages: outgoing(), tools: toolSpecs, system,
         ...(opts.reasoning ? { reasoning: opts.reasoning } : {}),
       }, opts.signal)) {
         if (opts.signal.aborted) break;

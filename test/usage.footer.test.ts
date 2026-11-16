@@ -50,7 +50,7 @@ test('usage appears at the first turn and stays visible beside child activity', 
     t.ui.write(Array.from({ length: 48 }, (_, i) => `応答の行 ${i}\n`).join(''), 'answer');
     assert.equal(pane().length, 5);
     assert.equal(t.frame().lines.indexOf(pane()[0]), 1, 'the sidebar stays in place as the transcript scrolls');
-    t.ui.setSubagent({ pluginId: 'modkh-explorer', task: '資料を確認', phase: 'モデル応答を待機中' });
+    t.ui.setSubagent({ pluginId: 'modkh-explorer', task: '資料を確認', phase: 'モデル応答を待機中' }, 1);
     assert.match(t.frame().lines.join('\n'), /│ サブエージェント/);
     assert.equal(pane().length, 5);
     t.output.columns = 45;
@@ -60,9 +60,9 @@ test('usage appears at the first turn and stays visible beside child activity', 
     t.output.columns = 120;
     t.output.emit('resize');
     assert.equal(pane().length, 5);
-    t.ui.setSubagent(null);
+    t.ui.setSubagent(null, 1);
     assert.equal(pane().length, 5);
-    assert.doesNotMatch(t.frame().lines.join('\n'), /│ サブエージェント/);
+    assert.match(t.frame().lines.join('\n'), /│ サブエージェント 0稼働/);
   } finally { t.ui.close(); }
 });
 

@@ -37,7 +37,7 @@ export interface ChatTerminal {
   setActivity?(activity: string | null): void;
   /** Return an error to keep the draft, or null to accept it. */
   beginFollowups?(submit: (text: string) => string | null): (unsent: string[]) => void;
-  setSubagent?(activity: SubagentActivity | null): void;
+  setSubagent?(activity: SubagentActivity | null, delegationCount: number): void;
   setUsage?(usage: UsageTotals): void;
   /** Running language servers; shown in the side pane next to usage and subagent status. */
   setServers?(servers: readonly RunningServer[]): void;
@@ -68,7 +68,7 @@ const logoForWidth = (width: number): readonly string[] =>
   width >= Math.max(...LOGO.map(textWidth)) ? LOGO : ['MoDKH'];
 const ACCENT = '34'; // Use the terminal theme's blue; NO_COLOR is respected by paint().
 /** The composer sits on a painted panel, so the theme blue can sink into it (dark) or glare (light). */
-const PANEL_ACCENT: Record<'dark' | 'light', string> = { dark: '117', light: '25' };
+const PANEL_ACCENT: Record<'dark' | 'light', string> = { dark: '38;5;117', light: '38;5;25' };
 /** Every term must appear in any order, so "seek deep" finds deepseek. Pinned rows always survive. */
 function matching(choices: readonly Choice[], query: string): Choice[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -136,6 +136,7 @@ const SIDEBAR_WIDTH = 36;
 /** At most this many language servers are listed; the rest are counted, never silently dropped. */
 const SIDEBAR_SERVER_ROWS = 3;
 const SERVERS_HEADING = '言語サーバー';
+const SUBAGENTS_HEADING = 'サブエージェント';
 const TRANSCRIPT_HISTORY_ROWS = 4000;
 /**
  * メインスクリーンに流し込むストリーミングUI。
@@ -167,6 +168,7 @@ export class TerminalUI implements ChatTerminal {
   private partialKind: TranscriptKind = 'system';
   private started = false;
   private usageVisible = false;
+  private delegationCount = 0;
   private sidebarPainted = false;
   /** 会話開始前の案内行(ウェルカムブロックに表示し、会話開始時に本文へ流す)。 */
   private bootLines: string[] = [];
@@ -348,15 +350,6 @@ export class TerminalUI implements ChatTerminal {
     if (error === null) { this.text = ''; this.cursor = 0; this.editorScroll = 0; }
   }
 
-  private hasSidePane(): boolean {
-    return !!this.subagent && !this.pending && this.started && this.hasUsagePane() && this.columns() >= 80 && this.rows() >= 11;
-  }
-
-  /** Server rows belong to the pane, so they are only offered when the pane is laid out. */
-  private sidebarServers(): RunningServer[] {
-    return this.hasUsagePane() ? this.servers.slice(0, SIDEBAR_SERVER_ROWS) : [];
-  }
-
   private hasUsagePane(): boolean {
     return this.usageVisible && this.columns() >= 80 && this.rows() >= 9;
   }
@@ -373,8 +366,10 @@ export class TerminalUI implements ChatTerminal {
     return Math.max(5, this.controlWidth() - 3);
   }
 
-  setSubagent(activity: SubagentActivity | null): void {
-    if (this.closed || (this.subagent?.phase === activity?.phase && this.subagent?.pluginId === activity?.pluginId && this.subagent?.task === activity?.task)) return;
+  setSubagent(activity: SubagentActivity | null, delegationCount: number): void {
+    if (this.closed || (this.delegationCount === delegationCount && this.subagent?.phase === activity?.phase &&
+      this.subagent?.pluginId === activity?.pluginId && this.subagent?.task === activity?.task)) return;
+    this.delegationCount = delegationCount;
     if (activity && !this.subagent) {
       this.subagentStarted = performance.now();
       this.subagentTimer = setInterval(this.render, 1000).unref();
@@ -756,7 +751,10 @@ export class TerminalUI implements ChatTerminal {
     const childPhase = this.subagent
       ? `${this.subagent.phase} · ${Math.floor((performance.now() - this.subagentStarted) / 1000)}秒` : '';
     const childTask = this.subagent?.task.split(/\r?\n/, 1)[0];
-    const pane = this.hasSidePane() ? this.subagent : null;
+    // Reserve both status summaries before allocating rows to details.
+    const detailRoom = rows - usageRows.length - 3;
+    const pane = showUsage && this.started && !this.pending && detailRoom >= 3 + Number(this.servers.length > 0)
+      ? this.subagent : null;
     const editingFollowup = !this.pending && !!this.followup;
     const compactChild = !!this.subagent && !pane;
     const controlWidth = this.controlWidth();
@@ -835,19 +833,27 @@ export class TerminalUI implements ChatTerminal {
       }
       return this.paint(fitted, row.style);
     };
-    const sidebar = showUsage ? ['', ...usageRows] : [];
-    if (pane) sidebar.push('', 'サブエージェント', childPhase, childTask ?? '', pane.pluginId);
-    const servers = this.sidebarServers();
-    if (servers.length) {
-      sidebar.push('', SERVERS_HEADING, ...servers.map(server => server.id));
+    const sidebar: string[] = [];
+    if (showUsage) {
+      const serverRoom = detailRoom - (pane ? 3 : 0);
+      const servers = this.servers.slice(0, Math.min(SIDEBAR_SERVER_ROWS, serverRoom));
+      const serverRows = servers.map(server => server.id);
       const rest = this.servers.length - servers.length;
-      if (rest > 0) sidebar.push(`ほか${rest}件`);
+      if (rest > 0 && serverRoom > servers.length) serverRows.push(`ほか${rest}件`);
+      // Preserve room for status details on short terminals before adding decoration.
+      const separatorRoom = serverRoom - serverRows.length;
+      const rule = '─'.repeat(SIDEBAR_WIDTH - 4);
+      const divider = separatorRoom >= 6 ? [' ', rule, ' '] : separatorRoom >= 2 ? [rule] : [];
+      sidebar.push('', ...usageRows, ...divider,
+        `${SUBAGENTS_HEADING} ${this.subagent ? 1 : 0}稼働 / 累計${this.delegationCount}`);
+      if (pane) sidebar.push(childPhase, childTask ?? '', pane.pluginId);
+      sidebar.push(...divider, `${SERVERS_HEADING} ${this.servers.length}稼働`, ...serverRows);
     }
     const rightStart = columns - SIDEBAR_WIDTH;
     const paintSidebarRow = (content: string): string => {
       const right = fitText(content, SIDEBAR_WIDTH - 4);
       const border = this.paint('│', ACCENT);
-      const heading = content.startsWith(USAGE_HEADING) || content === 'サブエージェント' || content === SERVERS_HEADING;
+      const heading = content.startsWith(USAGE_HEADING) || content.startsWith(SUBAGENTS_HEADING) || content.startsWith(SERVERS_HEADING);
       const style = heading ? `${this.panelStyle};1` : this.panelStyle;
       const padding = ' '.repeat(SIDEBAR_WIDTH - 3 - textWidth(right));
       const panel = this.paint(` ${right}${padding}`, style);
