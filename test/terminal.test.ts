@@ -181,7 +181,9 @@ test('accent uses blue and NO_COLOR disables its styling', () => {
     delete process.env.NO_COLOR;
     const colored = terminal();
     try {
-      assert.match(colored.screen(), /\x1b\[34m/);
+      // The composer is drawn on a panel background, so it uses the panel accent
+      // rather than the bare theme blue that disappears on dark panels.
+      assert.match(colored.screen(), /\x1b\[117m/);
       assert.doesNotMatch(colored.screen(), /\x1b\[35m/);
     } finally { colored.ui.close(); }
     process.env.NO_COLOR = '1';
@@ -189,6 +191,20 @@ test('accent uses blue and NO_COLOR disables its styling', () => {
     try { assert.doesNotMatch(plain.screen(), /\x1b\[[0-9;]*m/); }
     finally { plain.ui.close(); }
   } finally { if (previous === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = previous; }
+});
+
+test('the composer status line and its notices stay readable on the painted panel', () => {
+  const t = terminal();
+  try {
+    t.ui.write('▶ You: 作業\n', 'user');
+    assert.match(t.screen(), /\x1b\[48;5;235;117m/, 'the status line is drawn on the panel with the panel accent');
+    const finish = t.ui.beginFollowups(() => null);
+    t.key('a', '続き');
+    t.key('return');
+    assert.match(t.text(), /追加の依頼を受け付けました/);
+    assert.match(t.screen(), /48;5;235;117;1m/, 'a notice is emphasized over the standing status');
+    finish([]);
+  } finally { t.ui.close(); }
 });
 
 test('resize keeps the live block within its width and history remains streamed', async () => {

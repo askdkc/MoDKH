@@ -121,19 +121,44 @@ export function highlightCodeLine(line: string, palette: Palette): string {
 }
 
 export const READABLE_TEXT_STYLE = '1;39';
+
+/**
+ * Tool output quoting source, as produced by `search_files` (`path:line: body`) and
+ * `read_file` (`line: body`). Output without a source prefix stays plain: highlighting
+ * a JSON body or a log line as code would claim more context than the text carries.
+ */
+export function sourceLine(raw: string): { body: string } | null {
+  const hit = /^\s{0,2}([^\s:]+):(\d+)(?::(\d+))?: (.*)$/.exec(raw)
+    ?? /^\s{0,2}(\d+): (.*)$/.exec(raw);
+  if (hit === null) return null;
+  const numbered = hit.length === 4 ? hit[2] : hit[1];
+  if (Number(numbered) < 1) return null;
+  const body = hit[hit.length - 1];
+  return body.trim().length === 0 ? null : { body };
+}
+
 export type TranscriptKind = 'system' | 'user' | 'answer' | 'reasoning';
 export type ColorMode = 'text' | 'code';
 
-export interface ColorizerState { mode: ColorMode; inDiff: boolean }
+export interface ColorizerState { mode: ColorMode; inDiff: boolean; inToolOutput: boolean }
+
+/** Tool output lines that never quote source: they carry their own meaning. */
+const TOOL_OUTPUT_META = /^\s*(?:\(結果[.:]|… 残り|検索 |対象: |作業場所: |\[exit code|\(エラー)/;
 
 /** コードブロックとdiffの状態を行間で引き継いで色を付ける。 */
 export class TranscriptColorizer {
   private mode: ColorMode = 'text';
   private inDiff = false;
+  /** Set while drawing the body of one tool result, cleared by the next `▶` line or blank line. */
+  private inToolOutput = false;
 
   /** 完成行までの状態を保存しておき、未完了行(ライブ表示)の色分けに複製する。 */
-  state(): ColorizerState { return { mode: this.mode, inDiff: this.inDiff }; }
-  restore(state: ColorizerState): void { this.mode = state.mode; this.inDiff = state.inDiff; }
+  state(): ColorizerState { return { mode: this.mode, inDiff: this.inDiff, inToolOutput: this.inToolOutput }; }
+  restore(state: ColorizerState): void {
+    this.mode = state.mode;
+    this.inDiff = state.inDiff;
+    this.inToolOutput = state.inToolOutput;
+  }
 
   line(raw: string, palette: Palette, kind: TranscriptKind = 'system'): string {
     const trimmed = raw.trim();
@@ -143,24 +168,40 @@ export class TranscriptColorizer {
       if (/^(\s*)(```|~~~)/.test(raw)) { this.mode = 'text'; return `\x1b[${palette.reasoning}m${raw}\x1b[0m`; }
       return highlightCodeLine(raw, palette);
     }
-    if (blank) return raw;
+    if (blank) { this.inToolOutput = false; return raw; }
     if (/^(\s*)(```|~~~)/.test(raw)) {
       this.mode = 'code';
       return `\x1b[${palette.reasoning}m${raw}\x1b[0m`;
     }
     const diff = this.diffLine(trimmed, raw, palette);
     if (diff !== null) return diff;
+    // A tool result body may quote source, so grep/read hits stay readable where they appear.
+    // The state ends with the result, so ordinary prose after it is never treated as code.
+    if (this.inToolOutput) {
+      // Meta lines are summarized in the result color but do not end the body: search
+      // output puts `対象: …` between the header and the hits it describes.
+      if (TOOL_OUTPUT_META.test(raw)) return `\x1b[${palette.result}m${raw}\x1b[0m`;
+      const source = sourceLine(raw);
+      if (source !== null) return this.prefix(raw, source.body, highlightCodeLine(source.body, palette));
+    }
     if (kind === 'answer') return `\x1b[${READABLE_TEXT_STYLE}m${raw}\x1b[0m`;
     if (/^#{1,6} /.test(trimmed)) return `\x1b[${palette.heading}m${raw}\x1b[0m`;
     if (/^▶ You:/.test(raw)) return `\x1b[${palette.user}m${raw}\x1b[0m`;
-    if (/^▶ /.test(raw)) return `\x1b[${palette.tool}m${raw}\x1b[0m`;
+    if (/^▶ /.test(raw)) { this.inToolOutput = false; return `\x1b[${palette.tool}m${raw}\x1b[0m`; }
     if (/^\(承認\)|^\(拒否\)|^\(中断|^\(接続|^\(モデル|^\(推論/.test(trimmed)
       || /^ {0,2}\(結果\./.test(trimmed) || /^ {0,2}\(結果:/.test(raw) || /^ {0,2}\(エラー/.test(trimmed)) {
       this.inDiff = false;
+      this.inToolOutput = /^ {0,2}\(結果:/.test(raw);
       return `\x1b[${palette.result}m${raw}\x1b[0m`;
     }
     if (/^\[exit code/.test(trimmed)) return `\x1b[${palette.result}m${raw}\x1b[0m`;
     return raw;
+  }
+
+  /** Rebuild a line from its untouched prefix (`path:12: `) and its highlighted body. */
+  private prefix(raw: string, body: string, painted: string): string {
+    const index = raw.indexOf(body);
+    return index <= 0 || raw.slice(index, index + body.length) !== body ? painted : raw.slice(0, index) + painted;
   }
 
   private diffLine(trimmed: string, raw: string, palette: Palette): string | null {

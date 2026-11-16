@@ -157,6 +157,20 @@ test('closing a pool stops every owned server', async () => {
   assert.equal(started.server.running, false);
 });
 
+test('running() lists only servers whose process is still alive', async () => {
+  const pool = new ServerPool({ maxRunning: 2, requestTimeoutMs: 2000 });
+  const language = languageById('typescript')!;
+  const launch = { command: process.execPath, args: [fixture] };
+  try {
+    assert.deepEqual(pool.running(), [], 'nothing is running before the first acquire');
+    const first = await pool.acquire({ root, language, configDigest: 'a' }, launch);
+    assert.equal(first.status, 'ready');
+    assert.deepEqual(pool.running().map(server => server.id), ['typescript']);
+    await pool.releaseIdle(Date.now() + 60_000);
+    assert.deepEqual(pool.running(), [], 'a released server is not reported as running');
+  } finally { await pool.disposeAll(); }
+});
+
 test('aggregate keeps successful results when another server fails', () => {
   const combined = aggregate([
     { id: 'typescript', status: 'observed', diagnostics: [{ path: 'a.ts', line: 1, column: 1, endLine: 1, endColumn: 2, severity: 'error', message: 'bad', server: 'typescript' }] },

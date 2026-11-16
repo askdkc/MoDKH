@@ -3,7 +3,7 @@ import path from 'node:path';
 import { detectLanguage, type LanguageSettings } from '../detect.ts';
 import { languageById, type LanguageDefinition } from '../catalog.ts';
 import { ensureInstalled, resolveServer } from '../install.ts';
-import { ServerPool, aggregate, realRoot, type Aggregate } from './pool.ts';
+import { ServerPool, aggregate, realRoot, type Aggregate, type RunningServer } from './pool.ts';
 import type { ServerDiagnostic } from './client.ts';
 
 export interface LanguageServiceOptions {
@@ -46,6 +46,8 @@ export class LanguageService {
   }
 
   get poolSize(): number { return this.pool.size; }
+  /** Running language servers, for display. Callers must not infer readiness from this list. */
+  runningServers(): RunningServer[] { return this.pool.running(); }
   /** The already-running server for a file, if its language/root was analyzed before. */
   poolFor(file: string, selector?: 'tailwind'): import('./client.ts').LspServer | undefined {
     const detection = this.detect(file);

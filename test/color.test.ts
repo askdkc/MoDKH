@@ -7,6 +7,7 @@ import {
   parseOscBackground,
   paletteFor,
   highlightCodeLine,
+  sourceLine,
 } from '../src/cli/color.ts';
 
 const dark = paletteFor('dark');
@@ -90,6 +91,58 @@ test('code highlighting keeps strings and numbers intact', () => {
   assert.match(out, /\x1b\[38;5;130m/, 'the light palette colors strings with a low-saturation orange');
   const darkOut = highlightCodeLine('status = "ok"', dark);
   assert.match(darkOut, /\x1b\[33m/, 'the dark palette colors strings with the standard amber');
+});
+
+test('grep and read hits are highlighted where they appear in tool output', () => {
+  const c = new TranscriptColorizer();
+  assert.match(c.line('  (結果: ok) 検索 "const": 2 件', dark), /\x1b\[9\dm/);
+  const hit = c.line('  src/cli/color.ts:114: const keyword = 1; // note', dark);
+  assert.match(hit, /\x1b\[94mconst\x1b\[0m/, 'a keyword inside the hit is colored');
+  assert.match(hit, /\x1b\[95m1\x1b\[0m/, 'numbers are colored');
+  assert.match(hit, /^\s{2}src\/cli\/color\.ts:114: /, 'the source prefix stays untouched');
+  // The hit body must carry color, not just the surrounding text.
+  const body = hit.slice(hit.indexOf('src/cli/color.ts:114: ') + 'src/cli/color.ts:114: '.length);
+  assert.match(body, /\x1b\[94m/, 'the quoted source itself is highlighted');
+  const excerpt = c.line('  27: function highlightCodeLine(line: string)', dark);
+  assert.match(excerpt, /\x1b\[94mfunction\x1b\[0m/);
+  // A result without source stays plain, and the mode ends with the result.
+  assert.match(c.line('  (結果. 1件) 診断', dark), /\x1b\[90m/);
+  const prose = c.line('plain prose after a tool result', dark);
+  assert.equal(prose, 'plain prose after a tool result');
+  // A tool call header ends the body, so the next quoted source is not highlighted.
+  c.line('▶ search_files (pattern=const)', light);
+  c.line('  (結果. 1件) 診断', dark);
+  const after = c.line('  src/a.ts:1: const x = 1', dark);
+  assert.doesNotMatch(after, /\x1b\[94mconst/, 'only lines that follow a (結果: …) header are treated as source');
+});
+
+test('tool output that is not source never gains code colors', () => {
+  const c = new TranscriptColorizer();
+  c.line('  (結果: ok) {"total": 3, "items": []}', dark);
+  assert.equal(c.line('  {"total": 3, "items": []}', dark), '  {"total": 3, "items": []}');
+  c.line('  (結果: ok) done', dark);
+  assert.equal(c.line('  2026-01-01 12:00:00 started', dark), '  2026-01-01 12:00:00 started');
+});
+
+test('a summary line between the header and the hits keeps highlighting on', () => {
+  // search_files prints `対象: …` before the hits, so a meta line must not close the body.
+  const c = new TranscriptColorizer();
+  c.line('  (結果: ok) 検索 "private readonly": 1 件', dark);
+  assert.match(c.line('  対象: tracked。…0件を除外。', dark), /\x1b\[90m/);
+  assert.match(c.line('  src/cli/terminal.ts:205:   private readonly colorizer = new x();', dark), /\x1b\[94mprivate\x1b\[0m/);
+  // A later user turn or new tool call ends the body.
+  c.line('▶ search_files (pattern=…)', light);
+  assert.equal(c.line('  src/cli/terminal.ts:205:   private readonly colorizer = new x();', dark),
+    '  src/cli/terminal.ts:205:   private readonly colorizer = new x();');
+});
+
+test('sourceLine accepts the formats the tools actually print', () => {
+  assert.deepEqual(sourceLine('src/a.ts:12: const x = 1'), { body: 'const x = 1' });
+  assert.deepEqual(sourceLine('12: const x = 1'), { body: 'const x = 1' });
+  assert.deepEqual(sourceLine('a/b.ts:3:14: return 1'), { body: 'return 1' });
+  assert.equal(sourceLine('{"total": 3}'), null);
+  assert.equal(sourceLine('0: zero is not a line number'), null);
+  assert.equal(sourceLine('src/a.ts:12: '), null, 'an empty body stays plain');
 });
 
 test('user, tool, result and status lines each get their own style', () => {

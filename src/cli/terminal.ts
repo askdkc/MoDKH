@@ -10,6 +10,7 @@ import { MAX_IMAGES, parseImage, type ImageAttachment } from '../agent/images.ts
 import type { ReadStream, WriteStream } from 'node:tty';
 import { LineSource } from './lines.ts';
 import type { SubagentActivity } from '../subagents/service.ts';
+import type { RunningServer } from '../language/lsp/pool.ts';
 import {
   TranscriptColorizer,
   classifyBackground,
@@ -38,6 +39,8 @@ export interface ChatTerminal {
   beginFollowups?(submit: (text: string) => string | null): (unsent: string[]) => void;
   setSubagent?(activity: SubagentActivity | null): void;
   setUsage?(usage: UsageTotals): void;
+  /** Running language servers; shown in the side pane next to usage and subagent status. */
+  setServers?(servers: readonly RunningServer[]): void;
   /** Live reasoning text; `null` flushes it into the transcript. Display only, never a message. */
   setReasoning?(delta: string | null): void;
   close(): void;
@@ -64,6 +67,8 @@ const LOGO = [
 const logoForWidth = (width: number): readonly string[] =>
   width >= Math.max(...LOGO.map(textWidth)) ? LOGO : ['MoDKH'];
 const ACCENT = '34'; // Use the terminal theme's blue; NO_COLOR is respected by paint().
+/** The composer sits on a painted panel, so the theme blue can sink into it (dark) or glare (light). */
+const PANEL_ACCENT: Record<'dark' | 'light', string> = { dark: '117', light: '25' };
 /** Every term must appear in any order, so "seek deep" finds deepseek. Pinned rows always survive. */
 function matching(choices: readonly Choice[], query: string): Choice[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -90,6 +95,15 @@ class PlainTerminal implements ChatTerminal {
   setUsage(usage: UsageTotals): void {
     const line = usageFooter(usage, 120);
     if (line) this.write(`\n(使用量: ${line})\n`);
+  }
+  /** Line mode has no pane, so only a start is announced; the same id is never repeated. */
+  private announcedServers = new Set<string>();
+  setServers(servers: readonly RunningServer[]): void {
+    for (const server of servers) {
+      if (this.announcedServers.has(server.id)) continue;
+      this.announcedServers.add(server.id);
+      this.write(`\n(言語サーバー: ${server.id} 起動)\n`);
+    }
   }
   close(): void { this.lines.close(); }
   ask(title: string, signal?: AbortSignal): Promise<string | null> { this.write(`${title}\n`); return this.next(signal); }
@@ -119,6 +133,9 @@ export interface TerminalOptions {
 }
 const MAX_INPUT_BYTES = 128 * 1024;
 const SIDEBAR_WIDTH = 36;
+/** At most this many language servers are listed; the rest are counted, never silently dropped. */
+const SIDEBAR_SERVER_ROWS = 3;
+const SERVERS_HEADING = '言語サーバー';
 const TRANSCRIPT_HISTORY_ROWS = 4000;
 /**
  * メインスクリーンに流し込むストリーミングUI。
@@ -167,6 +184,8 @@ export class TerminalUI implements ChatTerminal {
   private subagentStarted = 0;
   private subagentTimer?: NodeJS.Timeout;
   private usage: UsageTotals | null = null;
+  /** Running language servers, refreshed by the owner; null means nothing is running. */
+  private servers: readonly RunningServer[] = [];
   private closed = false;
   private paste = false;
   private pasteBuffer = '';
@@ -185,9 +204,11 @@ export class TerminalUI implements ChatTerminal {
   private readonly output: WriteStream;
   private readonly cwd: string;
   private readonly colorizer = new TranscriptColorizer();
-  private colorizerState: ColorizerState = { mode: 'text', inDiff: false };
+  private colorizerState: ColorizerState = { mode: 'text', inDiff: false, inToolOutput: false };
   private palette: Palette = paletteFor('dark');
   private panelStyle = '48;5;235';
+  /** Foreground for text drawn on `panelStyle`; keeps the status line readable on both themes. */
+  private panelAccent = PANEL_ACCENT.dark;
   private backgroundProbe = false;
   /** 背景プローブ中(返信待ち)。時間による入力抑制には使わない。 */
   private backgroundWaiting = false;
@@ -251,6 +272,7 @@ export class TerminalUI implements ChatTerminal {
       if (classified !== null) {
         this.palette = paletteFor(classified);
         this.panelStyle = classified === 'light' ? '48;5;255' : '48;5;235';
+        this.panelAccent = PANEL_ACCENT[classified];
         this.render();
       }
     };
@@ -330,6 +352,11 @@ export class TerminalUI implements ChatTerminal {
     return !!this.subagent && !this.pending && this.started && this.hasUsagePane() && this.columns() >= 80 && this.rows() >= 11;
   }
 
+  /** Server rows belong to the pane, so they are only offered when the pane is laid out. */
+  private sidebarServers(): RunningServer[] {
+    return this.hasUsagePane() ? this.servers.slice(0, SIDEBAR_SERVER_ROWS) : [];
+  }
+
   private hasUsagePane(): boolean {
     return this.usageVisible && this.columns() >= 80 && this.rows() >= 9;
   }
@@ -359,6 +386,14 @@ export class TerminalUI implements ChatTerminal {
     this.render();
   }
   setUsage(usage: UsageTotals): void { this.usage = usage; this.render(); }
+  /** Re-render only when the list actually changed; the owner polls this during analysis. */
+  setServers(servers: readonly RunningServer[]): void {
+    const same = this.servers.length === servers.length &&
+      this.servers.every((server, index) => server.id === servers[index]?.id && server.root === servers[index]?.root);
+    if (same) return;
+    this.servers = servers;
+    this.render();
+  }
   /** Accumulate one reasoning delta, or flush the finished block into the transcript with `null`. */
   setReasoning(delta: string | null): void {
     if (delta !== null) { this.reasoning = (this.reasoning + delta).slice(-20_000); this.render(); return; }
@@ -775,7 +810,8 @@ export class TerminalUI implements ChatTerminal {
     const attachments = composer && this.images.length ? ` · 画像${this.images.length}枚 (Ctrl+Xで削除)` : '';
     const status = this.inputNotice && !this.pending?.secret ? this.inputNotice : `MoDKH  ·  ${this.model ?? '未接続 — /connect'}${attachments}`;
     const modelStatus = `│ ${compactChild && (this.pending || editingFollowup) ? childPhase : status}`;
-    lines.push({ text: modelStatus, style: ACCENT });
+    // A notice is transient feedback, so it is emphasized beyond the standing status line.
+    lines.push({ text: modelStatus, style: this.inputNotice && !this.pending?.secret ? `${this.panelAccent};1` : this.panelAccent });
     const hints = editingFollowup ? `${compactChild && this.inputNotice ? this.inputNotice + '  ' : ''}Enter 追加の依頼を送信  Ctrl+C 中止`
       : !this.pending ? 'Ctrl+C 中止（入力は応答完了後）' : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
       : composer ? 'Enter 送信  Ctrl+J 改行  Ctrl+V 画像  Cmd+V テキスト' + (this.mouseInput ? '  ドラッグでコピー' : '') : 'Enter 決定  Ctrl+C 中止';
@@ -795,17 +831,23 @@ export class TerminalUI implements ChatTerminal {
       const fitted = fitText(row.text, maxWidth);
       if (row.text.startsWith('│ ')) {
         const padded = fitted + ' '.repeat(Math.max(0, maxWidth - textWidth(fitted)));
-        return this.paint('│', ACCENT) + this.paint(padded.slice(1), `${this.panelStyle}${row.style ? `;${row.style}` : ''}`);
+        return this.paint('│', this.panelAccent) + this.paint(padded.slice(1), `${this.panelStyle}${row.style ? `;${row.style}` : ''}`);
       }
       return this.paint(fitted, row.style);
     };
     const sidebar = showUsage ? ['', ...usageRows] : [];
     if (pane) sidebar.push('', 'サブエージェント', childPhase, childTask ?? '', pane.pluginId);
+    const servers = this.sidebarServers();
+    if (servers.length) {
+      sidebar.push('', SERVERS_HEADING, ...servers.map(server => server.id));
+      const rest = this.servers.length - servers.length;
+      if (rest > 0) sidebar.push(`ほか${rest}件`);
+    }
     const rightStart = columns - SIDEBAR_WIDTH;
     const paintSidebarRow = (content: string): string => {
       const right = fitText(content, SIDEBAR_WIDTH - 4);
       const border = this.paint('│', ACCENT);
-      const heading = content.startsWith(USAGE_HEADING) || content === 'サブエージェント';
+      const heading = content.startsWith(USAGE_HEADING) || content === 'サブエージェント' || content === SERVERS_HEADING;
       const style = heading ? `${this.panelStyle};1` : this.panelStyle;
       const padding = ' '.repeat(SIDEBAR_WIDTH - 3 - textWidth(right));
       const panel = this.paint(` ${right}${padding}`, style);

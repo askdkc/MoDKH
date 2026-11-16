@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { stripVTControlCharacters } from 'node:util';
 import { PassThrough } from 'node:stream';
 import type { ReadStream, WriteStream } from 'node:tty';
-import { TerminalUI, textWidth } from '../src/cli/terminal.ts';
+import { TerminalUI, createTerminal, textWidth } from '../src/cli/terminal.ts';
 import { screenFrom, screenText } from './tui.screen.ts';
 
 function terminal(columns = 100, rows = 30) {
@@ -194,6 +194,56 @@ test('the active child uses a right-hand pane and remains visible after narrowin
     t.ui.setSubagent(null);
     assert.doesNotMatch(t.text(), /modkh-explorer|承認待ち/);
   } finally { t.ui.close(); }
+});
+
+test('running language servers are listed in the right-hand pane', async () => {
+  const t = terminal(110, 30);
+  try {
+    t.ui.write('▶ You: 調査\n', 'user');
+    assert.doesNotMatch(t.text(), /言語サーバー/, 'nothing is listed before a server runs');
+    t.ui.setServers([{ id: 'ts', root: '/workspace' }, { id: 'css', root: '/workspace' }]);
+    const view = t.text();
+    assert.match(view, /│ 言語サーバー +│/, 'the pane gets its own heading');
+    assert.match(view, /│ ts +│/);
+    assert.match(view, /│ css +│/);
+    // The list is display state only: a running server never implies analysis succeeded.
+    t.ui.setServers([{ id: 'ts', root: '/workspace' }]);
+    assert.doesNotMatch(t.text(), /│ css/);
+    t.ui.setServers([]);
+    assert.doesNotMatch(t.text(), /言語サーバー/);
+  } finally { t.ui.close(); }
+});
+
+test('only the configured number of servers is listed and the rest are counted', async () => {
+  const t = terminal(110, 30);
+  try {
+    t.ui.write('▶ You: 調査\n', 'user');
+    t.ui.setServers(['ts', 'css', 'html', 'php', 'js'].map(id => ({ id, root: '/workspace' })));
+    const view = t.text();
+    assert.match(view, /│ ほか2件 +│/);
+    assert.doesNotMatch(view, /│ 言語サーバー.*\n.*│ php/, 'overflow rows stay out of the pane');
+  } finally { t.ui.close(); }
+});
+
+test('line mode announces a started server once', async () => {
+  // MODKH_PLAIN makes createTerminal return the non-TTY implementation, so this exercises
+  // the same entry point the CLI uses instead of reaching into a private class.
+  const previous = process.env.MODKH_PLAIN;
+  process.env.MODKH_PLAIN = '1';
+  const written: string[] = [];
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string) => { written.push(String(chunk)); return true; }) as typeof process.stdout.write;
+  try {
+    const plain = createTerminal('/workspace');
+    plain.setServers?.([{ id: 'ts', root: '/workspace' }]);
+    plain.setServers?.([{ id: 'ts', root: '/workspace' }]);
+    assert.equal(written.filter(line => line.includes('言語サーバー: ts')).length, 1);
+    plain.close();
+  } finally {
+    process.stdout.write = original;
+    if (previous === undefined) delete process.env.MODKH_PLAIN;
+    else process.env.MODKH_PLAIN = previous;
+  }
 });
 
 test('an approval temporarily takes the input without consuming the follow-up draft', async () => {

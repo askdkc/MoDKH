@@ -35,6 +35,12 @@ interface Entry {
   lastUsed: number;
 }
 
+/** One running language server as shown to the UI. Never inferred: the process must be running. */
+export interface RunningServer {
+  id: string;
+  root: string;
+}
+
 export interface PoolOptions {
   /** Maximum number of concurrently running servers. */
   maxRunning?: number;
@@ -64,6 +70,13 @@ export class ServerPool {
   }
 
   get size(): number { return this.entries.size; }
+
+  /** Servers whose process is running right now. Stopped or failed starts are not listed. */
+  running(): RunningServer[] {
+    return [...this.entries.values()]
+      .filter(entry => entry.server.running)
+      .map(entry => ({ id: entry.id, root: entry.root }));
+  }
 
   async acquire(parts: PoolKeyParts, launch: { command: string; args: string[] }, signal?: AbortSignal): Promise<StartedServer> {
     const key = poolKey(parts);

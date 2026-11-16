@@ -208,6 +208,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     settings: languageSettings,
     progress: message => ui.write(`${message}\n`),
   });
+  // The pane only knows what the pool reports, so it is refreshed on a slow tick and
+  // again after every turn. Nothing here decides whether analysis is available.
+  const serversTimer = setInterval(() => ui.setServers?.(language.runningServers()), 1000);
+  serversTimer.unref();
+  const refreshServers = (): void => ui.setServers?.(language.runningServers());
   let usageTotals = EMPTY_USAGE;
   const onUsage = (reported: TokenUsage) => {
     const next = addUsage(usageTotals, reported);
@@ -342,6 +347,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         onToolResult: (r: { status: string; output: string }) => {
           ui.setActivity?.('ツール結果を処理中');
           const output = r.output.split('\n');
+          // The header stands for one result only; the body below it may quote source.
           ui.write(`  (結果: ${r.status}) ${output[0].slice(0, 240)}\n`);
           for (const line of output.slice(1, 13)) ui.write(`  ${line.slice(0, 240)}\n`);
           if (output.length > 13) ui.write(`  … 残り${output.length - 13}行（全文はセッション記録）\n`);
@@ -639,12 +645,14 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         continue;
       }
       await runTurn(input, model, lisp && args.routing === 'auto' ? routeIntent(input, subagents.list()) : undefined, ui.takeImages?.() ?? []);
+      refreshServers();
       if (aborted) {
         // 中断後もプロンプトに戻る。2回目の Ctrl+C は入力待ちで終了する
         aborted = false;
       }
     }
   } finally {
+    clearInterval(serversTimer);
     // 主処理・永続化が失敗しても補助プロセスを回収する。
     await jobs.close().catch(e => process.stderr.write(`ジョブ停止失敗: ${String(e)}\n`));
     await memory.close().catch(e => process.stderr.write(`メモリ切断失敗: ${String(e)}\n`));
