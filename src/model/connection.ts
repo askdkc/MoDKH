@@ -4,6 +4,7 @@ import { parseModelRef, resolveModel, type ModelSpec } from './factory.ts';
 import { currentChatGptTokens } from './chatgpt/login.ts';
 import { loadChatGptTokens } from './chatgpt/tokens.ts';
 import { ResponsesApiModel } from './chatgpt/responses.ts';
+import { fetchModel } from './record-fetch.ts';
 
 /** オフライン検証用の既定スクリプト(読む→編集→テスト実行→完了)。 */
 function defaultFixedSteps(): FixedStep[] {
@@ -66,6 +67,7 @@ export function buildModelFromRef(ref: string, baseUrl?: string, fixedSkip?: num
       credentials: currentChatGptTokens,
       model: ref.slice('chatgpt/'.length),
       baseUrl,
+      fetchImpl: fetchModel,
     });
   }
   const spec: ModelSpec = { ...parseModelRef(ref), baseUrl, apiKey, ...(opts ? { timeoutMs: opts.timeoutMs } : {}) };

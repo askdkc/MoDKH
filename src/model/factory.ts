@@ -5,6 +5,7 @@ import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { Model } from '../agent/types.ts';
 import { AiSdkModel } from './ai-sdk.ts';
+import { fetchModel } from './record-fetch.ts';
 
 export interface ModelSpec {
   provider: string;
@@ -92,16 +93,16 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
   }
   switch (spec.provider) {
     case 'openai':
-      return new AiSdkModel({ ...sdkOptions, languageModel: createOpenAI({ apiKey: key!, baseURL: baseUrl })(spec.model) });
+      return new AiSdkModel({ ...sdkOptions, languageModel: createOpenAI({ apiKey: key!, baseURL: baseUrl, fetch: fetchModel })(spec.model) });
     case 'anthropic':
-      return new AiSdkModel({ ...sdkOptions, languageModel: createAnthropic({ apiKey: key! })(spec.model) });
+      return new AiSdkModel({ ...sdkOptions, languageModel: createAnthropic({ apiKey: key!, fetch: fetchModel })(spec.model) });
     case 'google':
       return new AiSdkModel({
         ...sdkOptions,
-        languageModel: createGoogleGenerativeAI({ apiKey: key! })(spec.model),
+        languageModel: createGoogleGenerativeAI({ apiKey: key!, fetch: fetchModel })(spec.model),
       });
     case 'deepseek':
-      return new AiSdkModel({ ...sdkOptions, languageModel: createDeepSeek({ apiKey: key! })(spec.model) });
+      return new AiSdkModel({ ...sdkOptions, languageModel: createDeepSeek({ apiKey: key!, fetch: fetchModel })(spec.model) });
     default:
       // OpenAI互換プリセット（Ollama Local / Cloud はURLと認証情報を分離）。
       return new AiSdkModel({
@@ -110,6 +111,7 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
           name: spec.provider,
           baseURL: baseUrl!,
           apiKey: key,
+          fetch: fetchModel,
         })(spec.model),
       });
   }

@@ -98,12 +98,18 @@ export function main(argv: readonly string[]): void {
     process.stdout.write(`${VERSION}\n`);
     return;
   }
-  void dispatch(cmd, args);
+  void dispatch(cmd, args, argv);
 }
 
-async function dispatch(cmd: string, args: Record<string, string | undefined>): Promise<void> {
+async function dispatch(cmd: string, args: Record<string, string | undefined>, argv: readonly string[]): Promise<void> {
   try {
     if (cmd === 'chat') {
+      const { recordChat } = await import('./cli/agenticreplay.ts');
+      const exitCode = await recordChat(fileURLToPath(import.meta.url), argv, args.cwd, args['base-url']);
+      if (exitCode !== undefined) {
+        process.exitCode = exitCode;
+        return;
+      }
       const { runChat } = await import('./cli/chat.ts');
       await runChat({ args });
       return;

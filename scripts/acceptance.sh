@@ -60,7 +60,18 @@ printf '# modkh サンプル\n' > "$PROJ2/README.md"
 SID2_FILE="$WORK/sid2.txt"
 ( printf '作業を開始して\ny\ny\n'; sleep 4 ) | "$CLI" chat --model fixed/scripted --cwd "$PROJ2" > "$WORK/out3.log" 2>&1 &
 CLI_PID=$!
-sleep 1
+i=0
+until grep -q '実行マーカー' "$PROJ2/marker.txt" 2>/dev/null; do
+  i=$((i + 1))
+  if [ "$i" -ge 100 ] || ! kill -0 "$CLI_PID" 2>/dev/null; then
+    kill -TERM "$CLI_PID" 2>/dev/null || true
+    wait "$CLI_PID" || true
+    echo "FAIL: 中断対象のコマンドが始まらない"
+    cat "$WORK/out3.log"
+    exit 1
+  fi
+  sleep 0.1
+done
 kill -INT "$CLI_PID" 2>/dev/null || true
 set +e
 wait "$CLI_PID"
@@ -106,6 +117,7 @@ echo "$OUTMODELS" | grep -q '接続中: fixed/scripted' || { echo 'FAIL: モデ�
 MODKH_TEST_ENTRY="$CLI" MODKH_TEST_CHAT="$WORK/install/node_modules/modkh/dist/cli/chat.js" MODKH_TEST_TERMINAL="$WORK/install/node_modules/modkh/dist/cli/terminal.js" node --test --test-reporter=tap \
   "$ROOT/test/cli.interactive.test.ts" "$ROOT/test/cli.safety.test.ts" \
   "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.memory.test.ts" "$ROOT/test/cli.tui.test.ts" \
+  "$ROOT/test/cli.agenticreplay.test.ts" \
   "$ROOT/test/plugins.entry.test.ts" "$ROOT/test/composer.flow.test.ts" "$ROOT/test/cli.harness.test.ts"
 
 # 10) 言語機能: 配布物から空の管理領域へ実TypeScriptサーバーを自動導入し、診断・再利用・編集後の再診断を確認。
