@@ -194,6 +194,8 @@ test('accent uses blue and NO_COLOR disables its styling', () => {
 });
 
 test('the composer status line and its notices stay readable on the painted panel', () => {
+  const previous = process.env.NO_COLOR;
+  delete process.env.NO_COLOR;
   const t = terminal();
   try {
     t.ui.write('▶ You: 作業\n', 'user');
@@ -204,7 +206,11 @@ test('the composer status line and its notices stay readable on the painted pane
     assert.match(t.text(), /追加の依頼を受け付けました/);
     assert.match(t.screen(), /48;5;235;38;5;117;1m/, 'a notice is emphasized over the standing status');
     finish([]);
-  } finally { t.ui.close(); }
+  } finally {
+    t.ui.close();
+    if (previous === undefined) delete process.env.NO_COLOR;
+    else process.env.NO_COLOR = previous;
+  }
 });
 
 test('resize keeps the live block within its width and history remains streamed', async () => {

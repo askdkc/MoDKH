@@ -29,14 +29,14 @@ for (const mode of ['compile-only', 'proved', 'rejected']) test(`ordinary chat r
     fs.writeFileSync(java, "#!/bin/sh\nprintf 'Model checking completed. No error has been found.\\n1 distinct states found\\n'\n", { mode: 0o700 });
     fs.writeFileSync(lean, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
     const coordination = 'Confirm the request within each formal input’s scope, then combine the receipts.';
-    const nextRequest = '修正してください。更新された証明を使い、前鬼と後鬼で確認してください。';
+    const nextRequest = '更新された証明を使い、前鬼と後鬼で検証してください。';
     const bound = mode !== 'compile-only';
     const formal = (path: string, config?: string) => bound ? { formalInput: { path, ...(config ? { config } : {}) } } : {};
     const scripts = [
       [step('catalog', 'list_subagents', {}),
         ...(mode === 'proved' ? [step('wrong-path', 'run_subagent', { pluginId: 'micro-goki', task: 'Verify the expected proposition', formalInput: { path: 'Expected.lean' } })] : []),
         step('zenki', 'run_subagent', { pluginId: 'micro-zenki', task: 'Check the finite model', context: coordination, ...formal('Model.tla', 'Model.cfg') }),
-        ...(bound ? [done] : []), ...(mode === 'proved' ? [] : [
+        ...(mode === 'proved' ? [done] : []), ...(mode === 'proved' ? [] : [
           step('goki', 'run_subagent', { pluginId: 'micro-goki', task: 'Check the standalone contract', context: coordination, ...formal('Proof.lean') }),
         ]), ...(mode === 'rejected' ? [
           step('retry', 'run_subagent', { pluginId: 'micro-zenki', task: 'Retry after the Lean verdict', ...formal('Model.tla', 'Model.cfg') }),
@@ -75,7 +75,9 @@ for (const mode of ['compile-only', 'proved', 'rejected']) test(`ordinary chat r
     proc.stderr.on('data', chunk => output += chunk);
     // The real Lean host phase can use up to 150 seconds before cleanup.
     const timer = setTimeout(() => proc.kill('SIGKILL'), mode === 'rejected' ? 320_000 : bound ? 165_000 : 35_000);
-    const request = mode === 'compile-only' ? 'Model.tla を検証して。' : '加算のコードを修正してください。どの自然数にも 0 を足すと元の数になることを既存の定理で検証して。';
+    const request = mode === 'compile-only' ? 'Model.tla を検証して。' : mode === 'rejected'
+      ? '加算の既存の定理を前鬼と後鬼で検証してください。'
+      : '加算のコードを修正してください。どの自然数にも 0 を足すと元の数になることを既存の定理で検証して。';
     if (mode === 'rejected') proc.stdin.write(`${request}\n`);
     else proc.stdin.end(`${request}\n/exit\n`);
     try {
@@ -88,7 +90,7 @@ for (const mode of ['compile-only', 'proved', 'rejected']) test(`ordinary chat r
     assert.ok(requests[0].system.includes(instruction));
     assert.doesNotMatch(requests[0].system, /Delegate independent work with start_subagent|\[coding-ideal-routine-skill\]/);
     if (bound) {
-      assert.ok(requests.some((request: { messages: { content?: string }[] }) => request.messages.some(message =>
+      if (mode === 'proved') assert.ok(requests.some((request: { messages: { content?: string }[] }) => request.messages.some(message =>
         message.content?.includes('後鬼の検証が未確認'))), output);
       assert.equal(zenkiRequests.length + gokiRequests.length, 0, 'Bound formal inputs execute without a second model selecting paths');
     }
@@ -117,7 +119,10 @@ for (const mode of ['compile-only', 'proved', 'rejected']) test(`ordinary chat r
     assert.equal(proof.code, { 'compile-only': 'PROOF_UNVERIFIED', proved: 'TARGET_PROVED', rejected: 'TARGET_STATEMENT_MISMATCH' }[mode]);
     assert.equal(JSON.parse(delegations[1].output).status, mode === 'proved' ? 'completed' : 'error');
     if (mode === 'rejected') {
-      assert.match(output, /形式検証は不合格.*TARGET_STATEMENT_MISMATCH/);
+      const [rejectedOutput, correctedOutput] = output.split(`▶ You: ${nextRequest}`);
+      assert.match(rejectedOutput!, /形式検証は不合格.*TARGET_STATEMENT_MISMATCH/);
+      assert.doesNotMatch(rejectedOutput!, /形式検証は合格/);
+      assert.doesNotMatch(correctedOutput!, /形式検証は不合格/);
       assert.equal(results.find(result => result.callId === 'retry')?.status, 'not-executed');
       assert.ok(nextIndex >= 0, output);
       const nextResults = toolResults(messages.slice(nextIndex));
@@ -126,6 +131,13 @@ for (const mode of ['compile-only', 'proved', 'rejected']) test(`ordinary chat r
       assert.equal(nextProof?.status, 'ok');
       assert.equal(JSON.parse(JSON.parse(nextProof!.output).formalEvidence[0].output).proofStatus, 'proved');
       assert.match(output, /状態: complete/);
+    }
+    if (bound) {
+      assert.match(output, /形式検証は合格.*前鬼.*TLC.*passed.*後鬼.*Lean.*proved/);
+      assert.doesNotMatch(output, /目標達成の検証は未確認/);
+    } else {
+      assert.doesNotMatch(output, /形式検証は合格/);
+      assert.match(output, /目標達成の検証は未確認/);
     }
     if (mode === 'proved') assert.match(output, /状態: complete/);
     if (mode !== 'compile-only') {

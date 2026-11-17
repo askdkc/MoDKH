@@ -414,6 +414,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const plan = continueInChat && activeModel && autoBytes > 0 && !/^(fixed|hermes)\//.test(activeModel.id)
         ? planCompaction(session.messages, keepTurns, session.compaction) : null;
       let attemptedCompaction = false;
+      const headChecks = continueInChat ? headCheckCompletion({
+        config: lisp, input, session, registry, root: cwd, signal: ac.signal,
+        approval, onToolCall: hooks.onToolCall, onToolResult: hooks.onToolResult,
+      }) : undefined;
       const outcome = continueInChat ? await runAgentLoop(session.messages, {
         model: activeModel!,
         registry,
@@ -450,8 +454,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           return next;
         } } : {}),
         takeFollowups,
-        ...headCheckCompletion({ config: lisp, input, session, registry, root: cwd, signal: ac.signal,
-          approval, onToolCall: hooks.onToolCall, onToolResult: hooks.onToolResult }),
+        ...headChecks?.hooks,
         analyze,
         maxTurns,
         skills: false, // The CLI already assembled the session guidance and per-turn memory.
@@ -464,7 +467,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       checkpoint();
       session.setStatus(outcome.outcome, outcome.errorMessage);
       if (outcome.outcome === 'complete') {
-        ui.write('\n\n(応答終了 — 目標達成の検証は未確認。実行結果と成果物を確認してください)\n');
+        const formal = headChecks?.formalVerdict();
+        const summary = formal?.status === 'passed'
+          ? formal.message
+          : '目標達成の検証は未確認。実行結果と成果物を確認してください';
+        ui.write(`\n\n(応答終了 — ${summary})\n`);
         // 会話完了後、メモリ保存の提案(有効かつ書き込み可のときだけ)
         const lastAssistant = [...session.messages].reverse().find((m) => m.role === 'assistant');
         if (config.memory.enabled && lastAssistant?.role === 'assistant' && lastAssistant.content) {

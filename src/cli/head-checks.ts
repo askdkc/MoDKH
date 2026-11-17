@@ -66,14 +66,17 @@ export function headCheckCompletion(turn: HeadCheckTurn) {
 
   const current = () => turn.session.delegations().filter(record => !prior.has(record.runId));
   const latest = (id: string) => current().findLast(record => record.pluginId === id);
-  const formalFailure = () => {
+  const formalVerdict = () => {
     const statuses = roles.map(role => verdict(latest(role.id), role));
+    if (statuses[0] === 'passed' && statuses[1] === 'proved') {
+      return { status: 'passed', message: '形式検証は合格: 前鬼のTLC passed、後鬼のLean proved' } as const;
+    }
     if (statuses.some(status => !status) && !statuses[1]?.startsWith('rejected')) return;
     const failed = roles.flatMap((role, index) => {
       const status = statuses[index];
       return !status || status === 'passed' || status === 'proved' ? [] : [`${role.title} ${status}`];
     });
-    if (failed.length) return `形式検証は不合格: ${failed.join('、')}`;
+    if (failed.length) return { status: 'failed', message: `形式検証は不合格: ${failed.join('、')}` } as const;
   };
   const terminalFailure = () => {
     const editFailure = editor && latest(editor.descriptor.id)?.result;
@@ -83,7 +86,8 @@ export function headCheckCompletion(turn: HeadCheckTurn) {
     if (editFailure && editFailure.status !== 'completed') {
       return `編集は不合格: ${editFailure.diagnostic ?? editFailure.verification?.status ?? editFailure.status}`;
     }
-    if (checkRequired) return formalFailure();
+    const formal = formalVerdict();
+    if (formal?.status === 'failed') return formal.message;
   };
 
   async function beforeComplete(): Promise<{ continueWith: string } | { errorMessage: string } | undefined> {
@@ -146,5 +150,5 @@ export function headCheckCompletion(turn: HeadCheckTurn) {
     };
   }
 
-  return { beforeComplete, terminalToolBlock: terminalFailure, recoverOutputLimit };
+  return { formalVerdict, hooks: { beforeComplete, terminalToolBlock: terminalFailure, recoverOutputLimit } };
 }

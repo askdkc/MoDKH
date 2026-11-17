@@ -5,9 +5,15 @@ import path from 'node:path';
 import { hostPlatform } from '../src/language/platform.ts';
 import { roswellAsset, installCommonLisp } from '../src/language/commonlisp-install.ts';
 import { ensureInstalled } from '../src/language/install.ts';
-import { languageById } from '../src/language/catalog.ts';
+import { languageById, type LanguageDefinition } from '../src/language/catalog.ts';
 import { temporaryDirectory } from '../src/lisp/runtime.ts';
 const asset=(name:string)=>({name,browser_download_url:`https://github.com/roswell/roswell/releases/download/current/${name}`,size:3,digest:`sha256:${'0'.repeat(64)}`});
+
+// Exercise cold installation even on hosts with a working cl-lsp.
+const coldCommonLisp: LanguageDefinition = {
+ ...languageById('commonlisp')!,
+ install: {kind:'host', candidates:[]},
+};
 
 test('Roswell selection uses release metadata and actual glibc requirement for all four hosts',()=>{
  for(const os of ['darwin','linux'])for(const arch of ['x64','arm64']){
@@ -26,19 +32,17 @@ test('disabled CL auto-install makes no fetch or directory; a DNS failure record
  process.env.MODKH_HOME=path.join(root,'home');let fetches=0;
  globalThis.fetch=async()=>{fetches++;throw new Error('fixture DNS ENOTFOUND');};
  try {
-  const language=languageById('commonlisp')!;
+  const language=coldCommonLisp;
   assert.equal((await ensureInstalled(language,{autoInstall:false})).status,'unavailable');assert.equal(fetches,0);assert.equal(fs.existsSync(process.env.MODKH_HOME),false);
   const failed=await ensureInstalled(language,{autoInstall:true});assert.equal(failed.status,'error');assert.match(failed.detail!,/release-metadata.*ENOTFOUND/);
   assert.equal(fetches,1);
   const again=await ensureInstalled(language,{autoInstall:true});assert.equal(again.status,'unavailable');assert.equal(fetches,1);
-  const target=path.join(process.env.MODKH_HOME,'language','servers','commonlisp');
   // Locate through the same public home helper: state remains failure-only.
   const {languageHome}=await import('../src/language/detect.ts');
   const home=languageHome();const report=JSON.parse(fs.readFileSync(path.join(home,'servers/commonlisp/last-failure.json'),'utf8'));
   assert.equal(report.status,'failed');assert.equal(report.stages.at(-1).name,'release-metadata');assert.equal(report.stages.at(-1).state,'failed');
   assert.equal(fs.readdirSync(path.join(home,'servers/commonlisp')).some(n=>n.startsWith('attempt-')),false);
   assert.equal(JSON.parse(fs.readFileSync(path.join(home,'state.json'),'utf8')).servers.commonlisp,undefined);
-  void target;
  } finally {globalThis.fetch=oldFetch;if(oldHome===undefined)delete process.env.MODKH_HOME;else process.env.MODKH_HOME=oldHome;fs.rmSync(root,{recursive:true,force:true});}
 });
 test('CL bootstrap abort never leaves a success receipt or attempts a download',async()=>{
@@ -53,7 +57,7 @@ test('simultaneous CL installation attempts share the lock and do not repeat a f
  process.env.MODKH_HOME=path.join(root,'home');let calls=0;
  globalThis.fetch=async()=>{calls++;throw new Error('fixture DNS ENOTFOUND');};
  try {
-  const results=await Promise.all([1,2].map(()=>ensureInstalled(languageById('commonlisp')!,{autoInstall:true})));
+  const results=await Promise.all([1,2].map(()=>ensureInstalled(coldCommonLisp,{autoInstall:true})));
   assert.ok(results.every(r=>r.status!=='ready'));assert.equal(calls,1);
  } finally {globalThis.fetch=oldFetch;if(oldHome===undefined)delete process.env.MODKH_HOME;else process.env.MODKH_HOME=oldHome;fs.rmSync(root,{recursive:true,force:true});}
 });
