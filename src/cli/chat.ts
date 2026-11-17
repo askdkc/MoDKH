@@ -693,9 +693,21 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           continue;
         }
         if (line === '/agents') {
-          ui.write(`子の同時実行数: ${subagents.maxConcurrent}（親1 + 子${subagents.maxConcurrent} = 最大${subagents.maxConcurrent + 1}）\n/agents limit <1〜16> で変更・保存\n`);
-          for (const item of available) ui.write(`${item.id}  ${item.title}  ${item.kind}  ${item.description}\n`);
-          ui.write(available.length ? '/agents run <ID> で手動実行。通常の会話では子を並行起動できます（再起動後の自動再開なし）\n' : '利用可能な子はありません。modkh plugin list と設定を確認してください。\n');
+          const limit = subagents.maxConcurrent;
+          await ui.showPage('/agents — 子エージェント', [
+            '使い方',
+            '  /agents run [ID] [依頼]  子エージェントに依頼',
+            '  /agents limit <1〜16>   子の同時実行数を変更・保存',
+            `子の同時実行数: ${limit}（親1 + 子${limit} = 最大${limit + 1}）`,
+            '会話中は子を並行起動できます。再起動後の自動再開はありません。',
+            '',
+            `利用可能な子エージェント (${available.length}件)`,
+            ...(available.length ? available.flatMap(item => [
+              `${item.id}  ${item.title} (${item.kind})`,
+              `  ${item.description}`,
+              '',
+            ]) : ['利用可能な子はありません。modkh plugin list と設定を確認してください。']),
+          ].join('\n').trimEnd());
           continue;
         }
         const match = /^\/agents run(?:\s+([a-z][a-z0-9-]*))?(?:\s+([\s\S]*))?$/.exec(line);

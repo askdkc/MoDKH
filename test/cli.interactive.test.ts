@@ -120,3 +120,20 @@ test('/connect chatgpt はログイン処理を通り、モデル選択に進む
     assert.doesNotMatch(stdout + session, /test-token/);
   } finally { await new Promise<void>((resolve) => issuer.close(() => resolve())); }
 });
+
+test('チャット画面に Responses API の失敗理由と再試行までの時間を表示する', async () => {
+  const error = {
+    code: 'server_is_overloaded',
+    message: 'Our servers are currently overloaded. Please try again later.',
+    headers: { 'retry-after': '318', 'retry-after-ms': '318000' },
+  };
+  const stream = [{ type: 'error', error }, { type: 'response.failed', response: { error } }]
+    .map(event => `data: ${JSON.stringify(event)}\n\n`).join('');
+  const setup = `import { writeFileSync } from 'node:fs';
+    writeFileSync(process.env.MODKH_HOME + '/chatgpt-auth.json', JSON.stringify({accessToken:'test'}));
+    globalThis.fetch = async () => new Response(${JSON.stringify(stream)});`;
+  const { stdout } = await chat('hello\n/exit\n', "{args: {model: 'chatgpt/gpt-6.2-sol'}}", {}, setup);
+  assert.ok(stdout.includes(error.message), stdout);
+  assert.match(stdout, /server_is_overloaded/);
+  assert.match(stdout, /5分18秒後に再試行/);
+});

@@ -4,7 +4,7 @@ import { PassThrough } from 'node:stream';
 import { TerminalMouseInput, type MouseReport } from './terminal-mouse.ts';
 import { reflowTranscript, selectedTranscript, transcriptLine, transcriptLines, type DragSelection, type TranscriptLine, type TranscriptScreenLine } from './transcript-selection.ts';
 import { EMPTY_USAGE, USAGE_HEADING, usageFooter, usageBadgeLine, usageBreakdownLines, type UsageTotals } from './usage.ts';
-import { chars, clean, fitText, textWidth, wrap, editorLayout, verticalCursor, lineEdge } from './editor.ts';
+import { chars, clean, fitText, textWidth, wrap, wrapText, editorLayout, verticalCursor, lineEdge } from './editor.ts';
 export { textWidth, fitText } from './editor.ts';
 import { readClipboardImage, writeClipboardText, type ClipboardReader } from './clipboard.ts';
 import { MAX_IMAGES, parseImage, type ImageAttachment } from '../agent/images.ts';
@@ -34,6 +34,8 @@ export interface ChatTerminal {
   unread(line: string): void;
   ask(title: string, signal?: AbortSignal, secret?: boolean): Promise<string | null>;
   choose(title: string, choices: readonly Choice[], query?: string): Promise<string | null>;
+  /** Show a read-only page, returning when it is dismissed (or printed in line mode). */
+  showPage(title: string, text: string): Promise<void>;
   setModel(model: string | null): void;
   setActivity?(activity: string | null): void;
   /** Return an error to keep the draft, or null to accept it. */
@@ -83,6 +85,10 @@ class PlainTerminal implements ChatTerminal {
   private readonly lines = new LineSource();
   private reasoning = '';
   write(text: string): void { process.stdout.write(text); }
+  showPage(title: string, text: string): Promise<void> {
+    this.write(`${title}\n\n${text}\n`);
+    return Promise.resolve();
+  }
   next(signal?: AbortSignal): Promise<string | null> { return this.lines.next(signal); }
   unread(line: string): void { this.lines.unread(line); }
   setModel(_model: string | null): void {}
@@ -181,6 +187,7 @@ export class TerminalUI implements ChatTerminal {
   private copyQueue = Promise.resolve();
   private historyRows: TranscriptScreenLine[] = [];
   private history?: { source: TranscriptScreenLine[]; width: number; lines: TranscriptScreenLine[]; offset: number; rows: Map<number, TranscriptScreenLine> };
+  private page?: { title: string; text: string; width: number; lines: string[]; top: number; pasting: boolean; resolve: () => void };
   /** まだ改行が来ていない最終行。ライブブロックの一部として再描画する。 */
   private partial = '';
   private partialKind: TranscriptKind = 'system';
@@ -327,7 +334,8 @@ export class TerminalUI implements ChatTerminal {
     this.clearPending = true;
     this.streamRow = 1;
     this.cursorRow = 1;
-    if (this.history) this.renderHistory();
+    if (this.page) this.renderPage();
+    else if (this.history) this.renderHistory();
     else this.render();
   };
 
@@ -421,10 +429,22 @@ export class TerminalUI implements ChatTerminal {
   next(signal?: AbortSignal): Promise<string | null> { return this.wait('何を調べますか？ / でコマンド', undefined, '', signal, false, true); }
   ask(title: string, signal?: AbortSignal, secret = false): Promise<string | null> { return this.wait(title, undefined, '', signal, secret); }
   choose(title: string, choices: readonly Choice[], query = ''): Promise<string | null> { return this.wait(title, choices, query); }
+  showPage(title: string, text: string): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    if (this.page || this.pending || this.followup) throw new Error('端末の入力待ちは同時に1件だけです');
+    this.leaveHistory(false);
+    this.cancelDrag();
+    return new Promise(resolve => {
+      this.page = { title, text, top: 0, width: 0, lines: [], pasting: false, resolve };
+      this.output.write('\x1b[?1049h\x1b[?25l');
+      this.renderPage();
+    });
+  }
+
   private wait(title: string, choices?: readonly Choice[], query = '', signal?: AbortSignal, secret = false, composer = false): Promise<string | null> {
     if (signal?.aborted || this.closed) return Promise.resolve(null);
+    if (this.page || this.pending) throw new Error('端末の入力待ちは同時に1件だけです');
     if (this.queued.length) return Promise.resolve(this.queued.shift()!);
-    if (this.pending) throw new Error('端末の入力待ちは同時に1件だけです');
     if (!composer) this.leaveHistory();
     const draft = !composer && this.text
       ? { text: this.text, cursor: this.cursor, scroll: this.editorScroll, notice: this.inputNotice } : undefined;
@@ -489,9 +509,12 @@ export class TerminalUI implements ChatTerminal {
   private mouseReport = ({ button, released, ...point }: MouseReport): void => {
     if (this.pending?.secret) return;
     if (!released && (button === 64 || button === 65)) {
-      this.scrollHistory(button === 64 ? 3 : -3);
+      const delta = button === 64 ? -3 : 3;
+      if (this.page) this.renderPage(delta);
+      else this.scrollHistory(-delta);
       return;
     }
+    if (this.page) return;
     if (point.row < 1 || point.row > this.rows() || point.column < 1) return;
     const rows = this.visibleTranscript();
     if (!released && button === 0) {
@@ -620,8 +643,60 @@ export class TerminalUI implements ChatTerminal {
     if (redraw) this.render();
   }
 
+  private renderPage(delta = 0): void {
+    const page = this.page;
+    if (!page) return;
+    const rows = this.rows();
+    const width = this.columns() - 1; // Avoid autowrap at the right margin.
+    if (page.width !== width) {
+      page.width = width;
+      page.lines = wrapText(page.text, width);
+    }
+    const bodyRows = rows - 3;
+    page.top = Math.max(0, Math.min(page.top + delta, page.lines.length - bodyRows));
+    const visible = page.lines.slice(page.top, page.top + bodyRows);
+    const heading = this.paint(fitText(page.title, width), '1');
+    const hints = fitText('Esc/q 戻る  ↑↓ 行  PgUp/PgDn ページ', width);
+    const position = fitText(`${page.top + 1}–${page.top + visible.length} / ${page.lines.length}`, width);
+    this.output.write(`\x1b[H\x1b[J${heading}` +
+      visible.map((line, i) => `\x1b[${i + 2};1H${line}`).join('') +
+      `\x1b[${rows - 1};1H${position}\x1b[${rows};1H${hints}`);
+  }
+
+  private dismissPage(): void {
+    const page = this.page;
+    if (!page) return;
+    this.page = undefined;
+    this.output.write('\x1b[?1049l\x1b[?25h');
+    page.resolve();
+  }
+
+  private pageKey(key: Key): void {
+    const page = this.page;
+    if (!page || this.replySilenced) return;
+    if (key.name === 'paste-start' || key.name === 'paste-end') {
+      page.pasting = key.name === 'paste-start';
+      return;
+    }
+    if (page.pasting) return;
+    if (key.name === 'escape' || (key.name === 'q' && !key.ctrl && !key.meta) || (key.ctrl && key.name === 'c')) {
+      this.dismissPage();
+      return;
+    }
+    const step = this.rows() - 4; // Leave one line of context between pages.
+    switch (key.name) {
+      case 'up': this.renderPage(-1); break;
+      case 'down': this.renderPage(1); break;
+      case 'pageup': this.renderPage(-step); break;
+      case 'pagedown': case 'space': this.renderPage(step); break;
+      case 'home': this.renderPage(-page.top); break;
+      case 'end': this.renderPage(page.lines.length); break;
+    }
+  }
+
   private onEnd = (): void => { this.pending?.finish(null); this.close(); };
   private keypress = (value: string | undefined, key: Key): void => {
+    if (this.page) { this.pageKey(key); return; }
     if (this.drag) {
       this.cancelDrag();
       this.render();
@@ -738,7 +813,7 @@ export class TerminalUI implements ChatTerminal {
    */
   private render = (): void => {
     // Keep mouse coordinates stable while a response is still streaming under the drag.
-    if (this.closed || this.history || this.drag) return;
+    if (this.closed || this.page || this.history || this.drag) return;
     const rows = this.rows();
     const columns = this.columns();
     const width = this.started ? this.width() : Math.max(8, Math.min(columns - 4, 80));
@@ -1019,6 +1094,7 @@ export class TerminalUI implements ChatTerminal {
 
   close = (): void => {
     if (this.closed) return;
+    this.dismissPage();
     this.leaveHistory(false);
     this.cancelDrag();
     this.closed = true;

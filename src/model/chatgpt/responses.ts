@@ -174,7 +174,10 @@ export class ResponsesApiModel implements Model {
                   cacheRead: cached,
                 };
               }
-            } else if (ev['type'] === 'response.failed' || ev['type'] === 'response.incomplete') {
+            } else if (ev['type'] === 'response.failed') {
+              const response = ev['response'] as { error?: unknown } | null;
+              errorMessage = describeFailure(response?.error) ?? errorMessage ?? 'Responses API 応答は未完了: response.failed';
+            } else if (ev['type'] === 'response.incomplete') {
               errorMessage = `Responses API 応答は未完了: ${ev['type']}`;
             } else if (ev['type'] === 'error') {
               errorMessage = String(ev['message'] ?? 'Responses API のエラーイベント');
@@ -199,6 +202,33 @@ export class ResponsesApiModel implements Model {
       yield { type: 'finish', stopReason: sawFunctionCall ? 'tool-calls' : 'stop' };
     }
   }
+}
+
+function describeFailure(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const { code, type, message, headers } = error as Record<string, unknown>;
+  const identifier = typeof code === 'string' && code.trim() ? code : type;
+  const details = [identifier, message].filter(value => typeof value === 'string' && value.trim());
+  const wait = retryWait(headers);
+  if (wait) details.push(`${wait}後に再試行してください。`);
+  return details.length ? `Responses API エラー: ${details.join(' ')}` : undefined;
+}
+
+function retryWait(headers: unknown): string | undefined {
+  if (!headers || typeof headers !== 'object') return undefined;
+  const fields = Object.entries(headers);
+  for (const [name, divisor] of [['retry-after-ms', 1000], ['retry-after', 1]] as const) {
+    const raw = fields.find(([key]) => key.toLowerCase() === name)?.[1];
+    if (typeof raw !== 'string' && typeof raw !== 'number') continue;
+    const value = String(raw).trim();
+    if (!/^\d+(?:\.\d+)?$/.test(value)) continue;
+    const seconds = Math.ceil(Number(value) / divisor);
+    if (!Number.isSafeInteger(seconds)) continue;
+    const minutes = Math.floor(seconds / 60);
+    const remainder = seconds % 60;
+    return (minutes ? `${minutes}分` : '') + (remainder || !minutes ? `${remainder}秒` : '');
+  }
+  return undefined;
 }
 
 function parseSseData(raw: string): Record<string, unknown> | null {
