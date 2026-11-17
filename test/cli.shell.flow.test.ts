@@ -71,6 +71,9 @@ for (const leftover of [false, true]) test(`the agent repairs a failing check wi
     assert.match(last.output, /\[exit code: 0\]/);
     // The whole loop completed within one turn.
     assert.match(output, /check repaired/);
+    assert.match(output, /\$ sh check\.sh/);
+    assert.match(output, /╰ 終了 · exit 0/);
+    assert.doesNotMatch(output, /--- stdout ---|--- stderr ---|▶ run_command command=/);
     assert.doesNotMatch(output, /打ち切り/);
   } finally {
     clearTimeout(timer);

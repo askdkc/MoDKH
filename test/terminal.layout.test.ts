@@ -1,3 +1,4 @@
+import { shellCall, shellOutput } from '../src/cli/shell-display.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { stripVTControlCharacters } from 'node:util';
@@ -280,5 +281,21 @@ test('an approval temporarily takes the input without consuming the follow-up dr
     t.key('return');
     assert.deepEqual(sent, ['追記']);
     finish([]);
+  } finally { t.ui.close(); }
+});
+
+for (const columns of [40, 120]) test(`shell output remains visible at ${columns} columns`, () => {
+  const t = terminal(columns, 30);
+  try {
+    void t.ui.next();
+    t.ui.write('▶ You: テストして\n', 'user');
+    t.ui.write(shellCall({ description: 'ゲームの検証', command: 'node test/cdp-check.mjs' }));
+    t.ui.write(shellOutput({ status: 'ok', output: '[exit code: 1]\n--- stdout ---\nPASS 初期画面\n--- stderr ---\nFAIL タイマー\n13/14 passed' }));
+    const screen = t.text();
+    for (const text of ['ゲームの検証', '$ node test/cdp-check.mjs', 'PASS 初期画面', '標準エラー', 'FAIL タイマー', '13/14 passed', '失敗 · exit 1']) {
+      assert.ok(screen.includes(text), `${text} must remain visible: ${screen}`);
+    }
+    assert.doesNotMatch(screen, /--- stdout ---|結果: ok/);
+    for (const line of screen.split('\n')) assert.ok(textWidth(line) <= columns);
   } finally { t.ui.close(); }
 });

@@ -1,3 +1,4 @@
+import { shellCall, shellOutput } from './shell-display.ts';
 import { headCheckCompletion } from './head-checks.ts';
 import fs from 'node:fs';
 import { loadLispConfiguration } from '../lisp/config.ts';
@@ -387,12 +388,13 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         onText: (d: string) => { ui.setReasoning?.(null); ui.setActivity?.('モデル応答を受信中… Ctrl+Cで中止'); ui.write(d, 'answer'); },
         onToolCall: (call: { name: string; args: Record<string, unknown> }) => {
           ui.setReasoning?.(null);
-          ui.write(`\n▶ ${call.name} ${summarizeArgs(call.args)}\n`);
+          ui.write(call.name === 'run_command' ? shellCall(call.args) : `\n▶ ${call.name} ${summarizeArgs(call.args)}\n`);
         },
         onToolStart: ({ name }: { name: string }) => ui.setActivity?.(name === 'start_subagent' ? '子エージェントを起動中' : name === 'run_subagent'
           ? '子エージェントの結果を待機中' : 'ツールを実行中'),
-        onToolResult: (r: { status: string; output: string }) => {
+        onToolResult: (r: { name: string; status: string; output: string }) => {
           ui.setActivity?.('ツール結果を処理中');
+          if (r.name === 'run_command') { ui.write(shellOutput(r)); return; }
           const output = r.output.split('\n');
           // The header stands for one result only; the body below it may quote source.
           ui.write(`  (結果: ${r.status}) ${output[0].slice(0, 240)}\n`);

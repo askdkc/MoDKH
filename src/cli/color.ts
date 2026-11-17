@@ -164,6 +164,15 @@ export class TranscriptColorizer {
     const trimmed = raw.trim();
     const blank = trimmed.length === 0;
     if (kind === 'reasoning') return blank ? raw : `\x1b[${palette.reasoning}m${raw}\x1b[0m`;
+    // Shell cards are terminal output, not Markdown or source code. Keep their body literal.
+    if (kind === 'system' && /^(╭ |│ |╰ )/.test(raw)) {
+      this.inToolOutput = false;
+      this.inDiff = false;
+      this.mode = 'text';
+      if (raw.startsWith('╭ ')) return `\x1b[${palette.tool}m${raw}\x1b[0m`;
+      if (raw.startsWith('╰ ')) return `\x1b[${palette.result}m${raw}\x1b[0m`;
+      return `\x1b[${palette.reasoning}m│\x1b[0m${raw.slice(1)}`;
+    }
     if (this.mode === 'code') {
       if (/^(\s*)(```|~~~)/.test(raw)) { this.mode = 'text'; return `\x1b[${palette.reasoning}m${raw}\x1b[0m`; }
       return highlightCodeLine(raw, palette);

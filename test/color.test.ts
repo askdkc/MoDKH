@@ -152,3 +152,13 @@ test('user, tool, result and status lines each get their own style', () => {
   assert.match(c.line('  (結果: ok) README.md を読んだ', dark), /\x1b\[9\d?m|90/);
   assert.match(c.line('## 見出し', light), /\x1b\[1m/);
 });
+
+test('shell cards keep literal output readable on dark and light backgrounds', () => {
+  for (const palette of [dark, light]) {
+    const c = new TranscriptColorizer();
+    assert.equal(c.line('╭ テスト', palette), `\x1b[${palette.tool}m╭ テスト\x1b[0m`);
+    assert.equal(c.line('│ ```', palette), `\x1b[${palette.reasoning}m│\x1b[0m \`\`\``);
+    assert.equal(c.state().mode, 'text');
+    assert.equal(c.line('╰ 失敗 · exit 1', palette), `\x1b[${palette.result}m╰ 失敗 · exit 1\x1b[0m`);
+  }
+});
