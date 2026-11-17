@@ -4,10 +4,10 @@ import { readBundledSkill, MODKH_SKILL_BINDING } from '../agent/bundled-skills.t
 import type { LocalDefinition, PluginDescriptor } from '../plugins/api.ts';
 import { executeBounded, privateEnvironment, temporaryDirectory, sha256 } from './runtime.ts';
 export interface SessionDefinition { descriptor: PluginDescriptor; definition: LocalDefinition }
-export interface HeadChecks { inputs?: { tla: string; cfg: string; lean: string; editor?: string } }
+export interface HeadChecks { inputs?: { model: string; lean: string; editor?: string } }
 export interface LispConfiguration { digest: string; entries: SessionDefinition[]; headInstruction?: string; headChecks?: HeadChecks }
-const TOOLS = new Set(['code_outline', 'code_syntax_search', 'code_definition', 'code_references', 'code_diagnostics', 'code_hover', 'edit_file', 'verify_tla', 'verify_lean']);
-const LANGUAGES = new Set(['php', 'common-lisp', 'js', 'ts', 'svelte', 'tailwindcss', 'html', 'css', 'tla', 'lean']);
+const TOOLS = new Set(['code_outline', 'code_syntax_search', 'code_definition', 'code_references', 'code_diagnostics', 'code_hover', 'edit_file', 'verify_stateright', 'verify_lean']);
+const LANGUAGES = new Set(['php', 'common-lisp', 'js', 'ts', 'svelte', 'tailwindcss', 'html', 'css', 'stateright', 'lean']);
 const KINDS = new Set(['outline', 'syntax-search', 'definition', 'references', 'diagnostics', 'hover', 'edit', 'verify']);
 export const REQUIRED_SKILLS = ['kiokuko-single-purpose-functions', 'one-shot-software-completion'] as const;
 
@@ -65,23 +65,23 @@ export function validateDefinitions(raw: unknown, digest: string): SessionDefini
 // This is Common Lisp evaluated by SBCL, not an S-expression parser in JavaScript.
 function validateHeadChecks(value: unknown, entries: SessionDefinition[]): HeadChecks | undefined {
   if (value === null) return undefined;
-  for (const [id, tool] of [['micro-zenki', 'verify_tla'], ['micro-goki', 'verify_lean']]) {
+  for (const [id, tool] of [['micro-zenki', 'verify_stateright'], ['micro-goki', 'verify_lean']]) {
     if (!entries.some(entry => entry.descriptor.id === id && entry.definition.tools.includes(tool))) {
       throw new Error(`Head checks require ${id} with ${tool}`);
     }
   }
   if (value === true) return {};
-  if (!Array.isArray(value) || value.length < 3 || value.length > 4) throw new Error('Invalid head check inputs');
-  const [tla, cfg, lean] = paths(value.slice(0, 3));
-  if (path.extname(tla) !== '.tla' || path.extname(cfg) !== '.cfg' || path.extname(lean) !== '.lean') {
-    throw new Error('Head check inputs must be a .tla, .cfg and .lean file');
+  if (!Array.isArray(value) || value.length < 2 || value.length > 3) throw new Error('Invalid head check inputs');
+  const [model, lean] = paths(value.slice(0, 2));
+  if (path.extname(model) !== '.json' || path.extname(lean) !== '.lean') {
+    throw new Error('Head check inputs must be a model .json and .lean file (TLA/config inputs must be migrated)');
   }
-  const editor = value[3];
+  const editor = value[2];
   if (editor !== undefined && !entries.some(entry => entry.descriptor.id === editor &&
     entry.descriptor.enabled && entry.definition.verificationManifest?.sources.length === 1)) {
     throw new Error('Head check editor must have exactly one owner-configured source');
   }
-  return { inputs: { tla, cfg, lean, ...(typeof editor === 'string' ? { editor } : {}) } };
+  return { inputs: { model, lean, ...(typeof editor === 'string' ? { editor } : {}) } };
 }
 
 const DRIVER = String.raw`
@@ -91,8 +91,8 @@ const DRIVER = String.raw`
 (defvar *head-instruction* nil)
 (defvar *head-checks* nil)
 (defun require-head-checks () (setf *head-checks* t))
-(defun set-head-check-inputs (tla cfg lean &optional editor)
-  (setf *head-checks* (if editor (list tla cfg lean editor) (list tla cfg lean))))
+(defun set-head-check-inputs (model lean &optional editor)
+  (setf *head-checks* (if editor (list model lean editor) (list model lean))))
 (defun set-head-instruction (instruction)
   (check-type instruction string)
   (setf *head-instruction* instruction))

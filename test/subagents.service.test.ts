@@ -501,7 +501,7 @@ test('the same editor repairs a rejected patch and applies it without a final mo
   let checks = 0;
   const service = new SubagentService({
     ...f.opts,
-    headInputs: { tla: 'Model.tla', cfg: 'Model.cfg', lean: 'Proof.lean', editor: { id, path: 'source.txt' } },
+    headInputs: { model: 'Model.json', lean: 'Proof.lean', editor: { id, path: 'source.txt' } },
     headUserRequest: () => 'Use the word after, preserving the trailing newline.',
     connection: () => ({ ref: script.id, create: () => script }),
     approval: { approve: async req => {
@@ -542,7 +542,7 @@ test('bound Lisp editor rejects an assignment without an observable behavior cha
   fs.writeFileSync(path.join(f.root, 'source.txt'), 'before');
   fs.writeFileSync(path.join(f.root, 'check.txt'), 'protected');
   const service = new SubagentService({ ...f.opts, headInputs: {
-    tla: 'Model.tla', cfg: 'Model.cfg', lean: 'Proof.lean', editor: { id, path: 'source.txt' },
+    model: 'Model.json', lean: 'Proof.lean', editor: { id, path: 'source.txt' },
   } });
   const request = { pluginId: id, task: 'Confirm the change', targetPaths: ['source.txt'] };
   await assert.rejects(service.start(request, owner()), /behaviorChange/);

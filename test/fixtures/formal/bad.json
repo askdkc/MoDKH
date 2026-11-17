@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "states": [
+    "0",
+    "1",
+    "2"
+  ],
+  "initial": [
+    "0"
+  ],
+  "transitions": [
+    {
+      "from": "0",
+      "to": "1",
+      "action": "Increment"
+    },
+    {
+      "from": "1",
+      "to": "2",
+      "action": "Increment"
+    }
+  ],
+  "invariants": [
+    {
+      "name": "Bad",
+      "allowedStates": [
+        "0",
+        "1"
+      ]
+    }
+  ],
+  "checkDeadlocks": false
+}

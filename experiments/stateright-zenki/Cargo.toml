@@ -1,0 +1,10 @@
+[package]
+name = "modkh-zenki-prototype"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+stateright = "=0.31.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

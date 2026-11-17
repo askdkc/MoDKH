@@ -43,3 +43,16 @@ export function builtinMicroagents(): readonly SessionDefinition[] {
   }));
   return builtins;
 }
+
+let zenki: SessionDefinition | undefined;
+/** Native checker is detected by the host; the agent cannot select an executable. */
+export function staterightMicroagent(): SessionDefinition {
+  if (!zenki) {
+    const entry = validateDefinitions([{ id: 'micro-zenki', title: '前鬼（Stateright）', tool: 'verify_stateright',
+      language: 'stateright', 'task-kind': 'verify', enabled: true,
+      instruction: '指定された有限状態JSONモデル一件をverify_staterightで検査する。探索範囲、不変条件、反例、未確認事項を報告する。モデルの検査を実装全体の証明と扱わない。' }], '')[0];
+    zenki = { definition: entry.definition, descriptor: { ...entry.descriptor, id: 'modkh-micro-zenki', builtin: true,
+      version: 'builtin', digest: sha256(JSON.stringify(entry)) } };
+  }
+  return zenki;
+}

@@ -26,6 +26,20 @@ modkh
 
 通常の `modkh` で言語別のマイクロエージェントを使えます。複数言語をまたぐ依頼では、親モデルが調査を担当ごとに分けて委譲し、返ってきた結果をまとめます。`/agents` で利用できる担当を確認できます。
 
+## 前鬼の形式検証（任意）
+
+[Rust/Cargo](https://rust-lang.org/tools/install/)を導入してから実行します。Javaは不要です。
+
+```sh
+modkh stateright install
+modkh stateright status
+modkh
+```
+
+導入済みなら、通常起動で前鬼（`modkh-micro-zenki`）を自動登録します。親モデルは状態遷移・競合・不変条件の検証を前鬼に委譲します。`/agents` で確認できます。MoDKHを更新した際も `modkh stateright install` で検証器を更新できます。
+
+検証対象は明示的な有限状態JSONモデルです。[モデルの書き方・導入先・制約](docs/stateright.md)を参照してください。
+
 ## ブラウザ検証（任意）
 
 [browse](https://github.com/anomalyco/browse) を使うと、Chrome・Braveなどでページ表示、入力・クリック、スクリーンショット取得を行えます。MoDKHからは `run_command` 経由でCLIを呼び出します。

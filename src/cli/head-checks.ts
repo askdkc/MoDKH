@@ -6,7 +6,7 @@ import type { DelegationRecord, DelegationRequest } from '../subagents/types.ts'
 import type { ToolRegistry } from '../tools/registry.ts';
 
 const roles = [
-  { id: 'micro-zenki', title: '前鬼', tool: 'verify_tla' },
+  { id: 'micro-zenki', title: '前鬼', tool: 'verify_stateright' },
   { id: 'micro-goki', title: '後鬼', tool: 'verify_lean' },
 ] as const;
 
@@ -69,7 +69,7 @@ export function headCheckCompletion(turn: HeadCheckTurn) {
   const formalVerdict = () => {
     const statuses = roles.map(role => verdict(latest(role.id), role));
     if (statuses[0] === 'passed' && statuses[1] === 'proved') {
-      return { status: 'passed', message: '形式検証は合格: 前鬼のTLC passed、後鬼のLean proved' } as const;
+      return { status: 'passed', message: '形式検証は合格: 前鬼のStateright passed、後鬼のLean proved' } as const;
     }
     if (statuses.some(status => !status) && !statuses[1]?.startsWith('rejected')) return;
     const failed = roles.flatMap((role, index) => {
@@ -110,7 +110,7 @@ export function headCheckCompletion(turn: HeadCheckTurn) {
           }) && !/DENIED|承認|拒否/.test(result.diagnostic ?? ''));
       });
       if (next && !turn.signal.aborted) {
-        const formalInput = next.tool === 'verify_tla' ? { path: inputs.tla, config: inputs.cfg } : { path: inputs.lean };
+        const formalInput = next.tool === 'verify_stateright' ? { path: inputs.model } : { path: inputs.lean };
         await delegate({ pluginId: next.id, task: `${next.title}の検証。ホスト設定で指定された入力を使用。`, formalInput });
         if (unknown) return { errorMessage: '委譲結果が不明のため完了できません' };
         const result = verdict(latest(next.id), next);
@@ -124,7 +124,7 @@ export function headCheckCompletion(turn: HeadCheckTurn) {
       repeats = pending === lastMissing ? repeats + 1 : 0;
       lastMissing = pending;
       if (repeats >= 2) return { errorMessage: `未完了: ${pending}` };
-      return { continueWith: `(ホストの完了確認) ${pending}。完了を報告する前に、未確認の担当だけを run_subagent で呼んでください。${editMissing ? ' 先に編集担当に変更そのものを指示し、targetPaths と同じ操作の現状・期待結果を behaviorChange.before / behaviorChange.after に渡してください。' : ' 前鬼には formalInput.path と config、後鬼には証明元 formalInput.path を渡します。'} 拒否または結果不明の操作は再送しないでください。` };
+      return { continueWith: `(ホストの完了確認) ${pending}。完了を報告する前に、未確認の担当だけを run_subagent で呼んでください。${editMissing ? ' 先に編集担当に変更そのものを指示し、targetPaths と同じ操作の現状・期待結果を behaviorChange.before / behaviorChange.after に渡してください。' : ' 前鬼には formalInput.path（モデルJSON）、後鬼には証明元 formalInput.path を渡します。'} 拒否または結果不明の操作は再送しないでください。` };
     }
 
     return undefined;

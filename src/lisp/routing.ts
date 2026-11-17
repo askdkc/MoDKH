@@ -1,6 +1,6 @@
 import type { PluginDescriptor } from '../plugins/api.ts';
 import type { DelegationRequest } from '../subagents/types.ts';
-const EXT: Record<string, string> = { php: 'php', lisp: 'common-lisp', cl: 'common-lisp', asd: 'common-lisp', js: 'js', mjs: 'js', ts: 'ts', mts: 'ts', svelte: 'svelte', html: 'html', css: 'css', tla: 'tla', lean: 'lean' };
+const EXT: Record<string, string> = { php: 'php', lisp: 'common-lisp', cl: 'common-lisp', asd: 'common-lisp', js: 'js', mjs: 'js', ts: 'ts', mts: 'ts', svelte: 'svelte', html: 'html', css: 'css', json: 'stateright', lean: 'lean' };
 /** Conservative opt-in rules, never described as LLM judgment. Ambiguity delegates nothing. */
 export function routeIntent(task: string, available: PluginDescriptor[]): DelegationRequest | undefined {
   if (/\b(if|unless|not|don't|without|maybe|or)\b|しない|するな|不要|なら|場合|もし|または|https?:|\.\.|[\\]/i.test(task)) return;

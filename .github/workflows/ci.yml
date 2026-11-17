@@ -39,6 +39,15 @@ jobs:
         run: |
           npm run typecheck
           npm run build
+      - name: StaterightのRust toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - name: 前鬼Stateright（実検証・自動登録・導入）
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: |
+          cargo fmt --manifest-path native/stateright/Cargo.toml --check
+          cargo clippy --locked --manifest-path native/stateright/Cargo.toml --all-targets -- -D warnings
+          npm run test:stateright
       - name: オフライン回帰テスト
         run: npm test
       - name: tarball 受け入れ(隔離インストール + 固定応答モデルの会話)

@@ -6,7 +6,8 @@ import { configDir } from '../cli/config.ts';
 import { fields, inspectPackage, object, pluginId } from './package.ts';
 import type { PackageSnapshot } from './package.ts';
 import type { SessionDefinition } from '../lisp/config.ts';
-import { builtinMicroagents } from '../lisp/builtin-agents.ts';
+import { findStateright } from '../tools/stateright-runtime.ts';
+import { builtinMicroagents, staterightMicroagent } from '../lisp/builtin-agents.ts';
 import type { PluginDescriptor } from './api.ts';
 import { SubagentRegistry } from './registry.ts';
 
@@ -30,8 +31,10 @@ async function importWithSignal(url: string, signal?: AbortSignal): Promise<Reco
 export class PluginManager {
   readonly home: string;
   readonly builtinDir: string;
-  constructor(home = configDir(), builtinDir = fileURLToPath(new URL('../../plugins/', import.meta.url))) {
+  private readonly stateright?: string;
+  constructor(home = configDir(), builtinDir = fileURLToPath(new URL('../../plugins/', import.meta.url)), stateright?: string) {
     this.home = path.resolve(home);
+    this.stateright = stateright;
     this.builtinDir = builtinDir;
   }
   private sessionEntries: SessionDefinition[] | undefined;
@@ -99,7 +102,7 @@ export class PluginManager {
       }
     } catch (e) { diagnostics.push(`Built-in plugins unavailable: ${String(e)}`); }
     try {
-      for (const { descriptor } of builtinMicroagents()) {
+      for (const { descriptor } of [...builtinMicroagents(), ...(findStateright(this.stateright) ? [staterightMicroagent()] : [])]) {
         registry.register({ ...descriptor, enabled: !catalog.disabledBuiltins.includes(descriptor.id) });
       }
     } catch (e) { diagnostics.push(`Built-in microagents unavailable: ${String(e)}`); }
@@ -188,7 +191,7 @@ export class PluginManager {
       if (!descriptor?.enabled) throw new Error(`Plugin unavailable or disabled: ${id}`);
       if (descriptor.digest !== digest) throw new Error('Plugin changed before dispatch');
       const microagent = descriptor.builtin && !descriptor.entry
-        ? builtinMicroagents().find(entry => entry.descriptor.id === id)
+        ? [...builtinMicroagents(), staterightMicroagent()].find(entry => entry.descriptor.id === id)
         : undefined;
       const directory = descriptor.builtin ? path.join(this.builtinDir, id) : this.packagePath(id, digest);
       const leases = path.join(this.base(), 'leases', id);

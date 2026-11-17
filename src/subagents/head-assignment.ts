@@ -2,8 +2,7 @@ import { ToolError } from '../agent/types.ts';
 import type { DelegationRequest, HeadAssignment } from './types.ts';
 
 export interface HeadInputs {
-  tla: string;
-  cfg: string;
+  model: string;
   lean: string;
   editor?: { id: string; path: string };
 }
@@ -18,16 +17,15 @@ function observableBehavior(value: string): boolean {
 export function headAssignment(inputs: HeadInputs, request: DelegationRequest, editRole: boolean, userRequest?: string): HeadAssignment | undefined {
   const { pluginId, formalInput, behaviorChange, targetPaths } = request;
   if (pluginId === 'micro-zenki' || pluginId === 'micro-goki') {
-    const tlc = pluginId === 'micro-zenki';
-    const path = tlc ? inputs.tla : inputs.lean;
-    const cfg = tlc ? inputs.cfg : undefined;
-    if (formalInput?.path !== path || formalInput.config !== cfg || behaviorChange) {
-      throw new ToolError('INVALID_ARGS', `Use configured formalInput ${JSON.stringify({ path, config: cfg })} for ${pluginId}`);
+    const stateright = pluginId === 'micro-zenki';
+    const path = stateright ? inputs.model : inputs.lean;
+    if (formalInput?.path !== path || formalInput.config !== undefined || behaviorChange) {
+      throw new ToolError('INVALID_ARGS', `Use configured formalInput ${JSON.stringify({ path })} for ${pluginId}`);
     }
-    return tlc ? {
-      task: '設定された有限モデルをTLCで検査する',
-      targets: [path, inputs.cfg],
-      completion: { condition: '指定したモデルと設定で不変条件違反なく探索が完了する', evidence: 'verify_tla.status=passed' },
+    return stateright ? {
+      task: '設定された有限モデルをStaterightで検査する',
+      targets: [path],
+      completion: { condition: '指定したモデルと設定で不変条件違反なく探索が完了する', evidence: 'verify_stateright.status=passed' },
     } : {
       task: '証明元の対象定理をホスト指定の期待命題と照合する',
       targets: [path],

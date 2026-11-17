@@ -279,7 +279,7 @@ export class SubagentService {
         let system = definition.system;
         if (definition.requireAllTools && definition.tools.some(name => !effectiveTools.some(t => t.name === name))) throw new ToolError('NOT_EXECUTED', 'Required tools exceed host/user ceiling');
         if (request.formalInput && (definition.workflow || !definition.requireAllTools || definition.tools.length !== 1 ||
-          !['verify_tla', 'verify_lean'].includes(definition.tools[0]))) {
+          !['verify_stateright', 'verify_lean'].includes(definition.tools[0]))) {
           throw new ToolError('INVALID_ARGS', 'formalInput requires a role with one required formal verifier');
         }
         if (definition.workflow === 'edit-verify') {
@@ -304,8 +304,8 @@ export class SubagentService {
         this.opts.parent.recordDelegation({ ...record, state: 'running' });
         if (request.formalInput) {
           const name = definition.tools[0];
-          if ((name === 'verify_tla') !== (request.formalInput.config !== undefined)) {
-            throw new ToolError('INVALID_ARGS', 'TLC requires formalInput.config; Lean accepts only formalInput.path');
+          if (request.formalInput.config !== undefined) {
+            throw new ToolError('INVALID_ARGS', 'Formal verifiers accept only formalInput.path; Stateright uses one JSON model');
           }
           signal.throwIfAborted();
           if (name === 'verify_lean') startPhaseDeadline(150_000, 'Host Lean verification');
@@ -390,7 +390,7 @@ export class SubagentService {
           result.code = 'EDIT_TURN_LIMIT';
         }
         const receipts = toolReceipts();
-        result.formalEvidence = receipts.filter(r => r.name === 'verify_tla' || r.name === 'verify_lean').slice(-8).map(r => ({ name: r.name, status: r.status, output: r.output.slice(0, 32768) }));
+        result.formalEvidence = receipts.filter(r => r.name === 'verify_stateright' || r.name === 'verify_lean').slice(-8).map(r => ({ name: r.name, status: r.status, output: r.output.slice(0, 32768) }));
         if (missingRequiredTools()) {
           if (result.status === 'completed') result.status = 'error';
           result.diagnostic ??= requiredToolError;
@@ -489,8 +489,7 @@ export function subagentTools(service: SubagentService): Tool[] {
             type: 'object',
             description: 'For a formal verifier role. The host runs the delegated verifier once with these exact paths and returns its result.',
             properties: {
-              path: { type: 'string', description: 'Exact workspace-relative .tla model or .lean proof source path' },
-              config: { type: 'string', description: 'Exact workspace-relative .cfg path. Required for TLC; omit for Lean.' },
+              path: { type: 'string', description: 'Exact workspace-relative .json finite model or .lean proof source path' },
             },
             required: ['path'],
             additionalProperties: false,

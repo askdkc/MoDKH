@@ -110,6 +110,7 @@ function summarizeArgs(args: Record<string, unknown>): string {
 
 export async function runChat(opts: ChatOptions): Promise<void> {
   const args = opts.args;
+  if (args.java || args['tla-jar']) throw new Error('Java/TLCは廃止しました。modkh stateright install とモデルJSONを使用してください');
   const verificationIsolation = args['verification-isolation'] ?? 'integrity-only';
   if (verificationIsolation !== 'required' && verificationIsolation !== 'integrity-only') throw new Error('--verification-isolation must be required or integrity-only');
   const makeModel: typeof buildModelFromRef = (ref, ...rest) => {
@@ -207,7 +208,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   for (const warning of compactionConfig.warnings) ui.write(`(圧縮: ${warning})\n`);
   const { keepTurns, autoBytes } = compactionConfig.settings;
 
-  const manager = new PluginManager();
+  const manager = new PluginManager(undefined, undefined, args.stateright);
   if (lisp) manager.registerSessionDefinitions(lisp.entries, lisp.digest);
   const agentSettings = parseAgentSettings(config.subagents);
   for (const diagnostic of [...(config.diagnostics ?? []), ...agentSettings.diagnostics, ...manager.discover().diagnostics]) ui.write(`(プラグイン: ${diagnostic})\n`);
@@ -238,14 +239,14 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   const editorPath = lisp?.entries.find(entry => entry.descriptor.id === boundInputs?.editor)
     ?.definition.verificationManifest?.sources[0];
   const headInputs = boundInputs && {
-    tla: boundInputs.tla, cfg: boundInputs.cfg, lean: boundInputs.lean,
+    model: boundInputs.model, lean: boundInputs.lean,
     ...(boundInputs.editor && editorPath ? { editor: { id: boundInputs.editor, path: editorPath } } : {}),
   };
   let activeUserRequest: string | undefined;
   const subagents = new SubagentService({
     manager, store, parent: session, root: cwd, tools: [...tools, ...languageTools(language), ...formalTools({
       lean: args.lean, leanContract: args['lean-contract'], leanTheorem: args['lean-theorem'],
-      java: args.java, tlaJar: args['tla-jar'],
+      stateright: args.stateright,
     })], approval,
     hasBackgroundJobs: () => jobs.list().some(job => job.status === 'running' || job.status === 'stopping'),
     maxConcurrent: parseSubagentLimit(config.subagentLimit) ?? DEFAULT_SUBAGENT_LIMIT,
@@ -294,10 +295,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           [descriptor.id, descriptor.language, descriptor.taskKind, definition.tools]),
       )}`
       : 'Discover assigned roles with list_subagents. Delegate independent work with start_subagent, keep distinct ownership and collect subagent_output. Use list_subagent_runs for status and cancel_subagent for unnecessary work. Wait only when all remaining work depends on children.',
-    ...(headInputs ? [`Lispで指定された対象: ${JSON.stringify(headInputs)}。依頼を一責務ずつに分解し、各担当の作業・対象・完了条件を定めて委譲する。編集担当には変更を実施する task、対象1件の targetPaths、同じ操作で観測できる現状と期待結果を behaviorChange: {before, after} で渡す。編集の完了は保護されたホストテストの passed と applied で確認する。前鬼には model と cfg、後鬼には証明元のみを formalInput で渡す。各検証の完了条件は設定済みホスト判定。編集担当が指定されている場合は先に編集を委譲し、前鬼、後鬼の順で結果を確認する。`] : []),
+    ...(headInputs ? [`Lispで指定された対象: ${JSON.stringify(headInputs)}。依頼を一責務ずつに分解し、各担当の作業・対象・完了条件を定めて委譲する。編集担当には変更を実施する task、対象1件の targetPaths、同じ操作で観測できる現状と期待結果を behaviorChange: {before, after} で渡す。編集の完了は保護されたホストテストの passed と applied で確認する。前鬼にはモデルJSON、後鬼には証明元のみを formalInput で渡す。各検証の完了条件は設定済みホスト判定。編集担当が指定されている場合は先に編集を委譲し、前鬼、後鬼の順で結果を確認する。`] : []),
     ...(lisp.entries.some(entry => entry.descriptor.enabled && entry.descriptor.taskKind === 'syntax-search')
       ? ['宣言の範囲が必要なときは、言語に合う syntax-search 担当にファイル一件と宣言名を渡す。編集担当には返されたファイル・範囲と変更条件を引き継ぎ、編集前に現行のソースを読み取らせる。'] : []),
-  ].join('\n\n') : SYSTEM_PROMPT;
+  ].join('\n\n') : SYSTEM_PROMPT + (manager.discover().registry.get('modkh-micro-zenki')?.enabled
+    ? '\n前鬼（modkh-micro-zenki）が利用可能。状態遷移・競合・不変条件の検証には、対象から有限状態JSONモデルを作成し、run_subagent に pluginId と formalInput:{path:モデルJSON} を渡して前鬼を使う。モデルの仮定・範囲を示し、実装全体の証明と混同しない。単純な変更に不要なモデル検証は追加しない。' : '');
   const registry = new ToolRegistry([...subagents.parentTools([...headTools, ...languageTools(language)]), ...subagentTools(subagents)]);
 
   // 任意メモリ(既定無効)。接続不能でも会話は続く。

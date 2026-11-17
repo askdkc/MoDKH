@@ -9,7 +9,7 @@
 | Lisp担当設定・補助構文診断 | SBCL。ASDF/QuicklispやLSPは設定評価には不要 |
 | CL-LSPの構築 | Cコンパイラ、make、tar/bzip2、Git、HTTPS接続。専用領域へRoswell、SBCL、ASDFとaskdkc/cl-lspを導入。Lisp依存はCL-LSPに同梱 |
 | 導入時のHTTPS通信 | curl、CA証明書。CL-LSP用のOpenSSL設定やQlotは不要 |
-| 前鬼（TLC） | Javaと公式の `tla2tools.jar` |
+| 前鬼（Stateright） | 導入時にRust/Cargo。`modkh stateright install`。通常のMoDKH起動には不要 |
 | 後鬼（Lean） | Lean。elanでtoolchainを管理可能 |
 | 文法WASMの再構築 | Tree-sitter CLIとEmscripten。通常buildは同梱用の既存WASMをコピーするため不要 |
 
@@ -25,10 +25,6 @@ brew install node git sbcl curl ca-certificates
 # Roswellを手動で使う場合のみ
 brew install roswell
 
-# 前鬼を使う場合のみ。システムJavaの置換は不要
-brew install openjdk
-export PATH="$(brew --prefix openjdk)/bin:$PATH"
-
 # 文法をソースから再構築する開発者のみ
 brew install emscripten tree-sitter-cli
 ```
@@ -42,9 +38,6 @@ sudo pacman -Syu --needed base-devel nodejs npm git sbcl curl ca-certificates ta
 
 # Roswellを手動で使う場合のみ
 sudo pacman -S --needed roswell
-
-# 前鬼を使う場合のみ
-sudo pacman -S --needed jre-openjdk
 
 # 文法をソースから再構築する開発者のみ
 sudo pacman -S --needed emscripten tree-sitter-cli
@@ -97,15 +90,9 @@ Roswellが既存checkoutを再利用して古いコードを読む場合は、�
 | Ruby | Rubyと `ruby-lsp` gem（ホスト側で準備） |
 | Swift | Swift toolchainの `sourcekit-lsp`。macOSではXcodeのtoolchainも利用可能 |
 
-Leanは[公式インストール手順](https://lean-lang.org/install/)、TLCのjarは[公式release](https://github.com/tlaplus/tlaplus/releases/latest)を使用します。取得した実行ファイルを指定します。
+前鬼は `modkh stateright install` で導入します。導入済みなら通常起動で自動登録されます。Java/TLCは不要です。[導入・モデル形式](stateright.md)を参照してください。ソースからテストする開発者もRust/Cargoが必要です（`npm test` が検証器をビルドします）。
 
-```sh
-modkh chat --lisp-config experiments/presets/formal.lisp --trust-lisp-sha256 REVIEWED_SHA256 \
-  --lean /absolute/path/to/lean \
-  --java /absolute/path/to/java --tla-jar /absolute/path/to/tla2tools.jar
-```
-
-[プリセットの手順](presets.md)で `formal.lisp` を確認し、そのSHA-256を `REVIEWED_SHA256` に指定します。現在のLean結果は成功終了でも `accepted / unverified`。TLCの成功は指定した有限モデルに限定されます。
+後鬼に使うLeanは[公式インストール手順](https://lean-lang.org/install/)を参照してください。
 
 CL/Svelteの実WASMは未同梱であり、Emscriptenを入れるだけでは有効になりません。強いOS検証隔離も未提供です。[機能ごとの検証状況](modkh-verification.md)
 

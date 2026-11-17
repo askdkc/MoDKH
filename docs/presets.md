@@ -18,6 +18,8 @@ Lispファイルはコードとして実行されます。内容を確認し、�
 
 ## 役小角・前鬼・後鬼と作業を始める
 
+前鬼はStaterightを使います。`modkh stateright install` で導入すると通常起動で利用できます（SBCL不要）。以下は前鬼と後鬼を必須の検証担当にするLispプリセットの設定です。[モデル形式](stateright.md)も参照してください。
+
 複数言語の調査も役小角に委譲させる場合は、[言語別の担当一覧](../experiments/presets/language-microagents.lisp)を `formal.lisp` と同じ設定にまとめます。次の例はリポジトリのルートで実行します。
 
 ```sh
@@ -33,11 +35,11 @@ TypeScript・JavaScript・PHP・HTML・CSSの構文検索には、`micro-ts-synt
 
 ```sh
 modkh chat --lisp-config experiments/presets/formal.lisp --trust-lisp-sha256 REVIEWED_SHA256 \
-  --java /path/to/java --tla-jar /path/to/tla2tools.jar --lean /path/to/lean \
+  --lean /path/to/lean \
   --lean-contract Expected.lean --lean-theorem orders_cancel
 ```
 
-通常チャットでは、MoA の親エージェントが **役小角（`enno-oduno`）** を担います。役小角は依頼を検証できる単位に分け、担当ごとの作業と確認条件を `run_subagent` の `task` に、全体の目的と関係する依存関係を `context` に渡します。委譲ごとに結果を受け取ってから次の担当に進みます。前鬼（`micro-zenki`）には `formalInput.path` と `formalInput.config` で TLA+ のモデルと設定を、後鬼（`micro-goki`）には `formalInput.path` で証明元の Lean ファイルを指定します。ホストは指定されたパスで各担当の検証ツールを一度実行します。起動時の `--lean-contract` と `--lean-theorem` は対象定理の照合に使います。後鬼から命題不一致が返れば、その条件は不合格として記録します。役小角は両者のツール結果と実装の受け入れ結果を元の依頼に照らして確認します。
+通常チャットでは、MoA の親エージェントが **役小角（`enno-oduno`）** を担います。役小角は依頼を検証できる単位に分け、担当ごとの作業と確認条件を `run_subagent` の `task` に、全体の目的と関係する依存関係を `context` に渡します。委譲ごとに結果を受け取ってから次の担当に進みます。前鬼（`micro-zenki`）には `formalInput.path` で Stateright のモデルJSONを、後鬼（`micro-goki`）には `formalInput.path` で証明元の Lean ファイルを指定します。ホストは指定されたパスで各担当の検証ツールを一度実行します。起動時の `--lean-contract` と `--lean-theorem` は対象定理の照合に使います。後鬼から命題不一致が返れば、その条件は不合格として記録します。役小角は両者のツール結果と実装の受け入れ結果を元の依頼に照らして確認します。
 
 `formal.lisp` に登録されているのは検証担当です。実装の編集も委譲する場合は、確認済みの同じ Lisp ファイルに編集担当と [検証コマンド・対象ファイルの設定](modkh.md#one-file-edit-and-independent-acceptance)を加え、SHA-256 を取り直してください。
 
@@ -46,10 +48,10 @@ modkh chat --lisp-config experiments/presets/formal.lisp --trust-lisp-sha256 REV
 プロジェクト固有の入力が決まっている場合は、信頼する Lisp 設定に次のように書くと、役小角が応答を終えようとした時点でホストが不足している検証を補えます。
 
 ```lisp
-(set-head-check-inputs "Orders.tla" "Orders.cfg" "Orders.lean")
+(set-head-check-inputs "Orders.json" "Orders.lean")
 ```
 
-第4引数に編集担当の ID を指定すると、その担当に登録された1つのソースの編集・反映も完了条件に加わります。ホストが補う処理にも通常の委譲、承認、受け入れチェックが適用されます。設定を変更したら SHA-256 を取り直してください。
+第3引数に編集担当の ID を指定すると、その担当に登録された1つのソースの編集・反映も完了条件に加わります。ホストが補う処理にも通常の委譲、承認、受け入れチェックが適用されます。設定を変更したら SHA-256 を取り直してください。
 
 編集担当を設定した実装依頼で、役小角の応答が委譲前に出力上限 `length` に達した場合、ホストは設定済みソースの先頭60行を読み、同じチャットターンを一度続けます。復帰直後の応答では、指定編集担当への `run_subagent` 一件だけを受け付けます。途中で切れた応答は実行記録に残します。その応答にツール要求が含まれていた場合は、実行せずにターンをエラーで終えます。編集担当から `EDIT_TURN_LIMIT` が届いた場合は編集不合格が確定します。
 

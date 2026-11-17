@@ -74,10 +74,10 @@ Host flags select executables; the model never selects binaries or arbitrary ver
 
 ```sh
 modkh chat --lisp-config experiments/presets/formal.lisp --trust-lisp-sha256 REVIEWED_SHA256 \
-  --java /path/to/java --tla-jar /path/to/tla2tools.jar --lean /path/to/lean
+  --lean /path/to/lean
 ```
 
-Both tools require command approval, snapshot bounded inputs, omit API credentials from the environment, and bound time/output. TLC uses one worker and 512 MiB heap. Only exit zero AND TLC completion/state-count output permit a finite-model check to pass. Exact source/config hashes and cfg content scope the result; fairness, constants, constraints and deadlock settings do not establish equivalence to application code.
+Install the front verifier with `modkh stateright install` (Rust/Cargo required at installation). Normal chat automatically registers `modkh-micro-zenki` when installed. The Lisp preset uses `micro-zenki`. Both tools require command approval, snapshot bounded inputs, omit API credentials from the environment, and bound time/output. Stateright checks explicit finite-state JSON models; a complete exploration and matching input digest are required for success. Counterexamples are replayed by the host. See [installation, schema and migration](stateright.md). Model checking does not establish equivalence to application code.
 
 To check a proof, create a separate workspace file such as `Expected.lean` with an owner-reviewed proposition, for example `def modkhExpected : Prop := ∀ n : Nat, n + 0 = n`. Add `--lean-contract Expected.lean --lean-theorem Examples.addZero` to the command. Delegate the proof source to 後鬼 and let the host load the expected proposition. The theorem name must be declared in the proof source. In the parent receipt, `proofPath` identifies the proof source and `target.expectedPropositionPath` identifies the expectation.
 

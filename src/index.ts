@@ -13,11 +13,12 @@ const HELP = `modkh ${VERSION} — MoDKH (Mixture of DKH)
       (対話ハーネスを開く。言語別の調査担当は /agents で確認)
   modkh chat --model <provider>/<model> [--cwd <dir>] [--resume <id>] [--base-url <url>]
   modkh chat --lisp-config agents.lisp --trust-lisp-sha256 SHA256 [--sbcl PATH] [--verification-isolation required|integrity-only]
-      [--routing auto] [--lean PATH] [--java PATH --tla-jar PATH]
+      [--routing auto] [--lean PATH] [--stateright PATH]
       [--lean-contract FILE.lean --lean-theorem NAME]
   modkh auth login chatgpt
   modkh session list
   modkh plugin list | add <directory> | enable <id> | disable <id> | remove <id>
+  modkh stateright install | status
   modkh language status | install [--detected] | retry <id> | update
 
 対話中のコマンド:
@@ -113,6 +114,11 @@ async function dispatch(cmd: string, args: Record<string, string | undefined>, a
       }
       const { runChat } = await import('./cli/chat.ts');
       await runChat({ args });
+      return;
+    }
+    if (cmd === 'stateright') {
+      const { runStaterightCommand } = await import('./cli/stateright.ts');
+      await runStaterightCommand(args['@positional'] ?? 'status');
       return;
     }
     if (cmd === 'language') {

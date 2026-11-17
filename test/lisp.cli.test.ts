@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { temporaryDirectory, sha256, privateEnvironment } from '../src/lisp/runtime.ts';
 const chat = process.env.MODKH_TEST_CHAT ?? new URL('../src/cli/chat.ts',import.meta.url).href;
@@ -15,18 +16,16 @@ for (const mode of ['compile-only', 'proved', 'rejected']) test(`ordinary chat r
   const root = fs.realpathSync(temporaryDirectory('modkh-formal-chat-'));
   try {
     const preset = new URL('../experiments/presets/formal.lisp', import.meta.url);
-    const source = fs.readFileSync(preset, 'utf8') + (mode === 'proved' ? '\n(set-head-check-inputs "Model.tla" "Model.cfg" "Proof.lean")\n' : '');
+    const source = fs.readFileSync(preset, 'utf8') + (mode === 'proved' ? '\n(set-head-check-inputs "Model.json" "Proof.lean")\n' : '');
     fs.writeFileSync(path.join(root, 'agents.lisp'), source);
     fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ permissions: 'all', language: { autoInstall: false } }));
-    fs.writeFileSync(path.join(root, 'Model.tla'), '---- MODULE Model ----\n====');
-    fs.writeFileSync(path.join(root, 'Model.cfg'), '');
+    fs.copyFileSync(new URL('./fixtures/formal/good.json', import.meta.url), path.join(root, 'Model.json'));
     fs.writeFileSync(path.join(root, 'Proof.lean'), mode === 'rejected'
       ? 'theorem goal : True := trivial'
       : 'theorem goal (n : Nat) : n + 0 = n := rfl');
     fs.writeFileSync(path.join(root, 'Expected.lean'), 'def modkhExpected : Prop := ∀ n : Nat, n + 0 = n');
-    const java = path.join(root, 'java');
+    const stateright = fileURLToPath(new URL('../native/stateright/target/debug/modkh-stateright', import.meta.url));
     const lean = path.join(root, 'lean');
-    fs.writeFileSync(java, "#!/bin/sh\nprintf 'Model checking completed. No error has been found.\\n1 distinct states found\\n'\n", { mode: 0o700 });
     fs.writeFileSync(lean, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
     const coordination = 'Confirm the request within each formal input’s scope, then combine the receipts.';
     const nextRequest = '更新された証明を使い、前鬼と後鬼で検証してください。';
@@ -35,21 +34,21 @@ for (const mode of ['compile-only', 'proved', 'rejected']) test(`ordinary chat r
     const scripts = [
       [step('catalog', 'list_subagents', {}),
         ...(mode === 'proved' ? [step('wrong-path', 'run_subagent', { pluginId: 'micro-goki', task: 'Verify the expected proposition', formalInput: { path: 'Expected.lean' } })] : []),
-        step('zenki', 'run_subagent', { pluginId: 'micro-zenki', task: 'Check the finite model', context: coordination, ...formal('Model.tla', 'Model.cfg') }),
+        step('zenki', 'run_subagent', { pluginId: 'micro-zenki', task: 'Check the finite model', context: coordination, ...formal('Model.json') }),
         ...(mode === 'proved' ? [done] : []), ...(mode === 'proved' ? [] : [
           step('goki', 'run_subagent', { pluginId: 'micro-goki', task: 'Check the standalone contract', context: coordination, ...formal('Proof.lean') }),
         ]), ...(mode === 'rejected' ? [
-          step('retry', 'run_subagent', { pluginId: 'micro-zenki', task: 'Retry after the Lean verdict', ...formal('Model.tla', 'Model.cfg') }),
+          step('retry', 'run_subagent', { pluginId: 'micro-zenki', task: 'Retry after the Lean verdict', ...formal('Model.json') }),
         ] : []), ...(mode === 'rejected' ? [
           step('next-read', 'read_file', { path: 'Proof.lean' }),
-          step('next-zenki', 'run_subagent', { pluginId: 'micro-zenki', task: 'Check the new request', ...formal('Model.tla', 'Model.cfg') }),
+          step('next-zenki', 'run_subagent', { pluginId: 'micro-zenki', task: 'Check the new request', ...formal('Model.json') }),
           step('next-goki', 'run_subagent', { pluginId: 'micro-goki', task: 'Verify the corrected proof', ...formal('Proof.lean') }),
         ] : []), done],
-      [step('tlc', 'verify_tla', { path: 'Model.tla', config: 'Model.cfg' }), done],
+      [step('tlc', 'verify_stateright', { path: 'Model.json' }), done],
       [step('lean', 'verify_lean', { path: 'Proof.lean' }), done],
     ];
     const args = { cwd: root, model: 'fixed/scripted', routing: 'auto', 'lisp-config': 'agents.lisp',
-      'trust-lisp-sha256': sha256(source), java, 'tla-jar': path.join(root, 'tla2tools.jar'),
+      'trust-lisp-sha256': sha256(source), stateright,
       ...(mode === 'compile-only' ? { lean } : { lean: process.env.MODKH_TEST_LEAN, 'lean-contract': 'Expected.lean', 'lean-theorem': 'goal' }) };
     const harness = `import {runChat} from ${JSON.stringify(chat)};
       import {FixedModel} from ${JSON.stringify(fixed)};
@@ -75,7 +74,7 @@ for (const mode of ['compile-only', 'proved', 'rejected']) test(`ordinary chat r
     proc.stderr.on('data', chunk => output += chunk);
     // The real Lean host phase can use up to 150 seconds before cleanup.
     const timer = setTimeout(() => proc.kill('SIGKILL'), mode === 'rejected' ? 320_000 : bound ? 165_000 : 35_000);
-    const request = mode === 'compile-only' ? 'Model.tla を検証して。' : mode === 'rejected'
+    const request = mode === 'compile-only' ? 'Model.json を検証して。' : mode === 'rejected'
       ? '加算の既存の定理を前鬼と後鬼で検証してください。'
       : '加算のコードを修正してください。どの自然数にも 0 を足すと元の数になることを既存の定理で検証して。';
     if (mode === 'rejected') proc.stdin.write(`${request}\n`);
@@ -133,7 +132,7 @@ for (const mode of ['compile-only', 'proved', 'rejected']) test(`ordinary chat r
       assert.match(output, /状態: complete/);
     }
     if (bound) {
-      assert.match(output, /形式検証は合格.*前鬼.*TLC.*passed.*後鬼.*Lean.*proved/);
+      assert.match(output, /形式検証は合格.*前鬼.*Stateright.*passed.*後鬼.*Lean.*proved/);
       assert.doesNotMatch(output, /目標達成の検証は未確認/);
     } else {
       assert.doesNotMatch(output, /形式検証は合格/);
@@ -173,7 +172,7 @@ for (const isolation of ['integrity-only', 'required']) test(isolation === 'requ
     assert.equal(sha256(fs.readFileSync(path.join(root,'test/add.test.mjs'))),before);
     const requests=JSON.parse(fs.readFileSync(path.join(root,'requests.json'),'utf8'));
     const names=requests.head[0].tools.map((t:{name:string})=>t.name);
-    for(const denied of ['edit_file','create_file','run_command','verify_lean','verify_tla'])assert.ok(!names.includes(denied),denied);
+    for(const denied of ['edit_file','create_file','run_command','verify_lean','verify_stateright'])assert.ok(!names.includes(denied),denied);
     const receipts=requests.head.at(-1).messages.flatMap((m:{role:string;results?:unknown[]})=>m.role==='tool'?m.results:[]);
     const delegations=receipts.filter((r:{name:string})=>r.name==='run_subagent');
     assert.equal(JSON.parse(delegations[0].output).status,'completed');
@@ -207,7 +206,7 @@ for (const ending of ['retry', 'stop', 'length']) test(`ordinary chat fails when
     const source = fs.readFileSync(new URL('../experiments/presets/formal.lisp', import.meta.url), 'utf8') + `
 (defmicroagent micro-editor :tool "edit_file" :workflow "edit-verify" :language "js" :task-kind "edit" :instruction "Fix addition" :max-turns 4)
 (set-agent-check "micro-editor" ${JSON.stringify(`touch '${marker}'`)} :sources '("add.mjs") :protected '("protected.txt"))
-(set-head-check-inputs "Model.tla" "Model.cfg" "Proof.lean" "micro-editor")
+(set-head-check-inputs "Model.json" "Proof.lean" "micro-editor")
 `;
     fs.writeFileSync(path.join(root, 'agents.lisp'), source);
     fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ permissions: 'all', language: { autoInstall: false } }));
