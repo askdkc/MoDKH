@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ToolRegistry, defaultTools } from '../src/tools/registry.ts';
 import { TerminalApprovalGate } from '../src/cli/approval.ts';
+import { ShellProcess } from '../src/tools/shell-process.ts';
 import { LineSource } from '../src/cli/lines.ts';
 import type { ApprovalGate } from '../src/agent/types.ts';
 
@@ -75,10 +76,35 @@ test('Stop escalates for a descendant that ignores TERM after shell exit', async
   }
 });
 
-test('shell exit cannot abandon its background children and report success', async () => {
+test('shell exit reports confirmed descendant cleanup as a recoverable error', async () => {
   const result = await run('(sleep 0.4; printf CHILD_SURVIVED) &');
-  assert.equal(result.status, 'unknown');
+  assert.equal(result.status, 'error');
+  assert.match(result.output, /RUN_FAILED.*shell終了後/);
+  assert.match(result.output, /終了コードだけで成功と判断しない/);
   assert.doesNotMatch(result.output, /CHILD_SURVIVED/);
+});
+
+test('Stop during descendant cleanup remains an interruption', async () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cleanup-stop-')));
+  const script = `const fs=require("node:fs");
+    process.on("SIGTERM",()=>console.log("CLEANING"));
+    fs.writeFileSync("ready", "ready"); setInterval(()=>{},1000);`;
+  const child = new ShellProcess(`${nodeCommand(script)} & while [ ! -f ready ]; do sleep 0.01; done; exit 0`, dir);
+  const outcome = child.result.then(() => null, (error: Error) => error);
+  try {
+    const deadline = Date.now() + 5000;
+    while (!child.out.text().includes('CLEANING') && Date.now() < deadline && !child.isSettled) await delay(10);
+    assert.match(child.out.text(), /CLEANING/, 'automatic cleanup has started');
+    child.stop('abort');
+    const error = await outcome;
+    assert.ok(error);
+    assert.match(error.message, /コマンドを中断した/);
+    assert.equal((error as Error & { code: string }).code, 'ABORTED');
+  } finally {
+    child.stop('abort');
+    await outcome;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('a nonzero exit is a reported result, while a signalled shell stays a failure', async () => {

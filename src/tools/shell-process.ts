@@ -244,8 +244,12 @@ export class ShellProcess {
       const reason = this.stopReason === 'timeout' ? `制限時間(${this.timeoutMs}ms)を超過した`
         : this.stopReason === 'descendants' ? 'shell終了後に残った子処理を停止した'
         : this.stopReason === 'killed' ? '停止を要求された' : 'コマンドを中断した';
-      // Partial output is evidence: keep it in the failure instead of reporting only the reason.
-      this.fail(new ToolError('ABORTED', `${reason}(code=${this.code ?? '不明'} signal=${this.exitSignal ?? 'なし'})\n${describeShellResult(result)}`));
+      // Confirmed descendant cleanup is a command lifecycle error the agent can repair.
+      // User cancellation and deadlines still make the command's effects uncertain.
+      const code = this.stopReason === 'descendants' ? 'RUN_FAILED' : 'ABORTED';
+      const guidance = this.stopReason === 'descendants'
+        ? '。子処理の停止は確認済み。終了コードだけで成功と判断しない。出力と後片付けを確認し、必要な修正を行う。' : '';
+      this.fail(new ToolError(code, `${reason}(code=${this.code ?? '不明'} signal=${this.exitSignal ?? 'なし'})${guidance}\n${describeShellResult(result)}`));
     } else if (this.failure !== undefined || this.exitSignal !== null) {
       // A signalled shell is an infrastructure stop, not an ordinary failure code.
       this.fail(new ToolError('RUN_FAILED', `${this.failure ?? `signal=${this.exitSignal ?? 'なし'}`}`));
@@ -256,7 +260,12 @@ export class ShellProcess {
 
   /** Terminate the process group; the result rejects with the reason once the group is gone. */
   stop(reason: 'abort' | 'timeout' | 'descendants' | 'killed' = 'killed'): void {
-    if (this.settled || this.stopReason) return;
+    if (this.settled) return;
+    if (this.stopReason) {
+      // A real Stop during automatic cleanup must never become a recoverable error.
+      if (this.stopReason === 'descendants' && reason !== 'descendants') this.stopReason = reason;
+      return;
+    }
     this.stopReason = reason;
     this.killGroup('SIGTERM');
     // Do not clear escalation merely because the shell closed its pipes.

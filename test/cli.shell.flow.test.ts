@@ -14,7 +14,7 @@ const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.
  * when the check fails. Previously a nonzero exit arrived as a tool error, so a failing check
  * looked like the harness breaking rather than a signal to fix the code.
  */
-test('the agent reads a failing check as a result and repairs the code', async () => {
+for (const leftover of [false, true]) test(`the agent repairs a failing check with descendant cleanup=${leftover}`, async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-shell-flow-'));
   const root = path.join(home, 'project');
   fs.mkdirSync(path.join(root, 'test'), { recursive: true });
@@ -22,7 +22,7 @@ test('the agent reads a failing check as a result and repairs the code', async (
   fs.writeFileSync(path.join(root, 'check.sh'), 'grep -qx OK value.txt\n');
   const steps = [
     // 1. Run the check. It exits 1.
-    [{ id: 'check', name: 'run_command', args: { command: 'sh check.sh' } }],
+    [{ id: 'check', name: 'run_command', args: { command: leftover ? 'sh check.sh; (sleep 10) & exit 1' : 'sh check.sh' } }],
     // 2. Read the failing file.
     [{ id: 'read', name: 'read_file', args: { path: 'value.txt' } }],
     // 3. Fix it.
@@ -60,9 +60,10 @@ test('the agent reads a failing check as a result and repairs the code', async (
   try {
     assert.equal(await code, 0, output);
     const toolResults = requests.at(-1)!.messages.filter(m => m.role === 'tool').map(m => JSON.parse(m.content) as { status: string; output: string });
-    // The failing check is `ok` status with exit code 1 — a result, not a harness error.
+    // Ordinary failure is a result; confirmed child cleanup is a recoverable error.
+    assert.equal(requests.length, 5, 'the agent must receive the error and finish its repair');
     const first = toolResults[0];
-    assert.equal(first.status, 'ok', `failing check must be a result: ${JSON.stringify(first)}`);
+    assert.equal(first.status, leftover ? 'error' : 'ok', `failing check must be a result: ${JSON.stringify(first)}`);
     assert.match(first.output, /\[exit code: 1\]/);
     // The fix landed and the re-check now passes.
     assert.equal(fs.readFileSync(path.join(root, 'value.txt'), 'utf8'), 'OK\n');
