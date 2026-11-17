@@ -1,4 +1,5 @@
 import { shellCall, shellOutput } from './shell-display.ts';
+import { ToolDisplay } from './tool-display.ts';
 import { headCheckCompletion } from './head-checks.ts';
 import fs from 'node:fs';
 import { loadLispConfiguration } from '../lisp/config.ts';
@@ -7,7 +8,7 @@ import { formalTools } from '../tools/formal.ts';
 import path from 'node:path';
 
 import type { ImageAttachment } from '../agent/images.ts';
-import type { Model, TokenUsage } from '../agent/types.ts';
+import type { Model, TokenUsage, ToolCall, ToolResult } from '../agent/types.ts';
 import { buildModelFromRef } from '../model/connection.ts';
 export { buildModelFromRef } from '../model/connection.ts';
 import { PluginManager } from '../plugins/manager.ts';
@@ -152,6 +153,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     session = store.create(cwd, 'unconnected');
   }
 
+  const toolDisplay = new ToolDisplay(session.messages);
   const { model: candidate, baseUrl } = selectInitialConnection(args, config, args['resume'] ? session : undefined);
   let connectionBaseUrl = baseUrl;
   let modelId: string | null = null;
@@ -260,7 +262,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const key = sessionKeys.get(provider);
       return { ref, create: () => makeModel(ref, baseUrl, 0, key, { timeoutMs }) };
     },
-    progress: message => ui.write(`${message}\n`),
+    progress: message => ui.write(`${ui.interactive ? message.replace(/^(\[[^\]]+\]) 子を実行: .+$/, '$1 子を実行中') : message}\n`),
     activity: status => ui.setSubagent?.(status, session.delegationCount),
     onUsage,
   });
@@ -388,14 +390,18 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         // Reasoning is display-only: it never joins assistant content or the persisted messages.
         onReasoning: (delta: string) => ui.setReasoning?.(delta),
         onText: (d: string) => { ui.setReasoning?.(null); ui.setActivity?.('モデル応答を受信中… Ctrl+Cで中止'); ui.write(d, 'answer'); },
-        onToolCall: (call: { name: string; args: Record<string, unknown> }) => {
+        onToolCall: (call: ToolCall) => {
           ui.setReasoning?.(null);
+          const compact = toolDisplay.call(call);
+          if (ui.interactive) { ui.write(compact); return; }
           ui.write(call.name === 'run_command' ? shellCall(call.args) : `\n▶ ${call.name} ${summarizeArgs(call.args)}\n`);
         },
         onToolStart: ({ name }: { name: string }) => ui.setActivity?.(name === 'start_subagent' ? '子エージェントを起動中' : name === 'run_subagent'
           ? '子エージェントの結果を待機中' : 'ツールを実行中'),
-        onToolResult: (r: { name: string; status: string; output: string }) => {
+        onToolResult: (r: ToolResult) => {
           ui.setActivity?.('ツール結果を処理中');
+          const compact = toolDisplay.result(r);
+          if (ui.interactive) { ui.write(compact); return; }
           if (r.name === 'run_command') { ui.write(shellOutput(r)); return; }
           const output = r.output.split('\n');
           // The header stands for one result only; the body below it may quote source.
@@ -656,7 +662,12 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ui.write(`\n${usageBreakdown(usageTotals)}\n\n`);
         continue;
       }
+      if (line === '/tools' || line.startsWith('/tools ')) {
+        ui.write(toolDisplay.details(line.slice('/tools'.length).trim()));
+        continue;
+      }
       if (line === '/help') {
+        ui.write('/tools: ツール履歴  /tools <番号>: 引数と結果の全文\n');
         ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /usage: トークン使用量  /allow: 承認ポリシー  /agents: 子の一覧・同時実行数  /agents limit <数>: 子の上限変更  /agents run [ID]: 子に依頼  /exit: 終了\n'
           + 'macOS: 会話のテキストをドラッグして選択するとコピーします。\n'
           + '/reasoning off|minimal|low|medium|high [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信（実行中の追加依頼はテキストのみ） / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');

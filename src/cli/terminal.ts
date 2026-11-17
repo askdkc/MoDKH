@@ -52,6 +52,7 @@ export const COMMANDS: readonly Choice[] = [
   { value: '/reasoning', label: '/reasoning', detail: '推論レベル (off/minimal/low/medium/high)' },
   { value: '/agents', label: '/agents', detail: '子の一覧・委譲・同時実行数' },
   { value: '/usage', label: '/usage', detail: 'トークン使用量の内訳' },
+  { value: '/tools', label: '/tools', detail: 'ツール履歴 · /tools <番号> で全文' },
   { value: '/allow', label: '/allow', detail: '承認ポリシー (all / workspace / none)' },
   { value: '/keys', label: '/keys', detail: '保存済みAPIキー' },
   { value: '/help', label: '/help', detail: '操作ガイド' },

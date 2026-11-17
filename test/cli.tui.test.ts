@@ -142,6 +142,11 @@ test('public CLI terminal path: logo → completion → seven providers → conn
     send('inspect-source\r');
     await wait('SOURCE_INSPECTED');
     await wait('何を調べますか');
+    assert.doesNotMatch(visible(), /const value = 1/, 'source bodies stay out of the default transcript');
+    assert.match(visible(), /\/tools 1/, 'the compact result offers a concrete details command');
+    send('/tools 1\r');
+    await wait('const value = 1');
+    await wait('何を調べますか');
     send('inspect-test\r');
     await wait('TEST_INSPECTED');
     await wait(/│ 言語サーバー 1稼働 +│\n.*│ typescript · .*tui-entry-[^ │]+ +│/);

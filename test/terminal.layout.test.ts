@@ -299,3 +299,21 @@ for (const columns of [40, 120]) test(`shell output remains visible at ${columns
     for (const line of screen.split('\n')) assert.ok(textWidth(line) <= columns);
   } finally { t.ui.close(); }
 });
+
+test('compact tool output keeps the answer and detail action readable at narrow and wide widths', async () => {
+  const { ToolDisplay } = await import('../src/cli/tool-display.ts');
+  for (const width of [60, 160]) {
+    const t = terminal(width, 30);
+    const view = new ToolDisplay();
+    try {
+      t.ui.write(view.call({ id: 'create', name: 'create_file', args: { path: 'index.html', content: 'RAW_SOURCE'.repeat(300) } }));
+      t.ui.write(view.result({ callId: 'create', name: 'create_file', status: 'ok', output: 'index.html を作成した (3000バイト)' }));
+      t.ui.write('画面を作成しました。次に動作を確認します。\n', 'answer');
+      const screen = t.text();
+      assert.match(screen, /作成 · index.html/);
+      assert.match(screen, /\/tools 1/);
+      assert.match(screen, /次に動作を確認/);
+      assert.doesNotMatch(screen, /RAW_SOURCE|content=/);
+    } finally { t.ui.close(); }
+  }
+});

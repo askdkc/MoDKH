@@ -4,6 +4,7 @@ import { resolveInRoot, assertRealInRoot } from './guard.ts';
 import { describeShellResult, ShellProcess, SHELLS, type ShellName } from './shell-process.ts';
 import { prepareCommand } from './job-tools.ts';
 import type { JobView } from './jobs.ts';
+import { browserCapability } from './browser-capability.ts';
 
 export { runShellProcess, runShell, describeShellResult, resolveShell, SHELLS, TextSink, ShellProcess } from './shell-process.ts';
 export type { ShellName, ShellOptions, ShellResult } from './shell-process.ts';
@@ -84,13 +85,12 @@ export const DEFAULT_PROMOTE_ON_TIMEOUT = true;
 export const runCommandTool: Tool = {
   name: 'run_command',
   operationIdentity: OPERATION_IDENTITY,
-  description:
-    'シェルコマンドを1回実行し、終了コード・stdout・stderr を返す。作業場所は作業ルート内に限る。'
+  get description() { return 'シェルコマンドを1回実行し、終了コード・stdout・stderr を返す。作業場所は作業ルート内に限る。'
     + '終了コードが0以外でも実行結果として返る(エラー扱いにはしない)。'
     + 'cd は次の呼び出しに引き継がれないので cwd を指定する。'
     + '確認は grep やテスト実行のように終了コードを見て判断する。'
     + 'run_in_background を true にすると待たずに job_id を返す。ビルドやテストの全体実行など、'
-    + '制限時間に収まらない見込みの処理で使う。',
+    + '制限時間に収まらない見込みの処理で使う。' + browserCapability(); },
   parameters: PARAMETERS,
   async execute(args, ctx) {
     const prepared = await authorize(args, ctx);

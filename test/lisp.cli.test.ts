@@ -243,8 +243,9 @@ for (const ending of ['retry', 'stop', 'length']) test(`ordinary chat fails when
       assert.equal(await new Promise((resolve, reject) => { proc.on('error', reject); proc.on('close', resolve); }), 0, output);
     } finally { clearTimeout(timeout); }
     const readJournal = (id: string) => fs.readFileSync(path.join(root, 'sessions', id), 'utf8').trim().split('\n').map(line => JSON.parse(line));
-    const session = fs.readdirSync(path.join(root, 'sessions')).find(name => name.startsWith('20'))!;
-    const journal = readJournal(session);
+    const journal = fs.readdirSync(path.join(root, 'sessions')).filter(name => name.endsWith('.jsonl'))
+      .map(readJournal).find(events => events[0]?.type === 'session' && !events[0].parentSessionId);
+    assert.ok(journal, 'the parent session journal must exist');
     if (ending === 'length') {
       assert.equal(journal.filter(row => row.message?.content?.startsWith('(ホストの出力上限からの続行)')).length, 1, output);
       assert.match(output, /EDIT_TURN_LIMIT/);
