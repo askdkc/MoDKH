@@ -6,7 +6,7 @@ import { saveChatGptTokens, loadChatGptTokens, type ChatGptTokens } from './toke
 
 export interface LoginConfig { issuer: string; clientId: string; redirectPort: number }
 export const DEFAULT_LOGIN: LoginConfig = {
-  issuer: 'https://auth.openai.com', clientId: 'app_EMoioEEEJzSuZ1pPfKS5baDe', redirectPort: 1455,
+  issuer: 'https://auth.openai.com', clientId: 'app_EMoamEEZ73f0CkXaXp7hrann', redirectPort: 1455,
 };
 export interface PkcePair { verifier: string; challenge: string }
 export function createPkcePair(): PkcePair {
