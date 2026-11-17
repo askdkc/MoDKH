@@ -1,5 +1,6 @@
 import type { ChatTerminal, Choice } from './terminal.ts';
 import { allSuggestions, suggestionsFor, noteFor, isRecommended, SEARCH_ROW_VALUE } from './catalog.ts';
+import { hasModelCredentials, officialModelChoices } from './official-models.ts';
 
 /** 接続保証ではなく選択用の候補。一覧外は /connect で直接指定できる。 */
 export const MODEL_SUGGESTIONS: readonly string[] = allSuggestions();
@@ -16,7 +17,16 @@ function entries(refs: readonly string[], current: string | null): Choice[] {
 }
 
 export async function selectModel(lines: ChatTerminal, query: string, current: string | null): Promise<string | null> {
-  const candidates = [...new Set([...MODEL_SUGGESTIONS, ...(current ? [current] : [])])];
+  const official: string[] = [];
+  const requested = query.trim().split(/[\s/]/)[0];
+  for (const provider of ['openai', 'chatgpt'] as const) {
+    if (requested === provider || hasModelCredentials(provider) && (!requested || !['openai', 'chatgpt'].includes(requested))) {
+      const fetched = await officialModelChoices(provider, text => lines.write(text));
+      if (fetched === null) return null;
+      official.push(...fetched);
+    }
+  }
+  const candidates = [...new Set([...MODEL_SUGGESTIONS, ...official, ...(current ? [current] : [])])];
   // The search row is pinned first in both modes so Enter never connects to an arbitrary model.
   const searchRow: Choice = { value: SEARCH_ROW_VALUE, label: '🔍 キーワード検索', pinned: true };
   if (lines.interactive) {

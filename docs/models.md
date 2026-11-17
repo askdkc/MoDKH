@@ -5,7 +5,11 @@
 `modkh` を起動し、`/connect` で OpenAI / OpenCode / Ollama Local / Ollama Cloud / OpenRouter / Infron / Hermes Agent を選ぶ。
 TTYでは入力で検索、↑↓で選択、Enterで決定、Escで戻る。OpenAIではChatGPT OAuthとAPIキーを選べる。
 APIキーは環境変数を優先し、未設定ならTTYで伏せ字入力できる。入力したキーは `keys.json`(0600)に保存し、次回起動時に再利用する。
-`/models` は組み込み候補からの選択であり、利用可能なモデルの完全な一覧ではない。
+OpenAIのモデル一覧は選択画面を開くたびに公式から取得する。APIキーでは `https://api.openai.com/v1/models`、
+ChatGPT OAuthでは公式Codexと同じ `https://chatgpt.com/backend-api/codex/models` を使い、アカウントに返されたモデルIDを表示する。
+`/models openai`、`/models chatgpt` でも再取得できる。取得中はCtrl+Cで中止でき、失敗時は理由を表示する。
+古い固定リストや保存済み一覧へのフォールバックは行わない。再度開いて取得し直すか、モデルIDを直接指定できる。
+他のプロバイダーの `/models` は組み込み候補であり、利用可能なモデルの完全な一覧ではない。
 
 `chat --model <provider>/<model>`、または `/connect <provider>/<model> [--base-url <url>]` で直接指定もできる。
 接続に失敗しても別の接続先へ自動で切り替えない。モデルの選択だけではAPI到達や利用権限は検証されない。

@@ -1,5 +1,6 @@
 import type { ChatTerminal, Choice } from './terminal.ts';
 import { suggestionsFor, noteFor, isRecommended, SEARCH_ROW_VALUE } from './catalog.ts';
+import { officialModelChoices } from './official-models.ts';
 
 export const CONNECT_PROVIDERS = [
   { value: 'openai', label: 'OpenAI', detail: 'ChatGPT OAuth (chatgpt) / OPENAI_API_KEY', key: 'OPENAI_API_KEY' },
@@ -25,7 +26,10 @@ export async function confirmRemoteAgent(ui: ChatTerminal): Promise<boolean> {
   ]) === 'connect';
 }
 export async function chooseProviderModel(ui: ChatTerminal, provider: string): Promise<string | null> {
-  const choices: Choice[] = suggestionsFor(provider).map(ref => {
+  const refs = provider === 'openai' || provider === 'chatgpt'
+    ? await officialModelChoices(provider, text => ui.write(text)) : suggestionsFor(provider);
+  if (refs === null) return null;
+  const choices: Choice[] = refs.map(ref => {
     const note = noteFor(ref);
     const detail = [isRecommended(ref) ? 'おすすめ' : '', note ?? ''].filter(Boolean).join(' · ');
     return { value: ref, label: ref, ...(detail ? { detail } : {}) };

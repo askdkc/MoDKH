@@ -8,11 +8,11 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 const entry = process.env['MODKH_TEST_CHAT'] ?? new URL('../src/cli/chat.ts', import.meta.url).href;
-async function chat(input: string, options = '{}', env: NodeJS.ProcessEnv = {}) {
+async function chat(input: string, options = '{}', env: NodeJS.ProcessEnv = {}, setup = '') {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-interactive-'));
   try {
     const child = spawn(process.execPath, ['--input-type=module', '-e',
-      `import { runChat } from ${JSON.stringify(entry)}; await runChat({args: {}, ...${options}});`],
+      `import { runChat } from ${JSON.stringify(entry)}; ${setup}; await runChat({args: {}, ...${options}});`],
     { cwd: home, env: { ...process.env, MODKH_HOME: home, OPENAI_API_KEY: '', OLLAMA_API_KEY: '', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     child.stdout.on('data', (data) => { stdout += data; });
@@ -45,7 +45,7 @@ test('再検索・無効な番号・該当なし・キャンセルで会話へ�
   assert.match(stdout, /接続中: fixed\/scripted/);
 });
 
-test('モデル選択の失敗後も既存接続を保つ', async () => {
+test('モデル一覧取得の失敗後も既存接続を保つ', async () => {
   const { stdout } = await chat('/connect fixed/scripted\n/models openai/gpt-5.2\n1\n/connect\n\n/exit\n');
   assert.match(stdout, /OPENAI_API_KEY/);
   assert.match(stdout, /接続中: fixed\/scripted/);
@@ -105,10 +105,18 @@ test('/connect chatgpt はログイン処理を通り、モデル選択に進む
   await new Promise<void>((resolve) => reserve.close(() => resolve()));
   try {
     const options = `{loginOptions: {config: {issuer: 'http://127.0.0.1:${(issuer.address() as AddressInfo).port}', clientId: 'test', redirectPort: ${redirectPort}}, openUrl: async (url) => { const u = new URL(url); const callback = new URL(u.searchParams.get('redirect_uri')); callback.searchParams.set('code', 'test-code'); callback.searchParams.set('state', u.searchParams.get('state')); await fetch(callback); }}}`;
-    const { stdout, session } = await chat('/connect chatgpt\n/models chatgpt/gpt-5.2\n1\n/connect\n\n/exit\n', options);
+    const setup = `const originalFetch = globalThis.fetch; globalThis.fetch = (url, options) => {
+      if (String(url).startsWith('https://chatgpt.com/backend-api/codex/models?')) {
+        if (new Headers(options?.headers).get('authorization') !== 'Bearer test-token') throw new Error('missing catalogue credentials');
+        return Promise.resolve(Response.json({models: [{slug: 'gpt-6.1-sol', visibility: 'list'}]}));
+      }
+      return originalFetch(url, options);
+    }`;
+    const { stdout, session } = await chat('/connect chatgpt\n/models chatgpt/gpt-6.1-sol\n1\n/connect\n\n/exit\n', options, {}, setup);
     assert.equal(exchanges, 1);
     assert.match(stdout, /認証しました: chatgpt/);
-    assert.match(stdout, /接続しました: chatgpt\/gpt-5.2/);
+    assert.match(stdout, /公式モデル一覧 1件/);
+    assert.match(stdout, /接続しました: chatgpt\/gpt-6\.1-sol/);
     assert.doesNotMatch(stdout + session, /test-token/);
   } finally { await new Promise<void>((resolve) => issuer.close(() => resolve())); }
 });
