@@ -52,7 +52,7 @@ for (const finish of [null, 'length', 'tool_calls']) {
       const model = resolveModel({ provider: 'compatible', model: 'test', baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1` });
       const result: ModelEvent[] = [];
       for await (const ev of model.stream({ messages: [{ role: 'user', content: 'hello' }], tools: [] }, new AbortController().signal)) result.push(ev);
-      assert.equal((result.at(-1) as { stopReason: string }).stopReason, 'error');
+      assert.equal((result.at(-1) as { stopReason: string }).stopReason, finish === 'length' ? 'length' : 'error');
     } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
   });
 }

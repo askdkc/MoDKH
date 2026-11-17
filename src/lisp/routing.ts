@@ -8,7 +8,7 @@ export function routeIntent(task: string, available: PluginDescriptor[]): Delega
   if (files.length !== 1) return;
   const language = EXT[files[0].split('.').at(-1)!];
   if (!language) return;
-  const rules: [string, RegExp][] = [['outline', /\b(outline|structure)\b|構造/], ['definition', /\bdefinition\b|定義/], ['references', /\breferences\b|参照/], ['diagnostics', /\bdiagnostics\b|診断/], ['hover', /\bhover\b|ホバー/], ['edit', /\b(edit|fix|change)\b|修正|編集/], ['verify', /\bverify\b|検証/]];
+  const rules: [string, RegExp][] = [['outline', /\b(outline|structure)\b|構造/], ['syntax-search', /\bsyntax search\b|構文検索|宣言検索/], ['definition', /\bdefinition\b|定義/], ['references', /\breferences\b|参照/], ['diagnostics', /\bdiagnostics\b|診断/], ['hover', /\bhover\b|ホバー/], ['edit', /\b(edit|fix|change)\b|修正|編集/], ['verify', /\bverify\b|検証/]];
   const kinds = rules.filter(([, re]) => re.test(task));
   if (kinds.length !== 1) return;
   const matches = available.filter(d => d.language === language && d.taskKind === kinds[0][0]);

@@ -106,7 +106,7 @@ export class AiSdkModel implements Model {
     let usage: TokenUsage | undefined;
     let errorMessage: string | undefined;
     let sawToolCall = false;
-    let finishReason: 'stop' | 'tool-calls' | undefined;
+    let finishReason: 'stop' | 'tool-calls' | 'length' | undefined;
     const reasoning = reasoningProviderOptions(this.provider ?? '', req.reasoning);
     const thinking = this.provider === 'anthropic' && reasoning?.anthropic !== undefined;
     const thinkingBudget = thinking
@@ -156,7 +156,7 @@ export class AiSdkModel implements Model {
               cacheWrite: part.totalUsage.inputTokenDetails?.cacheWriteTokens,
             };
           }
-          if (part.finishReason === 'stop' || part.finishReason === 'tool-calls') {
+          if (part.finishReason === 'stop' || part.finishReason === 'tool-calls' || part.finishReason === 'length') {
             finishReason = part.finishReason;
           } else {
             errorMessage = `モデル応答は未完了: ${part.finishReason}`;
@@ -174,7 +174,8 @@ export class AiSdkModel implements Model {
     if (usage && (usage.input !== undefined || usage.output !== undefined)) yield { type: 'usage', ...usage };
     if (aborted) {
       yield { type: 'finish', stopReason: 'aborted' };
-    } else if (errorMessage !== undefined || finishReason === undefined || (finishReason === 'tool-calls') !== sawToolCall) {
+    } else if (errorMessage !== undefined || finishReason === undefined ||
+      (finishReason !== 'length' && (finishReason === 'tool-calls') !== sawToolCall)) {
       yield { type: 'finish', stopReason: 'error', errorMessage: errorMessage ?? 'モデル終了イベントがない、またはツール要求と終了理由が不整合' };
     } else {
       yield { type: 'finish', stopReason: finishReason };

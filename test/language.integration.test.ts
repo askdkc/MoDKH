@@ -83,7 +83,7 @@ test('a broken analysis never fails the edit and never invites a second write', 
 test('language tools refuse unsupported files and report a real zero result', async () => {
   const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-lang-tools-')));
   fs.mkdirSync(path.join(project, 'src'));
-  fs.writeFileSync(path.join(project, 'src', 'a.ts'), 'const a = 1;\n');
+  fs.writeFileSync(path.join(project, 'src', 'a.ts'), 'const a = 1;\n\nexport function reserve() {\n  return a;\n}\n');
   fs.writeFileSync(path.join(project, 'notes.txt'), 'text\n');
   const service = new LanguageService({
     root: project,
@@ -98,6 +98,11 @@ test('language tools refuse unsupported files and report a real zero result', as
     const outline = await tools.get('code_outline')!.execute({ path: 'src/a.ts' }, ctx);
     assert.match(String(outline), /typescript/);
     assert.match(String(outline), /lexical_declaration a/);
+    const syntaxSearch = tools.get('code_syntax_search')!;
+    const matches = await syntaxSearch.execute({ path: 'src/a.ts', query: 'reserve' }, ctx);
+    assert.match(String(matches), /src\/a\.ts/);
+    assert.match(String(matches), /3:1-5:2 function_declaration reserve/);
+    assert.equal(String(matches).match(/function_declaration reserve/g)?.length, 1);
     const diagnostics = await tools.get('code_diagnostics')!.execute({ path: 'src/a.ts' }, ctx);
     assert.match(String(diagnostics), /診断0件/);
     await assert.rejects(() => tools.get('code_outline')!.execute({ path: 'notes.txt' }, ctx), /対象外/);

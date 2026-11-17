@@ -56,7 +56,7 @@ test('packed artifact loads its own real WASM and rejects tampering without pois
       assert.ok(grammarPaths('typescript').wasm.startsWith(fs.realpathSync('package')));
       for (const [id,source,name] of [['typescript','const 日本 = 1;\r\nfunction 挨拶() {}','挨拶'],['javascript','function hello(){}','hello'],['php','<?php function hello() {}','hello'],['html','<p>日本</p>','p'],['css','/* 日本 */ .card { color:red; }','.card']]) {
         const result=await outline(id,source);assert.equal(result.status,'ok',JSON.stringify(result));assert.ok(result.nodes.some(n=>n.name===name),JSON.stringify({id,result}));assert.equal(result.errorCount,0);
-        if(id==='typescript')assert.deepEqual(result.nodes.find(n=>n.name===name),{kind:'program',name:'挨拶',startLine:2,startColumn:10,endLine:2,endColumn:12});
+        if(id==='typescript')assert.deepEqual(result.nodes.find(n=>n.name===name),{kind:'function_declaration',name:'挨拶',startLine:2,startColumn:10,endLine:2,endColumn:12,declaration:{startLine:2,startColumn:1,endLine:2,endColumn:17}});
         if(id==='css')assert.equal(result.nodes.find(n=>n.name===name).startColumn,10);
       }
       assert.equal((await verifyGrammar('commonlisp')).ok,false);
@@ -82,8 +82,11 @@ test('packed artifact loads its own real WASM and rejects tampering without pois
       MODKH_TEST_FIXED:pathToFileURL(path.join(root,'package/dist/model/fixed.js')).href,
       MODKH_TEST_PACKAGE_ROOT:path.join(root,'package')};
     delete env.NODE_TEST_CONTEXT;
-    const entry=spawnSync(process.execPath,['--test',path.join(repo,'test/lisp.cli.test.ts')],{cwd:root,env,encoding:'utf8',timeout:30000});
-    assert.equal(entry.status,0,entry.stdout+'\n'+entry.stderr);
+    // This suite runs several chat sessions in sequence. Its outer deadline must
+    // leave room for each session's own watchdog, including the two real Lean runs.
+    const entry=spawnSync(process.execPath,['--test',path.join(repo,'test/lisp.cli.test.ts')],{cwd:root,env,encoding:'utf8',timeout:380_000});
+    assert.ifError(entry.error);
+    assert.equal(entry.status,0,[entry.signal,entry.stdout,entry.stderr].filter(Boolean).join('\n'));
 
     const wasm=path.join(root,'package/dist/language/grammars/tree-sitter-typescript.wasm');
     const bytes=fs.readFileSync(wasm);bytes[bytes.length-1]^=1;fs.writeFileSync(wasm,bytes);

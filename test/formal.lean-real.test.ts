@@ -34,3 +34,32 @@ for(const [label,source] of [
   assert.equal(evidence.status,label==='sorry'||label==='false theorem'?'failed':'accepted');
  } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('real Lean binds the named theorem to an independently selected proposition', {skip}, async () => {
+ const root = fs.realpathSync(temporaryDirectory('modkh-lean-target-'));
+ try {
+  fs.writeFileSync(path.join(root, 'Contract.lean'), 'def modkhExpected : Prop := ∀ n : Nat, n + 0 = n\n');
+  const tool = formalTools({ lean, leanContract: 'Contract.lean', leanTheorem: 'Candidate.goal' })[0];
+  const ctx = { root, approval: { approve: async () => true } };
+  for (const [source, expected, code] of [
+   ['namespace Candidate\ntheorem goal (n : Nat) : n + 0 = n := rfl\nend Candidate', 'proved', 'TARGET_PROVED'],
+   ['namespace Candidate\ntheorem goal : True := trivial\nend Candidate', 'rejected', 'TARGET_STATEMENT_MISMATCH'],
+   ['theorem unrelated (n : Nat) : n + 0 = n := rfl', 'rejected', 'TARGET_THEOREM_MISSING'],
+   ['axiom assumption : ∀ n : Nat, n + 0 = n\nnamespace Candidate\ntheorem goal : ∀ n : Nat, n + 0 = n := assumption\nend Candidate', 'rejected', 'DISALLOWED_AXIOMS'],
+  ]) {
+   fs.writeFileSync(path.join(root, 'Input.lean'), source);
+   const result = await tool.execute({ path: 'Input.lean' }, ctx);
+   assert.notEqual(typeof result, 'string');
+   if (typeof result === 'string') throw new Error(result);
+   const evidence = JSON.parse(result.output);
+   assert.equal(evidence.status, 'accepted', result.output);
+   assert.equal(evidence.proofStatus, expected, result.output);
+   assert.equal(evidence.code, code);
+   assert.equal(result.status, expected === 'proved' ? 'ok' : 'error');
+   assert.equal(evidence.target.theorem, 'Candidate.goal');
+   assert.equal(evidence.proofPath, 'Input.lean');
+   assert.equal(evidence.target.expectedPropositionPath, 'Contract.lean');
+   assert.equal(evidence.target.path, undefined);
+  }
+ } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

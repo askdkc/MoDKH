@@ -30,10 +30,17 @@ test('default output limit still stops verification processes and preserves its 
 test('tail retention preserves UTF-8 boundaries and does not suppress timeouts', async () => {
   const root = temporaryDirectory('modkh-output-tail-');
   try {
-    const r = await executeBounded(process.execPath, ['-e', `process.stderr.write('日本語'.repeat(1000));setInterval(()=>{},1000)`],
-      { cwd: root, env: privateEnvironment(root), inputDigest: 'tail-timeout', timeoutMs: 500, maxOutputBytes: 100, outputOverflow: 'tail' });
-    assert.equal(r.terminationReason, 'timed-out'); assert.equal(r.outputTruncated, true);
-    assert.ok(Buffer.byteLength(r.stderr) <= 100); assert.ok(!r.stderr.includes('\ufffd'));
+    const options = { cwd: root, env: privateEnvironment(root), maxOutputBytes: 100, outputOverflow: 'tail' as const };
+    const tail = await executeBounded(process.execPath, ['-e', `require('node:fs').writeSync(2, '日本語'.repeat(1000))`],
+      { ...options, inputDigest: 'utf8-tail', timeoutMs: 10000 });
+    assert.equal(tail.state, 'exited'); assert.equal(tail.exitCode, 0);
+    assert.equal(tail.outputTruncated, true);
+    assert.equal(tail.stderr, '日本語'.repeat(11));
+
+    const timeout = await executeBounded('/bin/sh', ['-c', 'exec sleep 60'],
+      { ...options, inputDigest: 'tail-timeout', timeoutMs: 500 });
+    assert.equal(timeout.state, 'timed-out'); assert.equal(timeout.terminationReason, 'timed-out');
+    assert.equal(timeout.cleanup, 'settled');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

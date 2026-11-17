@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadLispConfiguration, REQUIRED_SKILLS } from '../src/lisp/config.ts';
+import { routeIntent, routeRole } from '../src/lisp/routing.ts';
 import { temporaryDirectory, sha256, executeBounded, privateEnvironment } from '../src/lisp/runtime.ts';
 import { readBundledSkill } from '../src/agent/bundled-skills.ts';
 import { PluginManager } from '../src/plugins/manager.ts';
@@ -62,4 +63,28 @@ test('formal preset configures the head workflow and registers both checkers', a
   const config = await load(fs.readFileSync(new URL('../experiments/presets/formal.lisp', import.meta.url), 'utf8'));
   assert.match(config.headInstruction ?? '', /MoA/);
   assert.deepEqual(config.entries.map(({ descriptor }) => descriptor.id).sort(), ['micro-goki', 'micro-zenki']);
+});
+
+test('the combined language roster composes with the Enno-Oduno formal preset', async () => {
+  const preset = (name: string) => fs.readFileSync(new URL(`../experiments/presets/${name}.lisp`, import.meta.url), 'utf8');
+  const config = await load(preset('formal') + '\n' + preset('language-microagents'));
+  assert.match(config.headInstruction ?? '', /役小角/);
+  assert.equal(config.entries.length, 37);
+  const manager = new PluginManager('/does-not-exist');
+  manager.registerSessionDefinitions(config.entries, config.digest);
+  const available = manager.discover().registry.list().filter(role => role.enabled);
+  assert.equal(routeRole('ts', 'outline', 'Inspect src/app.ts', available)?.pluginId, 'micro-ts-outline');
+  assert.equal(routeRole('ts', 'syntax-search', 'Find reserve in src/app.ts', available)?.pluginId, 'micro-ts-syntax-search');
+  assert.equal(routeIntent('src/app.ts の reserve を宣言検索', available)?.pluginId, 'micro-ts-syntax-search');
+  assert.deepEqual(config.entries.find(entry => entry.descriptor.id === 'micro-ts-syntax-search')?.definition.tools,
+    ['code_syntax_search']);
+  assert.equal(routeRole('svelte', 'syntax-search', 'Find reserve in App.svelte', available), undefined);
+  assert.equal(routeRole('tailwindcss', 'hover', 'Inspect utility', available)?.pluginId, 'micro-tailwindcss-hover');
+  const outline = config.entries.find(entry => entry.descriptor.id === 'micro-ts-outline')!;
+  assert.equal(outline.descriptor.title, 'TypeScript構造担当');
+  assert.equal(outline.definition.maxTurns, 30);
+  for (const entry of config.entries) {
+    assert.equal(entry.definition.tools.length, 1);
+    assert.ok(entry.definition.tools[0].startsWith('code_') || entry.definition.tools[0].startsWith('verify_'));
+  }
 });

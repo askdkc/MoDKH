@@ -95,7 +95,7 @@ test('child cancellation releases only its approval waiter and returns to the pa
   // The subject is an approval waiter, so use the policy that always prompts.
   const gate = new TerminalApprovalGate({ write: () => {}, ask: (_prompt, signal) => new Promise<string>(resolve => { requested(); signal?.addEventListener('abort', () => resolve(''), { once: true }); }) }, 'none');
   const model = new FixedModel([[{ type: 'tool-call', call: { id: 'write', name: 'create_file', args: { path: 'cancelled', content: 'bad' } } }, { type: 'finish', stopReason: 'tool-calls' }], done]);
-  const service = new SubagentService({ ...f.opts, approval: gate, connection: () => ({ ref: 'fixed/scripted', create: () => model }) });
+  const service = new SubagentService({ ...f.opts, maxConcurrent: 1, approval: gate, connection: () => ({ ref: 'fixed/scripted', create: () => model }) });
   const handle = await service.start({ ...request, pluginId: 'modkh-worker' }, owner('call-1', AbortSignal.timeout(3000)));
   try {
     await reached;
@@ -296,4 +296,259 @@ test('effective permissions are the intersection of parent, user and plugin poli
   await (await service.start(request, owner())).result;
   assert.deepEqual(f.models[0].requests[0].tools.map(t => t.name), ['read_file']);
   assert.deepEqual(f.parent.delegations()[0].effectiveTools, ['read_file']);
+});
+
+test('async delegation lets the parent work with two live children, then collects both before completion', async t => {
+  const f = fixture(t);
+  const releases: (() => void)[] = [];
+  const service = new SubagentService({ ...f.opts, connection: () => ({ ref: 'fixed/scripted', create: () => ({
+    id: 'fixed/child', async *stream() {
+      await new Promise<void>(resolve => { releases.push(resolve); });
+      yield* done;
+    },
+  }) }) });
+  const registry = new ToolRegistry([...subagentTools(service), {
+    name: 'parent_work', readOnly: true, description: 'Independent parent work', parameters: { type: 'object', properties: {} },
+    execute: async () => {
+      // Starting returns before the child even reaches its model; wait only in the fixture.
+      for (let i = 0; releases.length < 2 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
+      assert.equal(f.parent.delegations().filter(r => !r.result).length, 2);
+      releases.forEach(release => release());
+      return 'parent progressed while both children were running';
+    },
+  }]);
+  const parentModel = new FixedModel([
+    [{ type: 'tool-call', call: { id: 'one', name: 'start_subagent', args: request } },
+      { type: 'tool-call', call: { id: 'two', name: 'start_subagent', args: request } },
+      { type: 'finish', stopReason: 'tool-calls' }],
+    [{ type: 'tool-call', call: { id: 'parent', name: 'parent_work', args: {} } }, { type: 'finish', stopReason: 'tool-calls' }], done, done, done,
+  ]);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  t.after(() => clearTimeout(timeout));
+  f.parent.append({ role: 'user', content: 'Investigate two independent parts and integrate them' });
+  const result = await runAgentLoop(f.parent.messages, { model: parentModel, registry, root: f.root,
+    approval: f.opts.approval, signal: controller.signal, subagents: service, skills: false });
+  assert.equal(result.outcome, 'complete');
+  assert.equal(f.parent.delegations().length, 2);
+  assert.ok(f.parent.delegations().every(r => r.result?.status === 'completed'));
+  assert.ok(parentModel.requests.some(r => r.messages.some(m => m.role === 'user' && m.content.includes('子エージェントの完了通知'))));
+});
+
+test('async tools enforce two slots, expose running status, cancel independently and preserve cold receipts', async t => {
+  const f = fixture(t);
+  const service = new SubagentService({ ...f.opts, connection: () => ({ ref: 'fixed/scripted', create: () => ({
+    id: 'fixed/blocked', async *stream(_request, signal) {
+      await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }); });
+      yield { type: 'finish' as const, stopReason: 'aborted' as const };
+    },
+  }) }) });
+  const registry = new ToolRegistry(subagentTools(service));
+  const controller = new AbortController();
+  const ctx = { root: f.root, approval: f.opts.approval, signal: controller.signal };
+  t.after(async () => { controller.abort(); await service.cancelAll('test cleanup'); });
+  const call = async (id: string, name: string, args: Record<string, unknown>) => registry.executeOne({ id, name, args }, ctx);
+  const first = await call('one', 'start_subagent', request);
+  assert.equal(first.status, 'ok');
+  const second = await call('two', 'start_subagent', request);
+  assert.equal(second.status, 'ok');
+  assert.match((await call('three', 'start_subagent', request)).output, /CAPACITY/);
+  const runId = JSON.parse(first.output).runId;
+  assert.equal(JSON.parse((await call('read', 'subagent_output', { runId })).output).status, 'running');
+  assert.equal((await call('stop', 'cancel_subagent', { runId })).status, 'ok');
+  assert.equal(service.hasPending, true);
+  const cold = new ToolRegistry(subagentTools(new SubagentService(f.opts)));
+  const receipt = await cold.executeOne({ id: 'cold', name: 'subagent_output', args: { runId } }, ctx);
+  assert.equal(JSON.parse(receipt.output).status, 'cancelled');
+  assert.equal((await call('foreign', 'subagent_output', { runId: 'not-owned' })).status, 'error');
+});
+
+for (const ending of ['error', 'turn-limit', 'stop'] as const) {
+  test(`parent ${ending} reaps both asynchronous children`, async t => {
+    const f = fixture(t);
+    const controller = new AbortController();
+    let started = 0;
+    const service = new SubagentService({ ...f.opts, connection: () => ({ ref: 'fixed/scripted', create: () => ({
+      id: 'fixed/blocked', async *stream(_request, signal) {
+        started++;
+        await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }); });
+        yield { type: 'finish' as const, stopReason: 'aborted' as const };
+      },
+    }) }) });
+    const registry = new ToolRegistry([...subagentTools(service), { name: 'await_started', readOnly: true, description: 'Fixture barrier', parameters: { type: 'object', properties: {} }, execute: async () => {
+      for (let i = 0; started < 2 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
+      assert.equal(started, 2);
+      if (ending === 'stop') controller.abort();
+      return 'both started';
+    } }]);
+    const model = new FixedModel([[{ type: 'tool-call', call: { id: 'a', name: 'start_subagent', args: request } },
+      { type: 'tool-call', call: { id: 'b', name: 'start_subagent', args: request } },
+      { type: 'tool-call', call: { id: 'barrier', name: 'await_started', args: {} } }, { type: 'finish', stopReason: 'tool-calls' }],
+      [{ type: 'finish', stopReason: 'error', errorMessage: 'provider failed' }]]);
+    const result = await runAgentLoop(f.parent.messages, { model, registry, root: f.root, approval: f.opts.approval,
+      signal: controller.signal, subagents: service, maxTurns: ending === 'turn-limit' ? 1 : 10, skills: false });
+    assert.equal(result.outcome, ending === 'stop' ? 'interrupted' : ending);
+    assert.equal(service.hasPending, false);
+    assert.equal(f.parent.delegations().length, 2);
+    assert.ok(f.parent.delegations().every(r => r.result?.status === 'cancelled' && r.result.cleanup === 'settled'));
+  });
+}
+
+test('a child writer blocks conflicting effects but permits parent reads and another explorer', async t => {
+  const f = fixture(t);
+  let writerReady!: () => void;
+  const ready = new Promise<void>(resolve => writerReady = resolve);
+  const service = new SubagentService({ ...f.opts, maxConcurrent: 3, connection: () => ({ ref: 'fixed/scripted', create: () => ({
+    id: 'fixed/blocked', async *stream(req, signal) {
+      if (req.tools.some(t => t.name === 'edit_file')) writerReady();
+      await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }); });
+      yield { type: 'finish' as const, stopReason: 'aborted' as const };
+    },
+  }) }) });
+  t.after(() => service.cancelAll('test cleanup'));
+  const writer = await service.start({ ...request, pluginId: 'modkh-worker' }, owner('writer'));
+  await ready;
+  const reader = await service.start(request, owner('reader'));
+  const conflicting = await service.start({ ...request, pluginId: 'modkh-worker' }, owner('conflict'));
+  assert.match((await conflicting.result).diagnostic ?? '', /競合/);
+  const registry = new ToolRegistry(service.parentTools(defaultTools()));
+  const ctx = { root: f.root, approval: f.opts.approval, signal: new AbortController().signal };
+  assert.equal((await registry.executeOne({ id: 'read', name: 'list_files', args: {} }, ctx)).status, 'ok');
+  assert.match((await registry.executeOne({ id: 'write', name: 'create_file', args: { path: 'parent.txt', content: 'write' } }, ctx)).output, /BUSY/);
+  assert.equal(fs.existsSync(path.join(f.root, 'parent.txt')), false);
+  await writer.cancel('done');
+  assert.equal((await registry.executeOne({ id: 'write-after', name: 'create_file', args: { path: 'parent.txt', content: 'write' } }, ctx)).status, 'ok');
+  await reader.cancel('done');
+});
+
+test('lowering the limit preserves live children; raising it admits another and exact replay consumes no slot', async t => {
+  const f = fixture(t);
+  const service = new SubagentService({ ...f.opts, connection: () => ({ ref: 'fixed/scripted', create: () => ({ id: 'fixed/wait', async *stream(_r, signal) {
+    await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }); });
+    yield { type: 'finish' as const, stopReason: 'aborted' as const };
+  } }) }) });
+  t.after(() => service.cancelAll('test cleanup'));
+  const one = await service.start(request, owner('one'));
+  const two = await service.start(request, owner('two'));
+  service.setMaxConcurrent(1);
+  assert.equal((await service.start(request, owner('one'))).runId, one.runId);
+  await assert.rejects(service.start(request, owner('three')), /1つまで/);
+  assert.equal(f.parent.delegations().filter(r => !r.result).length, 2);
+  service.setMaxConcurrent(3);
+  const three = await service.start(request, owner('three'));
+  assert.notEqual(two.runId, three.runId);
+  assert.throws(() => service.setMaxConcurrent(0), /1〜16/);
+});
+
+test('async result persistence failure produces an unknown receipt and prevents replay', async t => {
+  const f = fixture(t);
+  const original = f.parent.recordDelegation.bind(f.parent);
+  f.parent.recordDelegation = record => { if (record.state === 'finished') throw new Error('disk full'); original(record); };
+  const service = new SubagentService(f.opts);
+  const handle = await service.start(request, owner('async-failure'));
+  await assert.rejects(handle.result, /disk full/);
+  const receipt = await service.output(handle.runId, 0, new AbortController().signal);
+  assert.equal(receipt.status, 'unknown');
+  assert.equal(service.hasUnknown, true);
+  await assert.rejects(service.start(request, owner('new')), /結果が不明/);
+  assert.equal(f.models.length, 1);
+});
+
+test('cold resume re-supplies asynchronous completion evidence without another child model', async t => {
+  const f = fixture(t);
+  f.parent.append({ role: 'assistant', content: '', toolCalls: [{ id: 'async-saved', name: 'start_subagent', args: request }] });
+  const service = new SubagentService(f.opts);
+  const handle = await service.start(request, owner('async-saved'));
+  f.parent.append({ role: 'tool', results: [{ callId: 'async-saved', name: 'start_subagent', status: 'ok', output: JSON.stringify({ runId: handle.runId, status: 'started' }) }] });
+  await handle.result;
+  const parent = f.store.load(f.parent.id);
+  const resumed = new SubagentService({ ...f.opts, parent });
+  const notices = resumed.takeNotices();
+  assert.equal(notices.length, 1);
+  assert.match(notices[0], /Observed result/);
+  assert.equal(JSON.parse(notices[0]).runId, handle.runId);
+  assert.deepEqual(resumed.takeNotices(), []);
+  assert.equal(f.models.length, 1);
+});
+
+test('the same editor repairs a rejected patch and applies it without a final model response', async t => {
+  const f = fixture(t);
+  const digest = 'a'.repeat(64);
+  const id = 'micro-test-editor';
+  fs.writeFileSync(path.join(f.root, 'source.txt'), 'before\n');
+  fs.writeFileSync(path.join(f.root, 'protected.txt'), 'after\n');
+  f.manager.registerSessionDefinitions([{
+    descriptor: { id, version: '1', title: 'Editor', description: 'Editor fixture', kind: 'local', apiVersion: 1, digest, enabled: true, builtin: false, entry: './index.mjs' },
+    definition: {
+      system: 'Edit the source', tools: ['read_file', 'edit_file'], workflow: 'edit-verify', requireAllTools: true,
+      verificationCommand: 'cmp source.txt protected.txt',
+      verificationManifest: { sources: ['source.txt'], protected: ['protected.txt'] },
+    },
+  }], digest);
+  const script = new FixedModel([[
+    { type: 'tool-call', call: { id: 'read', name: 'read_file', args: { path: 'source.txt' } } },
+    { type: 'finish', stopReason: 'tool-calls' },
+  ], done, [
+    { type: 'tool-call', call: { id: 'bad-edit', name: 'edit_file', args: { path: 'source.txt', old_string: 'before', new_string: 'wrong' } } },
+    { type: 'finish', stopReason: 'tool-calls' },
+  ], [
+    { type: 'tool-call', call: { id: 'edit', name: 'edit_file', args: { path: 'source.txt', old_string: 'wrong', new_string: 'after' } } },
+    { type: 'finish', stopReason: 'tool-calls' },
+  ]]);
+  const setTimer = globalThis.setTimeout;
+  t.mock.method(globalThis, 'setTimeout', (callback: () => void, delay: number) =>
+    setTimer(callback, delay === 120_000 ? 2000 : delay));
+  let checks = 0;
+  const service = new SubagentService({
+    ...f.opts,
+    headInputs: { tla: 'Model.tla', cfg: 'Model.cfg', lean: 'Proof.lean', editor: { id, path: 'source.txt' } },
+    headUserRequest: () => 'Use the word after, preserving the trailing newline.',
+    connection: () => ({ ref: script.id, create: () => script }),
+    approval: { approve: async req => {
+      if (req.kind === 'command') {
+        checks++;
+        assert.equal(fs.readFileSync(path.join(f.root, 'source.txt'), 'utf8'), 'before\n');
+        await new Promise(resolve => setTimer(resolve, 2100));
+      }
+      return true;
+    } },
+  });
+  const result = await (await service.start({ pluginId: id, task: 'Fix source', targetPaths: ['source.txt'], behaviorChange: { before: 'Returns before', after: 'Returns after' } }, owner())).result;
+  assert.equal(result.verification?.application, 'applied', JSON.stringify(result));
+  assert.equal(fs.readFileSync(path.join(f.root, 'source.txt'), 'utf8'), 'after\n');
+  assert.equal(f.parent.delegations().length, 1);
+  assert.equal(checks, 2);
+  assert.match(JSON.stringify(script.requests[0].messages), /preserving the trailing newline/);
+  assert.ok(script.requests[0].messages.some(m => m.role === 'tool' && m.results.some(r => r.name === 'read_file')));
+  assert.equal(script.requests.length, 4);
+  assert.match(JSON.stringify(script.requests[3].messages), /保護テスト.*不合格/);
+  assert.doesNotMatch(JSON.stringify(script.requests[3].messages), /protected\.txt/);
+  assert.match(JSON.stringify(script.requests[2].messages), /ホストの編集完了確認/);
+  assert.equal(f.store.load(result.agentId).messages.filter(m => m.role === 'tool').length, 4);
+});
+
+test('bound Lisp editor rejects an assignment without an observable behavior change before creating a child', async t => {
+  const f = fixture(t);
+  const id = 'micro-editor';
+  const digest = 'b'.repeat(64);
+  f.manager.registerSessionDefinitions([{
+    descriptor: { id, version: '1', title: 'Editor', description: 'Editor fixture', kind: 'local', apiVersion: 1, digest, enabled: true, builtin: false, entry: './index.mjs' },
+    definition: {
+      system: 'Edit the source', tools: ['edit_file'], workflow: 'edit-verify',
+      verificationCommand: 'exit 0',
+      verificationManifest: { sources: ['source.txt'], protected: ['check.txt'] },
+    },
+  }], digest);
+  fs.writeFileSync(path.join(f.root, 'source.txt'), 'before');
+  fs.writeFileSync(path.join(f.root, 'check.txt'), 'protected');
+  const service = new SubagentService({ ...f.opts, headInputs: {
+    tla: 'Model.tla', cfg: 'Model.cfg', lean: 'Proof.lean', editor: { id, path: 'source.txt' },
+  } });
+  const request = { pluginId: id, task: 'Confirm the change', targetPaths: ['source.txt'] };
+  await assert.rejects(service.start(request, owner()), /behaviorChange/);
+  assert.deepEqual(f.parent.delegations(), []);
+  await assert.rejects(service.start({ ...request, behaviorChange: { before: 'works as expected', after: 'works correctly' } }, owner()), /observable/);
+  await assert.rejects(service.start({ ...request, targetPaths: ['check.txt'], behaviorChange: { before: 'At capacity reserve increments the count', after: 'At capacity reserve leaves the count unchanged' } }, owner()), /source.txt/);
+  assert.deepEqual(f.models, []);
+  assert.deepEqual(f.parent.delegations(), []);
 });

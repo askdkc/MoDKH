@@ -106,7 +106,7 @@ export type ModelEvent =
   | { type: 'tool-call'; call: ToolCall }
   | {
       type: 'finish';
-      stopReason: 'stop' | 'tool-calls' | 'aborted' | 'error';
+      stopReason: 'stop' | 'tool-calls' | 'aborted' | 'error' | 'length';
       errorMessage?: string;
     };
 

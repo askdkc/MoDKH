@@ -37,3 +37,21 @@ test('real Lean true theorem is accepted/unverified', {skip: !process.env.MODKH_
   try {fs.writeFileSync(path.join(root,'Input.lean'),'theorem truth : True := by trivial');const r=await formalTools({lean:process.env.MODKH_TEST_LEAN})[0].execute({path:'Input.lean'},{root,approval});assert.notEqual(typeof r,'string');if(typeof r==='string')return;assert.equal(JSON.parse(r.output).status,'accepted');assert.equal(r.status,'error');}
   finally {fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('Lean compilation and target comparison have independent process deadlines', async () => {
+  const root = fs.realpathSync(temporaryDirectory('modkh-lean-deadlines-'));
+  try {
+    const lean = path.join(root, 'lean');
+    fs.writeFileSync(lean, '#!/bin/sh\nsleep 0.6\nif [ "$1" = "--run" ]; then printf "statement-mismatch\\n"; fi\n', { mode: 0o700 });
+    fs.writeFileSync(path.join(root, 'Input.lean'), 'theorem goal : True := trivial');
+    fs.writeFileSync(path.join(root, 'Expected.lean'), 'def modkhExpected : Prop := False');
+    const result = await formalTools({ lean, leanContract: 'Expected.lean', leanTheorem: 'goal', timeoutMs: 1500 })[0]
+      .execute({ path: 'Input.lean' }, { root, approval });
+    if (typeof result === 'string') throw new Error(result);
+    const evidence = JSON.parse(result.output);
+    assert.equal(evidence.status, 'accepted', result.output);
+    assert.equal(evidence.code, 'TARGET_STATEMENT_MISMATCH', result.output);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

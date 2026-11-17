@@ -1,4 +1,18 @@
-export interface DelegationRequest { pluginId: string; task: string; context?: string; targetPaths?: string[] }
+export interface DelegationRequest {
+  pluginId: string;
+  task: string;
+  context?: string;
+  behaviorChange?: { before: string; after: string };
+  targetPaths?: string[];
+  formalInput?: { path: string; config?: string };
+}
+export interface HeadAssignment {
+  task: string;
+  targets: string[];
+  completion: { condition: string; evidence: string };
+  userRequest?: string;
+  behaviorChange?: NonNullable<DelegationRequest['behaviorChange']>;
+}
 export interface SubagentResult {
   agentId: string;
   runId: string;
@@ -6,6 +20,7 @@ export interface SubagentResult {
   text: string;
   cleanup: 'settled' | 'unknown';
   diagnostic?: string;
+  code?: 'EDIT_TURN_LIMIT';
   verification?: import('./verification.ts').Verification;
   formalEvidence?: unknown[];
 }
@@ -27,6 +42,7 @@ export interface DelegationRecord {
   tools: string[];
   /** Effective local tool intersection, captured before the model executes. */
   effectiveTools?: string[];
+  assignment?: HeadAssignment;
   state: 'starting' | 'running' | 'stopping' | 'finished';
   result?: SubagentResult;
 }

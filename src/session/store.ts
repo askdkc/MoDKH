@@ -212,12 +212,13 @@ export class Session {
     if (session.compaction && safeBoundary(session.messages, session.compaction.from) !== session.compaction.from) {
       session.compaction = undefined;
     }
+    if (session.delegations().some(r => !r.result || r.result.status === 'unknown')) session.status = 'interrupted';
     return session;
   }
 
   private recoverPending(call: ToolCall): ToolResult {
     const base = { callId: call.id, name: call.name };
-    if (call.name === 'run_subagent') {
+    if (call.name === 'run_subagent' || call.name === 'start_subagent') {
       const record = [...this.delegationLog.values()].find(row => row.callId === call.id);
       if (record?.state === 'finished' && record.result) {
         try {

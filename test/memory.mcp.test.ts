@@ -24,12 +24,11 @@ readline.createInterface({input: process.stdin}).on('line', (line) => {
   const send = (result) => process.stdout.write(JSON.stringify({jsonrpc:'2.0', id:m.id, result}) + '\n');
   if (m.method === 'initialize') return send({serverInfo:{name:'boundary'}});
   if (name === 'memory_policy') {
-    const reply = () => send({content:[{type:'text', text:JSON.stringify({global:{read:mode !== 'deny',write:true},projects:[{id:'p',name:'P',read:mode !== 'deny'}]})}]});
-    if (mode === 'slow-policy') return setTimeout(reply, 200);
-    return reply();
+    if (mode === 'hold-policy') return;
+    return send({content:[{type:'text', text:JSON.stringify({global:{read:mode !== 'deny',write:true},projects:[{id:'p',name:'P',read:mode !== 'deny'}]})}]});
   }
   if (name === 'memory_capture') {
-    if (mode === 'delayed') return setTimeout(() => send({content:[{type:'text',text:'saved'}]}), 200);
+    if (mode === 'hold-capture') return;
     if (mode === 'error') return send({isError:true,content:[{type:'text',text:'rejected'}]});
     if (mode === 'empty') return send(null);
   }
@@ -37,12 +36,12 @@ readline.createInterface({input: process.stdin}).on('line', (line) => {
 });
 `;
 
-async function withMemory(mode: string, run: (mem: KiokukoMemory, dir: string) => Promise<void>) {
+async function withMemory(mode: string, run: (mem: KiokukoMemory, dir: string) => Promise<void>, callTimeoutMs = 5000) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-mem-boundary-'));
   const mem = openKiokukoMemory(true, {
     command: process.execPath, args: ['-e', BOUNDARY_SERVER],
     env: { LOG_FILE: path.join(dir, 'calls.jsonl'), MODE: mode },
-    callTimeoutMs: mode === 'slow-policy' ? 1000 : 60,
+    callTimeoutMs,
   });
   try { await run(mem, dir); }
   finally { await mem.close(); fs.rmSync(dir, { recursive: true, force: true }); }
@@ -84,7 +83,7 @@ test('Stop後は接続せず、承認中のStop後も保存を送信しない', 
 });
 
 test('policy応答待ちのStop後に新しい承認を出さない', async () => {
-  await withMemory('slow-policy', async (mem, dir) => {
+  await withMemory('hold-policy', async (mem, dir) => {
     const ac = new AbortController();
     let prompts = 0;
     const watch = setInterval(() => {
@@ -103,22 +102,25 @@ test('policy応答待ちのStop後に新しい承認を出さない', async () =
 });
 
 test('保存送信後の応答タイムアウトはunknownで、自動再送しない', async () => {
-  await withMemory('delayed', async (mem, dir) => {
+  await withMemory('hold-capture', async (mem, dir) => {
     assert.ok(await mem.policy());
     assert.equal(await mem.captureIfApproved({ title: 't', body: 'b' }, async () => true), 'unknown');
     assert.equal(readCalls(dir).filter((c) => c.call === 'memory_capture').length, 1);
-  });
+  }, 1000);
 });
 
 test('保存送信後のStopはunknown、MCPの明示エラーはunavailable', async () => {
-  await withMemory('delayed', async (mem, dir) => {
+  await withMemory('hold-capture', async (mem, dir) => {
     assert.ok(await mem.policy());
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 30);
+    const watch = setInterval(() => {
+      if (readCalls(dir).some((c) => c.call === 'memory_capture')) ac.abort();
+    }, 5);
     try {
       assert.equal(await mem.captureIfApproved({ title: 't', body: 'b' }, async () => true, ac.signal), 'unknown');
+      assert.equal(ac.signal.aborted, true);
       assert.equal(readCalls(dir).filter((c) => c.call === 'memory_capture').length, 1);
-    } finally { clearTimeout(timer); }
+    } finally { clearInterval(watch); }
   });
   await withMemory('error', async (mem) => {
     assert.equal(await mem.captureIfApproved({ title: 't', body: 'b' }, async () => true), 'unavailable');

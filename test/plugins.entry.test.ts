@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import http from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
+import { createHash } from 'node:crypto';
 
 const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 test('public CLI discovers built-in subagent plugins without starting a model', () => {
@@ -32,27 +33,34 @@ test('/agents is discoverable without connecting a model', () => {
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('bare CLI dispatches two language roles and returns both results to the parent', async t => {
+for (const mode of ['built-in', 'Lisp']) test(`normal chat dispatches ${mode} language roles and returns the declaration range`, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-default-moa-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const home = path.join(root, 'home');
   fs.mkdirSync(home);
+  const lispArgs: string[] = [];
+  if (mode === 'Lisp') {
+    const preset = ['formal', 'language-microagents'].map(name =>
+      fs.readFileSync(new URL(`../experiments/presets/${name}.lisp`, import.meta.url), 'utf8')).join('\n');
+    fs.writeFileSync(path.join(root, 'agents.lisp'), preset);
+    lispArgs.push('chat', '--lisp-config', 'agents.lisp', '--trust-lisp-sha256', createHash('sha256').update(preset).digest('hex'));
+  }
   fs.writeFileSync(path.join(root, 'client.ts'), 'export function typedClient(): string { return "ok"; }');
   fs.writeFileSync(path.join(root, 'server.js'), 'export function jsServer() { return "ok"; }');
   const toolCall = (id: string, name: string, args: object) => ({
     tool_calls: [{ index: 0, id, type: 'function', function: { name, arguments: JSON.stringify(args) } }],
   });
-  const ask = (language: string, path: string) => toolCall(`delegate-${language}`, 'run_subagent', {
-    pluginId: `modkh-micro-${language}-outline`, task: `Inspect ${path}`,
+  const ask = (language: string, kind: string, task: string) => toolCall(`delegate-${language}`, 'run_subagent', {
+    pluginId: `${mode === 'built-in' ? 'modkh-' : ''}micro-${language}-${kind}`, task,
   });
   const steps = [
     toolCall('roles', 'list_subagents', {}),
-    ask('ts', 'client.ts'),
+    ask('ts', 'outline', 'Outline client.ts'),
     toolCall('ts-outline', 'code_outline', { path: 'client.ts' }),
     { content: 'TypeScript outline inspected' },
-    ask('js', 'server.js'),
-    toolCall('js-outline', 'code_outline', { path: 'server.js' }),
-    { content: 'JavaScript outline inspected' },
+    ask('js', 'syntax-search', 'Find the declaration of jsServer in server.js'),
+    toolCall('js-syntax-search', 'code_syntax_search', { path: 'server.js', query: 'jsServer' }),
+    { content: 'server.js 1:1-1:44 function_declaration jsServer' },
     { content: 'Both language results integrated' },
   ];
   const requests: { messages: unknown[]; tools: { function: { name: string } }[] }[] = [];
@@ -78,29 +86,33 @@ test('bare CLI dispatches two language roles and returns both results to the par
     modelBaseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
     language: { autoInstall: false },
   }));
-  const child = spawn(process.execPath, [entry], {
+  const child = spawn(process.execPath, [entry, ...lispArgs], {
     cwd: root, env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' },
     stdio: ['pipe', 'pipe', 'pipe'], timeout: 15000,
   });
   let output = '';
   child.stdout.on('data', chunk => { output += chunk; });
   child.stderr.on('data', chunk => { output += chunk; });
-  child.stdin.end('client.ts と server.js の構造を調べ、結果をまとめて。\n/exit\n');
+  child.stdin.end('client.ts の構造と server.js の jsServer 宣言の範囲を調べて。\n/exit\n');
   const [exitCode] = await once(child, 'close');
   assert.equal(exitCode, 0, output);
   assert.match(output, /Both language results integrated/);
   assert.equal(requests.length, steps.length, output);
   const firstRequest = JSON.stringify(requests[0].messages);
-  assert.match(firstRequest, /ユーザーから分担の指定がない場合も/);
-  assert.match(firstRequest, /対象言語ごとに委譲/);
-  for (const index of [2, 5]) {
-    assert.deepEqual(requests[index].tools.map(tool => tool.function.name), ['code_outline']);
+  if (mode === 'Lisp') {
+    assert.match(firstRequest, /役小角/);
+    assert.match(firstRequest, /micro-js-syntax-search/);
+  } else {
+    assert.match(firstRequest, /親自身が並行して進める仕事/);
+    assert.match(firstRequest, /start_subagent/);
   }
+  assert.deepEqual(requests[2].tools.map(tool => tool.function.name), ['code_outline']);
+  assert.deepEqual(requests[5].tools.map(tool => tool.function.name), ['code_syntax_search']);
   assert.match(JSON.stringify(requests[3].messages), /typedClient/);
-  assert.match(JSON.stringify(requests[6].messages), /jsServer/);
+  assert.match(JSON.stringify(requests[6].messages), /1:1-1:44 function_declaration jsServer/);
   const parentMessages = JSON.stringify(requests[7].messages);
   assert.match(parentMessages, /TypeScript outline inspected/);
-  assert.match(parentMessages, /JavaScript outline inspected/);
+  assert.match(parentMessages, /1:1-1:44 function_declaration jsServer/);
 });
 
 function sandbox(t: { after(fn: () => void): void }) {

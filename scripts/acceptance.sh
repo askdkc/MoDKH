@@ -122,7 +122,7 @@ MODKH_TEST_ENTRY="$CLI" MODKH_TEST_CHAT="$WORK/install/node_modules/modkh/dist/c
   "$ROOT/test/cli.interactive.test.ts" "$ROOT/test/cli.safety.test.ts" \
   "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.compaction.test.ts" "$ROOT/test/cli.memory.test.ts" "$ROOT/test/cli.tui.test.ts" \
   "$ROOT/test/cli.agenticreplay.test.ts" "$ROOT/test/terminal.drag-copy.test.ts" \
-  "$ROOT/test/plugins.entry.test.ts" "$ROOT/test/composer.flow.test.ts" "$ROOT/test/cli.harness.test.ts"
+  "$ROOT/test/plugins.entry.test.ts" "$ROOT/test/subagents.cli.test.ts" "$ROOT/test/composer.flow.test.ts" "$ROOT/test/cli.harness.test.ts"
 
 # 10) 言語機能: 配布物から空の管理領域へ実TypeScriptサーバーを自動導入し、診断・再利用・編集後の再診断を確認。
 PROJLANG="$WORK/langproject"

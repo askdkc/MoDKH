@@ -1,3 +1,4 @@
+import { headCheckCompletion } from './head-checks.ts';
 import fs from 'node:fs';
 import { loadLispConfiguration } from '../lisp/config.ts';
 import { routeIntent, routeRole } from '../lisp/routing.ts';
@@ -12,6 +13,7 @@ import { PluginManager } from '../plugins/manager.ts';
 import { SubagentService, subagentTools } from '../subagents/service.ts';
 import type { DelegationRequest } from '../subagents/types.ts';
 import { runDirectAgent } from './agents.ts';
+import { DEFAULT_SUBAGENT_LIMIT, parseSubagentLimit } from '../subagents/limits.ts';
 import { parseAgentSettings } from '../subagents/settings.ts';
 import { ToolRegistry, defaultToolsWithJobs } from '../tools/registry.ts';
 import { JobRegistry } from '../tools/jobs.ts';
@@ -54,11 +56,13 @@ export interface ChatOptions {
 
 const SYSTEM_PROMPT =
   'あなたは端末で動くコーディング支援です。'
-  + '複数のプログラミング言語にまたがる作業では、ユーザーから分担の指定がない場合も、親として対象言語ごとに委譲する。'
-  + '比較や整合性の確認もこの対象とする。必要なら対象ファイルを列挙してから list_subagents を実行し、'
-  + '各言語について調べる対象と確認事項を自分で決め、利用できる言語別の担当に run_subagent を一件ずつ呼ぶ。'
-  + '親が直接ファイルを調べるだけで済ませず、子の結果を回収して突き合わせる。'
-  + '担当がいない場合や担当のツールで確認しきれない点は親が補い、子の報告と実ツールの証拠を区別する。'
+  + '委譲前に子の具体的な担当・成果物と、親自身が並行して進める仕事を決める。'
+  + '独立した作業を分担できる場合は list_subagents で担当を確認し start_subagent で起動する。'
+  + '単独の子を起動して待つだけなら原則として自分で作業する。専門担当の権限が必要な場合は例外とする。'
+  + '子の起動は完了ではない。空き枠の範囲で複数の子を統括し、親も独立した調査・比較・統合を進める。'
+  + 'list_subagent_runs で状態、subagent_output で結果を取得し、不要な子は cancel_subagent で停止する。'
+  + '依存する仕事しか残っていない場合にだけ待機する。編集対象を分け、同じ作業を重複させない。'
+  + '子の結果とツールの証拠を突き合わせ、親が全体の統合・検証・完了判定を行う。'
   + '作業ルート内のファイルを読み、変更は edit_file / create_file、確認は run_command を使う。ファイルツールは作業ルート内に制限される。'
   + 'run_command は1回ごとに新しいシェルで動く。cd は次の呼び出しに残らないので cwd を指定し、'
   + 'bash/zsh 固有の構文が必要なときだけ shell を指定する。'
@@ -74,7 +78,7 @@ const SYSTEM_PROMPT =
   + '元の依頼を保ち、実行終了・テスト成功・目標達成を区別する。'
   + 'ツールの error / denied / not-executed は成功ではない。修正可能なら原因を調べて修正し、編集・検証に成功した証拠だけを報告する。'
   + '結果不明の操作を再送せず、状態を調べる。未確認の事項は未確認と報告する。'
-  + 'シンボル探索では文字列検索より code_outline / code_definition / code_references / code_hover を優先する。'
+  + '宣言の一覧は code_outline、名前が分かる宣言の範囲は code_syntax_search を使う。返された範囲の現行ソースを読んでから編集する。定義・参照・型情報には code_definition / code_references / code_hover を使う。'
   + 'read_file と編集成功後の結果には構文構造やLSP診断が付く。解析は失敗し得る補助情報であり、編集の成否や副作用の有無を変えない。'
   + '診断0件・未通知・古い版は別の状態として扱い、未取得を成功とみなさない。';
 
@@ -134,6 +138,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     session = loadResumedSession(store, args['resume'], cwd);
     ui.write(`セッション ${session.id} を再開します(${session.messages.length}メッセージ)\n`);
     if (session.lastError) ui.write(`前回のエラー: ${session.lastError}\n`);
+    const unfinished = session.delegations().filter(r => !r.result || r.result.status === 'unknown');
+    if (unfinished.length) ui.write(`注意: 子の保存結果が不明な実行が${unfinished.length}件あります。自動では再実行しません。/head から list_subagent_runs / subagent_output で確認できます。\n`);
     const unknown = session.unknownToolResults();
     if (unknown.length > 0) {
       ui.write(
@@ -227,9 +233,23 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     ui.setUsage?.(usageTotals);
   };
   ui.setSubagent?.(null, session.delegationCount);
+  const boundInputs = lisp?.headChecks?.inputs;
+  const editorPath = lisp?.entries.find(entry => entry.descriptor.id === boundInputs?.editor)
+    ?.definition.verificationManifest?.sources[0];
+  const headInputs = boundInputs && {
+    tla: boundInputs.tla, cfg: boundInputs.cfg, lean: boundInputs.lean,
+    ...(boundInputs.editor && editorPath ? { editor: { id: boundInputs.editor, path: editorPath } } : {}),
+  };
+  let activeUserRequest: string | undefined;
   const subagents = new SubagentService({
-    manager, store, parent: session, root: cwd, tools: [...tools, ...languageTools(language), ...formalTools({ lean: args.lean, java: args.java, tlaJar: args['tla-jar'] })], approval,
-    settings: agentSettings.settings, unavailable: agentSettings.unavailable, verificationIsolation,
+    manager, store, parent: session, root: cwd, tools: [...tools, ...languageTools(language), ...formalTools({
+      lean: args.lean, leanContract: args['lean-contract'], leanTheorem: args['lean-theorem'],
+      java: args.java, tlaJar: args['tla-jar'],
+    })], approval,
+    hasBackgroundJobs: () => jobs.list().some(job => job.status === 'running' || job.status === 'stopping'),
+    maxConcurrent: parseSubagentLimit(config.subagentLimit) ?? DEFAULT_SUBAGENT_LIMIT,
+    settings: agentSettings.settings, unavailable: agentSettings.unavailable, verificationIsolation, headInputs,
+    headUserRequest: () => activeUserRequest,
     connection: (configured) => {
       const ref = configured ?? modelId;
       if (!ref) throw new Error('/connect でモデルを接続してください');
@@ -265,8 +285,19 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     return formatDiagnostics(result);
   };
   const headTools = lisp ? tools.filter(t => ['read_file', 'list_files', 'search_files'].includes(t.name)) : tools;
-  const headSystem = lisp ? 'MoDKH (Mixture of DKH) head. Discover assigned roles and Japanese titles with list_subagents, then delegate concrete work with run_subagent. Edit roles require explicit targetPaths. You have no direct editing, shell or formal verification authority. Integrate persisted child tool evidence and host verification, not self-reported completion. Report failures and unknowns honestly.' : SYSTEM_PROMPT;
-  const registry = new ToolRegistry([...headTools, ...languageTools(language), ...subagentTools(subagents)]);
+  const headSystem = lisp ? [
+    'MoDKH (Mixture of DKH) head. You have no direct editing, shell or formal verification authority. Edit roles require explicit targetPaths. Integrate persisted child tool evidence and host verification. Report failures and unknowns honestly.',
+    lisp.headInstruction
+      ? `Trusted Lisp head instruction:\n${lisp.headInstruction}\n\nConfigured local roles (pluginId, language, taskKind, tools): ${JSON.stringify(
+        lisp.entries.filter(entry => entry.descriptor.enabled).map(({ descriptor, definition }) =>
+          [descriptor.id, descriptor.language, descriptor.taskKind, definition.tools]),
+      )}`
+      : 'Discover assigned roles with list_subagents. Delegate independent work with start_subagent, keep distinct ownership and collect subagent_output. Use list_subagent_runs for status and cancel_subagent for unnecessary work. Wait only when all remaining work depends on children.',
+    ...(headInputs ? [`Lispで指定された対象: ${JSON.stringify(headInputs)}。依頼を一責務ずつに分解し、各担当の作業・対象・完了条件を定めて委譲する。編集担当には変更を実施する task、対象1件の targetPaths、同じ操作で観測できる現状と期待結果を behaviorChange: {before, after} で渡す。編集の完了は保護されたホストテストの passed と applied で確認する。前鬼には model と cfg、後鬼には証明元のみを formalInput で渡す。各検証の完了条件は設定済みホスト判定。編集担当が指定されている場合は先に編集を委譲し、前鬼、後鬼の順で結果を確認する。`] : []),
+    ...(lisp.entries.some(entry => entry.descriptor.enabled && entry.descriptor.taskKind === 'syntax-search')
+      ? ['宣言の範囲が必要なときは、言語に合う syntax-search 担当にファイル一件と宣言名を渡す。編集担当には返されたファイル・範囲と変更条件を引き継ぎ、編集前に現行のソースを読み取らせる。'] : []),
+  ].join('\n\n') : SYSTEM_PROMPT;
+  const registry = new ToolRegistry([...subagents.parentTools([...headTools, ...languageTools(language)]), ...subagentTools(subagents)]);
 
   // 任意メモリ(既定無効)。接続不能でも会話は続く。
   const memory = openKiokukoMemory(config.memory.enabled, {
@@ -300,6 +331,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     ui.write(`\n▶ You: ${input}${images.length ? ` [画像${images.length}枚]` : ''}\n`, 'user');
     session.setStatus('active');
     session.append({ role: 'user', content: input, ...(images.length ? { images } : {}) });
+    activeUserRequest = direct ? undefined : input;
     const checkpoint = () => session.persistFrom(0);
     const ac = new AbortController();
     const onSigint = () => {
@@ -340,6 +372,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       let supplied = false;
       let requests = 0;
       const hooks = {
+        onSubagentWait: () => ui.setActivity?.('独立作業を終え、子の完了を待機中… Ctrl+Cで中止'),
         onModelRequest: () => {
           ui.setActivity?.(`モデル応答を待機中（${++requests}回目）… Ctrl+Cで中止`);
           if (memoryText !== null && !supplied) {
@@ -356,7 +389,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           ui.setReasoning?.(null);
           ui.write(`\n▶ ${call.name} ${summarizeArgs(call.args)}\n`);
         },
-        onToolStart: ({ name }: { name: string }) => ui.setActivity?.(name === 'run_subagent'
+        onToolStart: ({ name }: { name: string }) => ui.setActivity?.(name === 'start_subagent' ? '子エージェントを起動中' : name === 'run_subagent'
           ? '子エージェントの結果を待機中' : 'ツールを実行中'),
         onToolResult: (r: { status: string; output: string }) => {
           ui.setActivity?.('ツール結果を処理中');
@@ -369,10 +402,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       };
       const directOutcome = direct && await runDirectAgent(direct, session, registry, cwd, ac.signal, approval, ui);
       const continueInChat = !directOutcome || (directOutcome.outcome === 'complete' && followups.length > 0 && !ac.signal.aborted);
-      const turnSkills = continueInChat ? prepareSkillContext(input, cwd) : undefined;
+      const turnSkills = continueInChat && !lisp?.headInstruction ? prepareSkillContext(input, cwd) : undefined;
       if (turnSkills && !lisp) sessionSkills = mergeSkillContext(sessionSkills, turnSkills);
       const guidance = lisp ? turnSkills : sessionSkills;
-      const system = headSystem + (lisp?.headInstruction ? `\n\nTrusted Lisp head instruction:\n${lisp.headInstruction}` : '') + (guidance?.text ?? '');
+      const system = headSystem + (guidance?.text ?? '');
       if (continueInChat && !lisp && guidance && !ac.signal.aborted) {
         if (guidance.selected.length) ui.write(`(参考手順: ${guidance.selected.join(', ')} / ${guidance.bytes} bytes)\n`);
         for (const warning of guidance.warnings) ui.write(`(スキル: ${warning})\n`);
@@ -384,6 +417,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const outcome = continueInChat ? await runAgentLoop(session.messages, {
         model: activeModel!,
         registry,
+        subagents,
         root: cwd,
         system,
         ...(transientContext ? { transientContext } : {}),
@@ -416,6 +450,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           return next;
         } } : {}),
         takeFollowups,
+        ...headCheckCompletion({ config: lisp, input, session, registry, root: cwd, signal: ac.signal,
+          approval, onToolCall: hooks.onToolCall, onToolResult: hooks.onToolResult }),
         analyze,
         maxTurns,
         skills: false, // The CLI already assembled the session guidance and per-turn memory.
@@ -452,6 +488,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       }
 
     } finally {
+      activeUserRequest = undefined;
+      await subagents.cancelAll('Parent turn ended');
       finishFollowups?.(followups.splice(0));
       ui.setActivity?.(null);
       process.removeListener('SIGINT', onSigint);
@@ -608,7 +646,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         continue;
       }
       if (line === '/help') {
-        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /usage: トークン使用量  /allow: 承認ポリシー  /agents: 子の一覧  /agents run [ID]: 子に依頼  /exit: 終了\n'
+        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /usage: トークン使用量  /allow: 承認ポリシー  /agents: 子の一覧・同時実行数  /agents limit <数>: 子の上限変更  /agents run [ID]: 子に依頼  /exit: 終了\n'
           + 'macOS: 会話のテキストをドラッグして選択するとコピーします。\n'
           + '/reasoning off|minimal|low|medium|high [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信（実行中の追加依頼はテキストのみ） / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');
         continue;
@@ -622,9 +660,20 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       }
       if (line === '/agents' || line.startsWith('/agents ')) {
         const available = subagents.list();
+        if (line.startsWith('/agents limit')) {
+          const match = /^\/agents limit ([1-9]\d*)$/.exec(line);
+          const limit = match ? parseSubagentLimit(Number(match[1])) : null;
+          if (limit === null) { ui.write('使い方: /agents limit <1〜16>（子の同時実行数。親1は別枠）\n'); continue; }
+          subagents.setMaxConcurrent(limit);
+          ui.write(`子の同時実行数: ${limit}（親1 + 子${limit} = 最大${limit + 1}）。実行中の子は停止しません。\n`);
+          try { updateConfig(current => { current.subagentLimit = limit; }); ui.write('(同時実行数を設定に保存しました)\n'); }
+          catch (e) { ui.write(`(設定を保存できません: ${String(e)} — このセッションでは有効です)\n`); }
+          continue;
+        }
         if (line === '/agents') {
+          ui.write(`子の同時実行数: ${subagents.maxConcurrent}（親1 + 子${subagents.maxConcurrent} = 最大${subagents.maxConcurrent + 1}）\n/agents limit <1〜16> で変更・保存\n`);
           for (const item of available) ui.write(`${item.id}  ${item.title}  ${item.kind}  ${item.description}\n`);
-          ui.write(available.length ? '/agents run <ID> で依頼 (子の自動再開・並列実行なし)\n' : '利用可能な子はありません。modkh plugin list と設定を確認してください。\n');
+          ui.write(available.length ? '/agents run <ID> で手動実行。通常の会話では子を並行起動できます（再起動後の自動再開なし）\n' : '利用可能な子はありません。modkh plugin list と設定を確認してください。\n');
           continue;
         }
         const match = /^\/agents run(?:\s+([a-z][a-z0-9-]*))?(?:\s+([\s\S]*))?$/.exec(line);
@@ -703,6 +752,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   } finally {
     clearInterval(serversTimer);
     // 主処理・永続化が失敗しても補助プロセスを回収する。
+    await subagents.cancelAll('Session closed');
     await jobs.close().catch(e => process.stderr.write(`ジョブ停止失敗: ${String(e)}\n`));
     await memory.close().catch(e => process.stderr.write(`メモリ切断失敗: ${String(e)}\n`));
     await language.close().catch(e => process.stderr.write(`言語サーバー終了失敗: ${String(e)}\n`));

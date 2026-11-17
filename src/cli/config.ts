@@ -12,6 +12,7 @@ export interface LiteConfig {
   memory: MemoryConfig;
   /** Validated per plugin by the subagent boundary; malformed entries fail closed. */
   subagents?: unknown;
+  subagentLimit?: unknown;
   /** Validated by parseLanguageSettings; malformed values fall back to defaults. */
   language?: unknown;
   /** all | workspace | none. Validated by parsePermissionPolicy; malformed values fall back. */
@@ -69,7 +70,7 @@ export function defaultConfig(): LiteConfig {
 }
 
 /** 書き込み時に意味を持つ既知のキー。これ以外は利用者の手書き設定として保持する。 */
-const KNOWN_KEYS = new Set(['memory', 'subagents', 'language', 'permissions', 'maxTurns', 'model', 'modelBaseUrl', 'reasoning', 'timeoutMs']);
+const KNOWN_KEYS = new Set(['memory', 'subagents', 'subagentLimit', 'language', 'permissions', 'maxTurns', 'model', 'modelBaseUrl', 'reasoning', 'timeoutMs']);
 
 function readRawConfig(): string | undefined {
   try { return fs.readFileSync(configPath(), 'utf8'); } catch { return undefined; }
@@ -90,6 +91,7 @@ function toLiteConfig(parsed: Record<string, unknown>): LiteConfig {
     : undefined;
   return {
     subagents: parsed.subagents,
+    subagentLimit: parsed.subagentLimit,
     language: parsed.language,
     permissions: parsed.permissions,
     maxTurns: parsed.maxTurns,

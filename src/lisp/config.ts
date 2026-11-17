@@ -4,10 +4,11 @@ import { readBundledSkill, MODKH_SKILL_BINDING } from '../agent/bundled-skills.t
 import type { LocalDefinition, PluginDescriptor } from '../plugins/api.ts';
 import { executeBounded, privateEnvironment, temporaryDirectory, sha256 } from './runtime.ts';
 export interface SessionDefinition { descriptor: PluginDescriptor; definition: LocalDefinition }
-export interface LispConfiguration { digest: string; entries: SessionDefinition[]; headInstruction?: string }
-const TOOLS = new Set(['code_outline', 'code_definition', 'code_references', 'code_diagnostics', 'code_hover', 'edit_file', 'verify_tla', 'verify_lean']);
+export interface HeadChecks { inputs?: { tla: string; cfg: string; lean: string; editor?: string } }
+export interface LispConfiguration { digest: string; entries: SessionDefinition[]; headInstruction?: string; headChecks?: HeadChecks }
+const TOOLS = new Set(['code_outline', 'code_syntax_search', 'code_definition', 'code_references', 'code_diagnostics', 'code_hover', 'edit_file', 'verify_tla', 'verify_lean']);
 const LANGUAGES = new Set(['php', 'common-lisp', 'js', 'ts', 'svelte', 'tailwindcss', 'html', 'css', 'tla', 'lean']);
-const KINDS = new Set(['outline', 'definition', 'references', 'diagnostics', 'hover', 'edit', 'verify']);
+const KINDS = new Set(['outline', 'syntax-search', 'definition', 'references', 'diagnostics', 'hover', 'edit', 'verify']);
 export const REQUIRED_SKILLS = ['kiokuko-single-purpose-functions', 'one-shot-software-completion'] as const;
 
 function string(value: unknown, name: string, max: number): string {
@@ -62,11 +63,36 @@ export function validateDefinitions(raw: unknown, digest: string): SessionDefini
 }
 
 // This is Common Lisp evaluated by SBCL, not an S-expression parser in JavaScript.
+function validateHeadChecks(value: unknown, entries: SessionDefinition[]): HeadChecks | undefined {
+  if (value === null) return undefined;
+  for (const [id, tool] of [['micro-zenki', 'verify_tla'], ['micro-goki', 'verify_lean']]) {
+    if (!entries.some(entry => entry.descriptor.id === id && entry.definition.tools.includes(tool))) {
+      throw new Error(`Head checks require ${id} with ${tool}`);
+    }
+  }
+  if (value === true) return {};
+  if (!Array.isArray(value) || value.length < 3 || value.length > 4) throw new Error('Invalid head check inputs');
+  const [tla, cfg, lean] = paths(value.slice(0, 3));
+  if (path.extname(tla) !== '.tla' || path.extname(cfg) !== '.cfg' || path.extname(lean) !== '.lean') {
+    throw new Error('Head check inputs must be a .tla, .cfg and .lean file');
+  }
+  const editor = value[3];
+  if (editor !== undefined && !entries.some(entry => entry.descriptor.id === editor &&
+    entry.descriptor.enabled && entry.definition.verificationManifest?.sources.length === 1)) {
+    throw new Error('Head check editor must have exactly one owner-configured source');
+  }
+  return { inputs: { tla, cfg, lean, ...(typeof editor === 'string' ? { editor } : {}) } };
+}
+
 const DRIVER = String.raw`
-(defpackage :modkh (:use :cl) (:export :defmicroagent :register-agent :disable-agent :remove-agent :list-agents :set-agent-check :set-head-instruction))
+(defpackage :modkh (:use :cl) (:export :defmicroagent :register-agent :disable-agent :remove-agent :list-agents :set-agent-check :set-head-instruction :require-head-checks :set-head-check-inputs))
 (in-package :modkh)
 (defvar *agents* (make-hash-table :test 'equal))
 (defvar *head-instruction* nil)
+(defvar *head-checks* nil)
+(defun require-head-checks () (setf *head-checks* t))
+(defun set-head-check-inputs (tla cfg lean &optional editor)
+  (setf *head-checks* (if editor (list tla cfg lean editor) (list tla cfg lean))))
 (defun set-head-instruction (instruction)
   (check-type instruction string)
   (setf *head-instruction* instruction))
@@ -108,6 +134,8 @@ const DRIVER = String.raw`
     (load "input.lisp" :verbose nil :print nil))
   (write-string "{\"headInstruction\":" protocol)
   (json-value *head-instruction* protocol)
+  (write-string ",\"headChecks\":" protocol)
+  (json-value *head-checks* protocol)
   (write-string ",\"entries\":[" protocol)
   (loop for row being the hash-values of *agents* for i from 0 do
     (when (> i 0) (write-char #\, protocol)) (write-char #\{ protocol)
@@ -135,10 +163,13 @@ export async function loadLispConfiguration(file: string, trustedDigest: string,
     });
     settled = receipt.cleanup === 'settled';
     if (receipt.state !== 'exited' || receipt.exitCode !== 0) throw new Error(`Lisp evaluation ${receipt.state}/${receipt.exitCode}: ${receipt.stderr.slice(0, 4096)}`);
-    const { entries, headInstruction } = JSON.parse(receipt.stdout);
+    const { entries, headInstruction, headChecks } = JSON.parse(receipt.stdout);
+    const definitions = validateDefinitions(entries, trustedDigest);
+    const checks = validateHeadChecks(headChecks, definitions);
     return {
       digest: trustedDigest,
-      entries: validateDefinitions(entries, trustedDigest),
+      entries: definitions,
+      ...(checks ? { headChecks: checks } : {}),
       ...(headInstruction === null ? {} : { headInstruction: string(headInstruction, 'head instruction', 8192) }),
     };
   } finally { if (settled) fs.rmSync(dir, { recursive: true, force: true }); }

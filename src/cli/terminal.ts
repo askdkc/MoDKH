@@ -50,7 +50,7 @@ export const COMMANDS: readonly Choice[] = [
   { value: '/connect', label: '/connect', detail: 'プロバイダーに接続' },
   { value: '/models', label: '/models', detail: 'モデルを選択' },
   { value: '/reasoning', label: '/reasoning', detail: '推論レベル (off/minimal/low/medium/high)' },
-  { value: '/agents', label: '/agents', detail: '子エージェントの一覧・委譲' },
+  { value: '/agents', label: '/agents', detail: '子の一覧・委譲・同時実行数' },
   { value: '/usage', label: '/usage', detail: 'トークン使用量の内訳' },
   { value: '/allow', label: '/allow', detail: '承認ポリシー (all / workspace / none)' },
   { value: '/keys', label: '/keys', detail: '保存済みAPIキー' },
@@ -977,7 +977,7 @@ export class TerminalUI implements ChatTerminal {
     const rule = '─'.repeat(SIDEBAR_WIDTH - 4);
     const divider = separatorRoom >= 6 ? [' ', rule, ' '] : separatorRoom >= 2 ? [rule] : [];
     const sidebar = ['', ...usageRows, ...divider,
-      `${SUBAGENTS_HEADING} ${this.subagent ? 1 : 0}稼働 / 累計${this.delegationCount}`];
+      `${SUBAGENTS_HEADING} ${this.subagent?.runningCount ?? (this.subagent ? 1 : 0)}稼働 / 累計${this.delegationCount}`];
     if (pane) sidebar.push(`${pane.phase} · ${Math.floor((performance.now() - this.subagentStarted) / 1000)}秒`,
       pane.task.split(/\r?\n/, 1)[0], pane.pluginId);
     sidebar.push(...divider, `${SERVERS_HEADING} ${this.servers.length}稼働`, ...serverRows);

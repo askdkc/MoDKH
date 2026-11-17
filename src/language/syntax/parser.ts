@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { Parser, Language, Query } from 'web-tree-sitter';
+import { Parser, Language, Query, type Node } from 'web-tree-sitter';
 import { grammarPaths } from './assets.ts';
 
 export interface StructureNode {
@@ -9,6 +9,12 @@ export interface StructureNode {
   startColumn: number;
   endLine: number;
   endColumn: number;
+  declaration: {
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+  };
 }
 
 export interface SyntaxResult {
@@ -17,6 +23,7 @@ export interface SyntaxResult {
   /** Present only on success; a failure reason is supplied otherwise. */
   nodes?: StructureNode[];
   errorCount?: number;
+  truncated?: boolean;
   detail?: string;
 }
 
@@ -37,8 +44,7 @@ const DEFINITION_QUERIES: Record<string, string> = {
 (type_alias_declaration name: (type_identifier) @name)
 (enum_declaration name: (identifier) @name)
 (method_definition name: (property_identifier) @name)
-(lexical_declaration (variable_declarator name: (identifier) @name))
-(export_statement declaration: (function_declaration name: (identifier) @name))`,
+(lexical_declaration (variable_declarator name: (identifier) @name))`,
   python: `(function_definition name: (identifier) @name)
 (class_definition name: (identifier) @name)`,
   rust: `(function_item name: (identifier) @name)
@@ -114,33 +120,54 @@ export async function verifyGrammar(grammar: string): Promise<{ ok: boolean; det
 }
 
 const MAX_STRUCTURE_NODES = 400;
-export async function outline(grammar: string, source: string, limit = MAX_STRUCTURE_NODES): Promise<SyntaxResult> {
+
+function describeDeclaration(name: Node): StructureNode {
+  let declaration = name.parent ?? name;
+  if (['variable_declarator', 'start_tag', 'function_declarator'].includes(declaration.type)) {
+    declaration = declaration.parent ?? declaration;
+  }
+  const kind = declaration.type;
+  const range = declaration.parent?.type === 'export_statement' ? declaration.parent : declaration;
+  return {
+    kind, name: name.text.slice(0, 200),
+    startLine: name.startPosition.row + 1,
+    startColumn: name.startPosition.column + 1,
+    endLine: name.endPosition.row + 1,
+    endColumn: name.endPosition.column + 1,
+    declaration: {
+      startLine: range.startPosition.row + 1,
+      startColumn: range.startPosition.column + 1,
+      endLine: range.endPosition.row + 1,
+      endColumn: range.endPosition.column + 1,
+    },
+  };
+}
+
+export async function outline(grammar: string, source: string, options: { nameIncludes?: string } = {}): Promise<SyntaxResult> {
   const query = definitionQuery(grammar);
   if (!query) return { status: 'unsupported', language: grammar, detail: 'この言語の構造抽出は未対応' };
   let tree;
+  let matcher;
   try {
     const bundle = await load(grammar);
     tree = bundle.parser.parse(source);
     if (!tree) return { status: 'error', language: grammar, detail: '構文木を作成できなかった' };
-    const matcher = new Query(bundle.language, query);
+    matcher = new Query(bundle.language, query);
     const nodes: StructureNode[] = [];
+    let truncated = false;
     for (const capture of matcher.captures(tree.rootNode)) {
-      if (nodes.length >= limit) break;
-      const node = capture.node;
-      nodes.push({
-        kind: node.parent?.parent?.type ?? node.parent?.type ?? node.type,
-        name: node.text.slice(0, 200),
-        startLine: node.startPosition.row + 1,
-        startColumn: node.startPosition.column + 1,
-        endLine: node.endPosition.row + 1,
-        endColumn: node.endPosition.column + 1,
-      });
+      if (options.nameIncludes && !capture.node.text.includes(options.nameIncludes)) continue;
+      if (nodes.length >= MAX_STRUCTURE_NODES) {
+        truncated = true;
+        break;
+      }
+      nodes.push(describeDeclaration(capture.node));
     }
-    matcher.delete();
-    return { status: 'ok', language: grammar, nodes, errorCount: countErrors(tree.rootNode) };
+    return { status: 'ok', language: grammar, nodes, truncated, errorCount: countErrors(tree.rootNode) };
   } catch (e) {
     return { status: 'error', language: grammar, detail: e instanceof Error ? e.message : String(e) };
   } finally {
+    matcher?.delete();
     tree?.delete();
   }
 }

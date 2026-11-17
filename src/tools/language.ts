@@ -5,7 +5,7 @@ import { ToolError, type Tool } from '../agent/types.ts';
 import { resolveInRoot, assertRealInRoot } from './guard.ts';
 import { detectLanguage } from '../language/detect.ts';
 import { formatDiagnostics, type LanguageService } from '../language/lsp/service.ts';
-import { outline, verifyGrammar, type SyntaxResult } from '../language/syntax/parser.ts';
+import { outline, verifyGrammar, type StructureNode } from '../language/syntax/parser.ts';
 import { offsetToPosition, positionToOffset } from '../language/positions.ts';
 import type { ServerDiagnostic } from '../language/lsp/client.ts';
 
@@ -39,36 +39,45 @@ function renderDiagnostics(items: ServerDiagnostic[], root: string): string {
   }).join('\n');
 }
 
+function renderDeclaration(node: StructureNode): string {
+  const range = node.declaration;
+  const name = node.name?.replace(/\s+/g, ' ');
+  return `${range.startLine}:${range.startColumn}-${range.endLine}:${range.endColumn} ${node.kind}${name ? ` ${name} (名前位置 ${node.startLine}:${node.startColumn})` : ''}`;
+}
+
+async function describeSyntax(root: string, rel: string, query?: string): Promise<string> {
+  const { abs, text } = readSource(root, rel);
+  const detection = detectLanguage(abs, root);
+  if (!detection?.language.grammar) throw new ToolError('UNSUPPORTED', `構造抽出の対象外: ${rel}`);
+  const result = await outline(detection.language.grammar, text, { nameIncludes: query });
+  if (result.status !== 'ok' || !result.nodes) {
+    throw new ToolError(result.status === 'unsupported' ? 'UNSUPPORTED' : 'PARSE_FAILED',
+      `${rel} の構造を取得できない: ${result.detail ?? result.status}`);
+  }
+  const rows = result.nodes.map(renderDeclaration);
+  const summary = `${rel} (${detection.language.id}, ${rows.length}件${result.truncated ? 'まで表示' : ''}, 構文エラー候補${result.errorCount ?? 0})`;
+  return `${summary}\n${rows.join('\n') || '(構文上の一致なし)'}`;
+}
+
 /** Lazy: constructing the tools must stay cheap for subagents with no language work. */
 export function languageTools(service: LanguageService): Tool[] {
   const outlineTool: Tool = {
     readOnly: true,
     name: 'code_outline',
-    description: 'tree-sitterで構造(関数・クラス・メソッド等)を取得する。行・桁は1開始。構文上の同名を意味上の同一参照とは扱わない。',
+    description: 'Tree-sitterで関数・クラス・メソッド等と宣言全体の範囲を取得する。行・桁は1開始。終了位置は範囲に含まない。',
     parameters: { type: 'object', properties: {
       path: { type: 'string', description: '対象ファイル(ルート相対)' },
       server: { type: 'string', enum: ['tailwind'], description: 'Explicit semantic overlay' },
     }, required: ['path'] },
     async execute(args, ctx) {
-      const rel = requireString(args.path, 'path');
-      const file = resolveInRoot(ctx.root, rel);
-      assertRealInRoot(ctx.root, file);
-      const detection = detectLanguage(file, ctx.root);
-      if (!detection?.language.grammar) throw new ToolError('UNSUPPORTED', `構造抽出の対象外: ${rel}`);
-      const text = readSource(ctx.root, rel).text;
-      const result = await outline(detection.language.grammar, text);
-      if (result.status !== 'ok' || !result.nodes) {
-        throw new ToolError('PARSE_FAILED', `${rel} の構造を取得できない: ${result.detail ?? result.status}`);
-      }
-      const rows = result.nodes.map(node => `${node.startLine}:${node.startColumn}-${node.endLine}:${node.endColumn} ${node.kind}${node.name ? ` ${node.name}` : ''}`);
-      return `${rel} (${detection.language.id}, ${result.nodes.length}件, 構文エラー候補${result.errorCount ?? 0})\n${rows.join('\n') || '(構造なし)'}`;
+      return describeSyntax(ctx.root, requireString(args.path, 'path'));
     },
   };
 
   const syntaxSearchTool: Tool = {
     readOnly: true,
     name: 'code_syntax_search',
-    description: '構文上の定義を検索して名前と範囲を返す。意味上の参照ではない。',
+    description: 'Tree-sitterで構文上の宣言名を検索し、対象ファイルと宣言全体の範囲を返す。行・桁は1開始、終了位置は範囲に含まない。同名候補はそれぞれ返す。',
     parameters: { type: 'object', properties: {
       path: { type: 'string', description: '対象ファイル(ルート相対)' },
       server: { type: 'string', enum: ['tailwind'], description: 'Explicit semantic overlay' },
@@ -76,16 +85,10 @@ export function languageTools(service: LanguageService): Tool[] {
     }, required: ['path'] },
     async execute(args, ctx) {
       const rel = requireString(args.path, 'path');
-      const query = typeof args.query === 'string' ? args.query : '';
-      const file = resolveInRoot(ctx.root, rel);
-      assertRealInRoot(ctx.root, file);
-      const detection = detectLanguage(file, ctx.root);
-      if (!detection?.language.grammar) throw new ToolError('UNSUPPORTED', `構文検索の対象外: ${rel}`);
-      const result: SyntaxResult = await outline(detection.language.grammar, readSource(ctx.root, rel).text);
-      if (result.status !== 'ok' || !result.nodes) throw new ToolError('PARSE_FAILED', result.detail ?? result.status);
-      const hits = query ? result.nodes.filter(node => node.name?.includes(query)) : result.nodes;
-      return hits.length === 0 ? `${rel}: 構文上の一致なし（意味上の不在を意味しない）`
-        : hits.map(hit => `${hit.startLine}:${hit.startColumn} ${hit.kind} ${hit.name ?? ''}`).join('\n');
+      if (args.query !== undefined && typeof args.query !== 'string') {
+        throw new ToolError('INVALID_ARGS', 'query は宣言名の文字列で指定する');
+      }
+      return describeSyntax(ctx.root, rel, args.query);
     },
   };
 

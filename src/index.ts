@@ -14,6 +14,7 @@ const HELP = `modkh ${VERSION} — MoDKH (Mixture of DKH)
   modkh chat --model <provider>/<model> [--cwd <dir>] [--resume <id>] [--base-url <url>]
   modkh chat --lisp-config agents.lisp --trust-lisp-sha256 SHA256 [--sbcl PATH] [--verification-isolation required|integrity-only]
       [--routing auto] [--lean PATH] [--java PATH --tla-jar PATH]
+      [--lean-contract FILE.lean --lean-theorem NAME]
   modkh auth login chatgpt
   modkh session list
   modkh plugin list | add <directory> | enable <id> | disable <id> | remove <id>

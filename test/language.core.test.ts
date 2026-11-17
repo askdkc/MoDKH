@@ -113,6 +113,20 @@ test('outline keeps unicode line and column positions of the original source', a
   assert.equal(node.startLine, 2);
 });
 
+test('syntax search filters before the output limit and preserves distinct same-name declarations', async () => {
+  const source = [
+    ...Array.from({ length: 401 }, (_, index) => `const field${index} = 0;`),
+    'class A { reserve() {} }',
+    'class B { reserve() {} }',
+  ].join('\n');
+  assert.equal((await outline('typescript', source)).truncated, true);
+  const matches = await outline('typescript', source, { nameIncludes: 'reserve' });
+  assert.equal(matches.truncated, false);
+  assert.deepEqual(matches.nodes?.map(node => [node.name, node.kind, node.declaration.startLine]), [
+    ['reserve', 'method_definition', 402], ['reserve', 'method_definition', 403],
+  ]);
+});
+
 test('a broken grammar does not break other grammars in the same process', async () => {
   assert.equal((await verifyGrammar('nonexistent-grammar')).ok, false);
   assert.equal((await verifyGrammar('typescript')).ok, true);

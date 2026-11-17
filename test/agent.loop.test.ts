@@ -31,6 +31,66 @@ function delta(t: string): FixedStep {
   return [{ type: 'text-delta', text: t }];
 }
 
+for (const withCall of [false, true]) test(`output-limit recovery never replays truncated output or tools: ${withCall}`, async () => {
+  const root = tmpRoot();
+  try {
+    let recoveryRequests = 0;
+    const model = new FixedModel([
+      [...delta('unfinished plan'), ...(withCall ? [{
+        type: 'tool-call' as const, call: { id: 'partial', name: 'list_files', args: {} },
+      }] : []), { type: 'finish', stopReason: 'length' }],
+      [{ type: 'finish', stopReason: 'length' }],
+    ]);
+    const messages: AgentMessage[] = [{ role: 'user', content: 'Fix the code' }];
+    const result = await runAgentLoop(messages, {
+      model, registry: new ToolRegistry(defaultTools()), root, skills: false,
+      signal: new AbortController().signal, approval: new RecordingGate([]),
+      recoverOutputLimit: () => { recoveryRequests++; return { instruction: 'Resume with one next action' }; },
+    });
+    assert.deepEqual(result, { outcome: 'error', errorMessage: 'モデル応答は未完了: length' });
+    assert.equal(messages[1].role === 'assistant' && messages[1].content, 'unfinished plan');
+    assert.equal(recoveryRequests, withCall ? 0 : 1);
+    if (withCall) {
+      assert.equal(model.requests.length, 1);
+      assert.equal(messages[2].role === 'tool' && messages[2].results[0].status, 'not-executed');
+    } else {
+      assert.deepEqual(model.requests[1].messages, [
+        { role: 'user', content: 'Fix the code' }, { role: 'user', content: 'Resume with one next action' },
+      ]);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('output-limit recovery blocks calls outside the temporary scope and restores ordinary tools', async () => {
+  const root = tmpRoot();
+  try {
+    const model = new FixedModel([
+      [{ type: 'finish', stopReason: 'length' }],
+      [
+        { type: 'tool-call', call: { id: 'outside', name: 'list_files', args: {} } },
+        { type: 'tool-call', call: { id: 'extra', name: 'read_file', args: { path: 'demo.txt' } } },
+        { type: 'finish', stopReason: 'tool-calls' },
+      ],
+      [{ type: 'finish', stopReason: 'stop' }],
+    ]);
+    const messages: AgentMessage[] = [{ role: 'user', content: 'Fix the code' }];
+    assert.equal((await runAgentLoop(messages, {
+      model, registry: new ToolRegistry(defaultTools()), root, system: 'Ordinary system', skills: false,
+      signal: new AbortController().signal, approval: new RecordingGate([]),
+      recoverOutputLimit: () => ({
+        instruction: 'Read one target',
+        scope: { system: 'Scoped system', tool: 'read_file', accepts: call => call.args.path === 'demo.txt' },
+      }),
+    })).outcome, 'complete');
+    assert.deepEqual(model.requests[1].tools.map(tool => tool.name), ['read_file']);
+    assert.equal(model.requests[1].system, 'Scoped system');
+    assert.equal(model.requests[2].system, 'Ordinary system');
+    assert.deepEqual(model.requests[2].tools, model.requests[0].tools);
+    assert.deepEqual(messages.flatMap(message => message.role === 'tool'
+      ? message.results.map(result => result.status) : []), ['not-executed', 'not-executed']);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('pinned skill context keeps the system prompt byte-identical across tool steps', async () => {
   const root = tmpRoot();
   try {
@@ -338,4 +398,29 @@ test('follow-ups received during the final answer are sent in order before the t
     { role: 'user', content: 'third request' },
   ]);
   assert.equal(model.requests.length, 2);
+});
+
+test('a definitive rejection stops remaining calls in the same model response', async () => {
+  const messages: AgentMessage[] = [{ role: 'user', content: 'Verify then edit' }];
+  let rejected = false;
+  const calls = ['verify', 'edit'].map(name => ({ id: name, name, args: {} }));
+  const model = new FixedModel([[
+    ...calls.map(call => ({ type: 'tool-call' as const, call })),
+    { type: 'finish', stopReason: 'tool-calls' },
+  ]]);
+  const registry = new ToolRegistry(calls.map(({ name }) => ({
+    name, description: name, parameters: { type: 'object', properties: {} },
+    execute: async () => {
+      assert.equal(name, 'verify');
+      rejected = true;
+      return { status: 'error' as const, output: 'Mismatch' };
+    },
+  })));
+  const result = await runAgentLoop(messages, {
+    model, registry, root: process.cwd(), approval: new RecordingGate([]), signal: new AbortController().signal,
+    skills: false, terminalToolBlock: () => rejected ? 'Mismatch' : undefined,
+  });
+  assert.equal(result.outcome, 'error');
+  const receipts = messages.flatMap(message => message.role === 'tool' ? message.results : []);
+  assert.deepEqual(receipts.map(receipt => [receipt.callId, receipt.status]), [['verify', 'error'], ['edit', 'not-executed']]);
 });

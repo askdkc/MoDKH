@@ -22,6 +22,7 @@ test('real Node acceptance fails before edit and passes after; verifier immutabl
     assert.equal(before.state,'exited');assert.notEqual(before.exitCode,0);
     const verifierHash=sha256(fs.readFileSync(path.join(f.root,'test/add.test.mjs')));
     edit=new EditVerification(f.root,f.definition,['src/add.mjs']);
+    assert.equal(fs.existsSync(path.join(edit.root,'test/add.test.mjs')),false,'protected verifier is absent while the editor runs');
     const ctx={root:f.root,approval,signal:new AbortController().signal};
     for(const tool of edit.tools()) await assert.rejects(tool.execute({path:'test/add.test.mjs',old_string:'5',new_string:'-1'},ctx),/allowlist/);
     await edit.tools()[1].execute({path:'src/add.mjs',old_string:'a-b',new_string:'a+b'},ctx);
@@ -137,4 +138,21 @@ test('host required OS isolation never runs an unconfined checker or applies edi
     assert.deepEqual(saved.sourceDigests,result.sourceDigests);
     await assert.rejects(edit.verify(approval,new AbortController().signal),/single-use/);
   } finally {edit.close();fs.rmSync(f.root,{recursive:true,force:true});}
+});
+
+test('reverting the snapshot clears its pending change', async () => {
+  const f = fixture();
+  const edit = new EditVerification(f.root, f.definition, ['src/add.mjs']);
+  try {
+    const tool = edit.tools().find(tool => tool.name === 'edit_file')!;
+    const ctx = { root: edit.root, approval };
+    assert.equal(edit.hasChanges(), false);
+    await tool.execute({ path: 'src/add.mjs', old_string: 'a-b', new_string: 'a+b' }, ctx);
+    assert.equal(edit.hasChanges(), true);
+    await tool.execute({ path: 'src/add.mjs', old_string: 'a+b', new_string: 'a-b' }, ctx);
+    assert.equal(edit.hasChanges(), false);
+  } finally {
+    edit.close();
+    f.close();
+  }
 });
