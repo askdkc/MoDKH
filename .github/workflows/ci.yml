@@ -23,10 +23,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y sbcl build-essential
+          sudo apt-get install -y sbcl build-essential poppler-utils
       - name: macOSの実試験依存
         if: runner.os == 'macOS'
-        run: brew install sbcl
+        run: brew install sbcl poppler
       - name: 実試験ランタイム確認
         run: |
           sbcl --version

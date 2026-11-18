@@ -133,10 +133,10 @@ for (const mode of ['compile-only', 'proved', 'rejected']) test(`ordinary chat r
     }
     if (bound) {
       assert.match(output, /形式検証は合格.*前鬼.*Stateright.*passed.*後鬼.*Lean.*proved/);
-      assert.doesNotMatch(output, /目標達成の検証は未確認/);
+      assert.doesNotMatch(output, /依頼全体の検証結果はありません/);
     } else {
       assert.doesNotMatch(output, /形式検証は合格/);
-      assert.match(output, /目標達成の検証は未確認/);
+      assert.match(output, /依頼全体の検証結果はありません/);
     }
     if (mode === 'proved') assert.match(output, /状態: complete/);
     if (mode !== 'compile-only') {

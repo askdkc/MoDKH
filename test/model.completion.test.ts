@@ -56,3 +56,21 @@ for (const finish of [null, 'length', 'tool_calls']) {
     } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
   });
 }
+
+test('Responses reports progress while the next tool call is still incomplete', async () => {
+  const events = [
+    { type: 'response.created' },
+    { type: 'response.output_item.added', item: { type: 'reasoning' } },
+    { type: 'response.output_item.added', item: { type: 'function_call', name: 'write_file' } },
+  ];
+  const stream = events.map(e => `data: ${JSON.stringify(e)}\n\n`).join('');
+  const model = new ResponsesApiModel({ accessToken: 'test', model: 'test', fetchImpl: async () => new Response(stream) });
+  const result: ModelEvent[] = [];
+  for await (const ev of model.stream({ messages: [], tools: [] }, new AbortController().signal)) result.push(ev);
+  assert.deepEqual(result.slice(0, -1), [
+    { type: 'activity', stage: 'accepted' },
+    { type: 'activity', stage: 'reasoning' },
+    { type: 'activity', stage: 'tool-input', toolName: 'write_file' },
+  ]);
+  assert.equal(result.at(-1)?.type, 'finish');
+});

@@ -45,6 +45,8 @@ export interface ChatTerminal {
   setUsage?(usage: UsageTotals): void;
   /** Running language servers; shown in the side pane next to usage and subagent status. */
   setServers?(servers: readonly RunningServer[]): void;
+  /** Whether a browse call is driving the browser right now; shown in the same pane. */
+  setBrowse?(active: boolean): void;
   /** Live reasoning text; `null` flushes it into the transcript. Display only, never a message. */
   setReasoning?(delta: string | null): void;
   close(): void;
@@ -57,6 +59,7 @@ export const COMMANDS: readonly Choice[] = [
   { value: '/reasoning', label: '/reasoning', detail: '推論レベル (off/minimal/low/medium/high/max)' },
   { value: '/agents', label: '/agents', detail: '子の一覧・委譲・同時実行数' },
   { value: '/usage', label: '/usage', detail: 'トークン使用量の内訳' },
+  { value: '/pdf', label: '/pdf', detail: 'PDFの本文と画像を送る · /pdf パス | 依頼文' },
   { value: '/tools', label: '/tools', detail: 'ツール履歴 · /tools <番号> で全文' },
   { value: '/allow', label: '/allow', detail: '承認ポリシー (all / workspace / none)' },
   { value: '/keys', label: '/keys', detail: '保存済みAPIキー' },
@@ -123,6 +126,13 @@ class PlainTerminal implements ChatTerminal {
       this.write(`\n(言語サーバー: ${server.id} 起動)\n`);
     }
   }
+  private browseAnnounced = false;
+  /** Line mode has no pane; announce each transition so piped runs stay observable. */
+  setBrowse(active: boolean): void {
+    if (this.browseAnnounced === active) return;
+    this.browseAnnounced = active;
+    this.write(active ? `\n(${BROWSE_ACTIVE_LABEL})\n` : '\n(browse 終了)\n');
+  }
   close(): void { this.lines.close(); }
   ask(title: string, signal?: AbortSignal): Promise<string | null> { this.write(`${title}\n`); return this.next(signal); }
   confirm(title: string, signal?: AbortSignal): Promise<string | null> { return this.ask(title + ' [y/N]', signal); }
@@ -171,6 +181,8 @@ function serverRow(server: RunningServer, workspace: string): string {
 /** At most this many language servers are listed; the rest are counted, never silently dropped. */
 const SIDEBAR_SERVER_ROWS = 3;
 const SERVERS_HEADING = '言語サーバー';
+/** 右欄に出す browse 実行中の表示。行全体がこの文字列になる。 */
+const BROWSE_ACTIVE_LABEL = 'browse in use';
 const SUBAGENTS_HEADING = 'サブエージェント';
 const TRANSCRIPT_HISTORY_ROWS = 4000;
 /**
@@ -220,10 +232,13 @@ export class TerminalUI implements ChatTerminal {
   private followup?: (text: string) => string | null;
   private subagent: SubagentActivity | null = null;
   private subagentStarted = 0;
-  private subagentTimer?: NodeJS.Timeout;
+  private activityStarted = 0;
+  private progressTimer?: NodeJS.Timeout;
   private usage: UsageTotals | null = null;
   /** Running language servers, refreshed by the owner; null means nothing is running. */
   private servers: readonly RunningServer[] = [];
+  /** True while a browse call is driving the browser. Display only. */
+  private browse = false;
   private closed = false;
   private paste = false;
   private pasteBuffer = '';
@@ -363,7 +378,28 @@ export class TerminalUI implements ChatTerminal {
 
   write(text: string, kind: TranscriptKind = 'system'): void { this.appendTranscript(text, kind); this.render(); }
   setModel(model: string | null): void { this.model = model; this.render(); }
-  setActivity(activity: string | null): void { if (this.activity !== activity) { this.activity = activity; this.render(); } }
+  setActivity(activity: string | null): void {
+    if (this.closed || this.activity === activity) return;
+    this.activity = activity;
+    this.activityStarted = performance.now();
+    this.updateProgressTimer();
+    this.render();
+  }
+
+  private activityLabel(): string | null {
+    if (!this.activity) return null;
+    const seconds = Math.floor((performance.now() - this.activityStarted) / 1000);
+    return `${this.activity} · ${seconds}秒`;
+  }
+
+  private updateProgressTimer(): void {
+    if (this.activity || this.subagent) {
+      this.progressTimer ??= setInterval(this.render, 1000).unref();
+    } else {
+      clearInterval(this.progressTimer);
+      this.progressTimer = undefined;
+    }
+  }
   beginFollowups(submit: (text: string) => string | null): (unsent: string[]) => void {
     this.followup = submit;
     this.render();
@@ -411,15 +447,18 @@ export class TerminalUI implements ChatTerminal {
     this.delegationCount = delegationCount;
     if (activity && !this.subagent) {
       this.subagentStarted = performance.now();
-      this.subagentTimer = setInterval(this.render, 1000).unref();
-    } else if (!activity) {
-      clearInterval(this.subagentTimer);
-      this.subagentTimer = undefined;
     }
     this.subagent = activity;
+    this.updateProgressTimer();
     this.render();
   }
   setUsage(usage: UsageTotals): void { this.usage = usage; this.render(); }
+  /** Browse activity is display state; the browser itself is never started from here. */
+  setBrowse(active: boolean): void {
+    if (this.closed || this.browse === active) return;
+    this.browse = active;
+    this.render();
+  }
   /** Re-render only when the list actually changed; the owner polls this during analysis. */
   setServers(servers: readonly RunningServer[]): void {
     const same = this.servers.length === servers.length &&
@@ -640,7 +679,7 @@ export class TerminalUI implements ChatTerminal {
       out += `\x1b[${index + 1};1H${line.painted}`;
     });
     const hint = 'MoDKH · 会話履歴 · Esc 戻る';
-    const details = this.inputNotice || this.activity || 'ホイール / PgUp / PgDn';
+    const details = this.inputNotice || this.activityLabel() || 'ホイール / PgUp / PgDn';
     const footer = fitText(`${hint} · ${details}`, width);
     out += `\x1b[${rows};1H${this.paint(footer, `${this.panelStyle};${this.panelAccent}`)}`;
     if (this.hasUsagePane()) {
@@ -926,7 +965,7 @@ export class TerminalUI implements ChatTerminal {
     this.editorScroll = Math.max(0, Math.min(this.editorScroll, Math.max(0, editor.lines.length - inputRows)));
     for (let i = 0; i < inputRows; i++) {
       const line = editor.lines[this.editorScroll + i] ?? '';
-      const placeholder = i === 0 && !this.text ? (this.pending?.choices === APPROVAL_CHOICES ? '' : this.pending?.choices ? 'Search…' : this.pending?.title ?? this.activity ?? '処理中… Ctrl+C で中止') : '';
+      const placeholder = i === 0 && !this.text ? (this.pending?.choices === APPROVAL_CHOICES ? '' : this.pending?.choices ? 'Search…' : this.pending?.title ?? this.activityLabel() ?? '処理中… Ctrl+C で中止') : '';
       let text = `│ ${line || placeholder}`;
       if (compactChild && !this.pending && this.subagent && (!editingFollowup || (!this.text && i > 0))) {
         text = `│ ${[childPhase, this.subagent.pluginId, childTask][i] ?? ''}`;
@@ -934,7 +973,9 @@ export class TerminalUI implements ChatTerminal {
       lines.push({ text, style: placeholder && this.pending ? READABLE_TEXT_STYLE : '' });
     }
     const attachments = composer && this.images.length ? ` · 画像${this.images.length}枚 (Ctrl+Xで削除)` : '';
-    const status = this.inputNotice && !this.pending?.secret ? this.inputNotice : `MoDKH  ·  ${this.model ?? '未接続 — /connect'}${attachments}`;
+    // 右欄を置けない端末では、状態行に同じ表示を残す。
+    const browseBadge = this.browse && !showUsage ? ` · ${BROWSE_ACTIVE_LABEL}` : '';
+    const status = this.inputNotice && !this.pending?.secret ? this.inputNotice : `MoDKH  ·  ${this.model ?? '未接続 — /connect'}${attachments}${browseBadge}`;
     const modelStatus = `│ ${compactChild && (this.pending || editingFollowup) ? childPhase : status}`;
     // A notice is transient feedback, so it is emphasized beyond the standing status line.
     lines.push({ text: modelStatus, style: this.inputNotice && !this.pending?.secret ? `${this.panelAccent};1` : this.panelAccent });
@@ -1070,13 +1111,16 @@ export class TerminalUI implements ChatTerminal {
   };
 
   private sidebarSubagent(rows: number, usageHeight: number): SubagentActivity | null {
-    return this.started && !this.pending && rows - usageHeight - 3 >= 3 + Number(this.servers.length > 0)
+    // A browse row takes one line before the subagent block, so it must be reserved here too.
+    const browseHeight = this.browse ? 1 : 0;
+    return this.started && !this.pending && rows - usageHeight - 3 - browseHeight >= 3 + Number(this.servers.length > 0)
       ? this.subagent : null;
   }
 
   private sidebarLines(rows: number, usageRows: string[]): string[] {
     const pane = this.sidebarSubagent(rows, usageRows.length);
-    const serverRoom = rows - usageRows.length - 3 - (pane ? 3 : 0);
+    const browseRow = this.browse ? BROWSE_ACTIVE_LABEL : null;
+    const serverRoom = rows - usageRows.length - 3 - (browseRow ? 1 : 0) - (pane ? 3 : 0);
     const servers = this.servers.slice(0, Math.min(SIDEBAR_SERVER_ROWS, serverRoom));
     const serverRows = servers.map(server => serverRow(server, this.cwd));
     const rest = this.servers.length - servers.length;
@@ -1084,7 +1128,7 @@ export class TerminalUI implements ChatTerminal {
     const separatorRoom = serverRoom - serverRows.length;
     const rule = '─'.repeat(SIDEBAR_WIDTH - 4);
     const divider = separatorRoom >= 6 ? [' ', rule, ' '] : separatorRoom >= 2 ? [rule] : [];
-    const sidebar = ['', ...usageRows, ...divider,
+    const sidebar = ['', ...usageRows, ...(browseRow ? [browseRow] : []), ...divider,
       `${SUBAGENTS_HEADING} ${this.subagent?.runningCount ?? (this.subagent ? 1 : 0)}稼働 / 累計${this.delegationCount}`];
     if (pane) sidebar.push(`${pane.phase} · ${Math.floor((performance.now() - this.subagentStarted) / 1000)}秒`,
       pane.task.split(/\r?\n/, 1)[0], pane.pluginId);
@@ -1095,7 +1139,8 @@ export class TerminalUI implements ChatTerminal {
   private paintSidebarRow(content: string): string {
     const right = fitText(content, SIDEBAR_WIDTH - 4);
     const border = this.paint('│', ACCENT);
-    const heading = content.startsWith(USAGE_HEADING) || content.startsWith(SUBAGENTS_HEADING) || content.startsWith(SERVERS_HEADING);
+    const heading = content.startsWith(USAGE_HEADING) || content.startsWith(SUBAGENTS_HEADING)
+      || content.startsWith(SERVERS_HEADING) || content === BROWSE_ACTIVE_LABEL;
     const style = heading ? `${this.panelStyle};1` : this.panelStyle;
     const padding = ' '.repeat(SIDEBAR_WIDTH - 3 - textWidth(right));
     const panel = this.paint(` ${right}${padding}`, style);
@@ -1136,7 +1181,7 @@ export class TerminalUI implements ChatTerminal {
       this.keyInput?.destroy();
       this.output.write('\x1b[?1006l\x1b[?1002l');
     }
-    clearInterval(this.subagentTimer);
+    clearInterval(this.progressTimer);
     this.clipboardTask?.abort(); this.clipboardTask = undefined;
     this.images = [];
     this.pending?.finish(null);

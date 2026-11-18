@@ -10,7 +10,7 @@ export interface LoopHooks {
   onSkillContext?(context: SkillContext): void;
   /** Input passed to the adapter, not proof of provider receipt or memory application. */
   onModelRequest?(): void;
-  onModelActivity?(stage: 'reasoning' | 'tool-input'): void;
+  onModelActivity?(stage: Extract<ModelEvent, { type: 'activity' }>['stage'], toolName?: string): void;
   /** Provider-reported reasoning text, for display only; it never enters the transcript messages. */
   onReasoning?(delta: string): void;
   /** Provider-reported token usage for one completed step; never an estimate. */
@@ -178,7 +178,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
         if (ev.type === 'usage') {
           opts.hooks?.onUsage?.(ev);
         } else if (ev.type === 'activity') {
-          opts.hooks?.onModelActivity?.(ev.stage);
+          opts.hooks?.onModelActivity?.(ev.stage, ev.toolName);
         } else if (ev.type === 'text-delta') {
           text += ev.text;
           opts.hooks?.onText?.(ev.text);

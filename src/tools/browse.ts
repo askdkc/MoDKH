@@ -7,6 +7,32 @@ import { browseExecutable } from './browser-capability.ts';
 
 const run = promisify(execFile);
 const actions = ['status', 'navigate', 'snapshot', 'click', 'fill'] as const;
+
+/**
+ * 同一プロセス内で実行中の browse 呼び出し数。親・子・直接実行のどの経路でも
+ * このモジュールを通るため、表示側はここだけを見ればよい。表示専用で権限は変えない。
+ * status のような接続確認も含め、browse プロセスが動いている間を「使用中」とする。
+ */
+let activeCalls = 0;
+const activityListeners = new Set<(active: boolean) => void>();
+
+/** `active` は実行中かどうか。購読直後にも現在値を1回渡す。解除関数を返す。 */
+export function watchBrowseActivity(listener: (active: boolean) => void): () => void {
+  activityListeners.add(listener);
+  listener(activeCalls > 0);
+  return () => { activityListeners.delete(listener); };
+}
+
+export function browseActiveCalls(): number { return activeCalls; }
+
+function setActiveCalls(next: number): void {
+  if (next === activeCalls) return;
+  activeCalls = next;
+  for (const listener of activityListeners) {
+    try { listener(activeCalls > 0); } catch { /* 表示側の失敗はツール結果を変えない */ }
+  }
+}
+
 function browseArgs(args: Record<string, unknown>): string[] {
   const { action, url, ref, text } = args;
   const tab = typeof args.tab === 'string' && /^\d+$/.test(args.tab) ? Number(args.tab) : args.tab;
@@ -35,12 +61,17 @@ export function browseTools(): Tool[] {
       const rel = path.relative(fs.realpathSync(ctx.root), executable);
       if (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)) throw new ToolError('DENIED', 'Workspace browse executable is not trusted');
       const argv = browseArgs(args);
+      // すべての browse 呼び出しを「使用中」として数える。status も数えるので、
+      // 接続確認だけを行った場合でも同じ規則で表示できる(実行が終われば消える)。
+      setActiveCalls(activeCalls + 1);
       try {
         const result = await run(executable, argv, { cwd: ctx.root, signal: ctx.signal, timeout: 45000, maxBuffer: 128 * 1024 });
         return result.stdout || result.stderr;
       } catch (error) {
         const e = error as Error & { stderr?: string };
         return { status: args.action === 'status' || args.action === 'snapshot' ? 'error' : 'unknown', output: (e.stderr || e.name).slice(0, 4096) };
+      } finally {
+        setActiveCalls(activeCalls - 1);
       }
     },
   }];

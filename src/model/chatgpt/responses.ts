@@ -141,7 +141,15 @@ export class ResponsesApiModel implements Model {
             buffer = buffer.slice(separator.index + separator[0].length);
             const ev = parseSseData(rawEvent);
             if (ev === null) continue;
-            if (ev['type'] === 'response.output_text.delta') {
+            if (ev['type'] === 'response.created') {
+              yield { type: 'activity', stage: 'accepted' };
+            } else if (ev['type'] === 'response.output_item.added') {
+              const item = ev['item'] as { type?: string; name?: unknown } | null;
+              if (item?.type === 'reasoning') yield { type: 'activity', stage: 'reasoning' };
+              if (item?.type === 'function_call') {
+                yield { type: 'activity', stage: 'tool-input', toolName: typeof item.name === 'string' ? item.name : undefined };
+              }
+            } else if (ev['type'] === 'response.output_text.delta') {
               const text = ev['delta'];
               if (typeof text === 'string' && text.length > 0) {
                 yield { type: 'text-delta', text };

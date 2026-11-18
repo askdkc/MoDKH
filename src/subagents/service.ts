@@ -373,7 +373,7 @@ export class SubagentService {
               update('モデル応答を待機中');
             },
             onUsage: this.opts.onUsage,
-            onModelActivity: stage => update(stage === 'reasoning' ? '推論中' : 'ツール要求を受信中'),
+            onModelActivity: stage => update(stage === 'accepted' ? 'サーバーが要求を受理' : stage === 'reasoning' ? '推論中' : 'ツール要求を受信中'),
             onText: () => update('応答を受信中'),
             onToolStart: () => update('ツールを実行中'),
             onToolResult: () => update('ツール結果を処理中'),

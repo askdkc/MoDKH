@@ -98,7 +98,7 @@ export interface TokenUsage {
 
 /** モデルストリームのイベント。 */
 export type ModelEvent =
-  | { type: 'activity'; stage: 'reasoning' | 'tool-input' }
+  | { type: 'activity'; stage: 'accepted' | 'reasoning' | 'tool-input'; toolName?: string }
   | ({ type: 'usage' } & TokenUsage)
   | { type: 'text-delta'; text: string }
   /** Provider-reported reasoning. Shown to the human, never merged into assistant content. */

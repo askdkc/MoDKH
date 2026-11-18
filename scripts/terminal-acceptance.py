@@ -119,7 +119,7 @@ with tempfile.TemporaryDirectory(prefix='modkh-pty-') as home:
         wait_for('接続しました: ollama/llama3.2')
         send('こんにちは\r')
         wait_for('TUI_RESPONSE_OK')
-        wait_for('応答終了')
+        wait_for('回答できたよ！')
         send('slow\r')
         wait_for('WAITING_FOR_STOP')
         send('\x03')

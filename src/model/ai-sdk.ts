@@ -136,7 +136,8 @@ export class AiSdkModel implements Model {
           if (activity !== 'reasoning') { activity = 'reasoning'; yield { type: 'activity', stage: activity }; }
           if (part.type === 'reasoning-delta' && part.text.length > 0) yield { type: 'reasoning-delta', text: part.text };
         } else if (part.type === 'tool-input-start') {
-          if (activity !== 'tool-input') { activity = 'tool-input'; yield { type: 'activity', stage: activity }; }
+          activity = 'tool-input';
+          yield { type: 'activity', stage: activity, toolName: part.toolName };
         } else if (part.type === 'text-delta') {
           activity = undefined;
           yield { type: 'text-delta', text: part.text };

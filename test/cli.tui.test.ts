@@ -32,6 +32,10 @@ test('public CLI terminal path: logo → completion → model providers → conn
   fs.mkdirSync(path.join(home, 'test'));
   fs.writeFileSync(path.join(home, 'test', 'tsconfig.json'), '{}');
   fs.writeFileSync(path.join(home, 'test', 'app.test.ts'), 'const value = 2;\n');
+  // A browse executable that stays in flight long enough for the pane to be observed.
+  // It must live outside the workspace: a workspace-provided executable is not trusted.
+  const browseBin = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-tui-browse-'));
+  fs.writeFileSync(path.join(browseBin, 'browse'), '#!/bin/sh\nsleep 0.6\nprintf \'{"ok":true}\\n\'\n', { mode: 0o755 });
   const requests: Record<string, unknown>[] = [];
   let releaseChild: (() => void) | undefined;
   const childRequests = new EventEmitter();
@@ -77,6 +81,18 @@ test('public CLI terminal path: logo → completion → model providers → conn
         send({}, 'stop'); res.end('data: [DONE]\n\n');
         return;
       }
+      if (last.content === 'browse-check') {
+        send({ tool_calls: [{ index: 0, id: 'browse-1', type: 'function', function: {
+          name: 'browse', arguments: JSON.stringify({ action: 'navigate', url: 'https://example.com' }),
+        } }] }, null);
+        send({}, 'tool_calls'); res.end('data: [DONE]\n\n');
+        return;
+      }
+      if (last.tool_call_id === 'browse-1') {
+        send({ role: 'assistant', content: 'BROWSE_DONE' }, null);
+        send({}, 'stop'); res.end('data: [DONE]\n\n');
+        return;
+      }
       if (last.content === 'delegate' || last.content === 'delegate-stop') {
         send({ role: 'assistant', tool_calls: [{
           index: 0, id: last.content, type: 'function', function: {
@@ -112,6 +128,7 @@ test('public CLI terminal path: logo → completion → model providers → conn
   const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(preload)}`, entry], {
     cwd: home,
     env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '0', TERM: 'xterm-256color',
+      PATH: `${browseBin}${path.delimiter}${process.env.PATH ?? ''}`,
       OLLAMA_BASE_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
       OLLAMA_CLOUD_BASE_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/cloud/v1`, OLLAMA_API_KEY: '' },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -163,7 +180,14 @@ test('public CLI terminal path: logo → completion → model providers → conn
     await wait('TEST_INSPECTED');
     await wait(/│ 言語サーバー 1稼働 +│\n.*│ typescript · .*tui-entry-[^ │]+ +│/);
     await wait('何を調べますか');
+    send('browse-check\r');
+    // 実行中だけ出る。完了後は消える(接続状態ではなく実行状態を表す)。
+    await wait(/│ browse in use +│/);
+    await wait('BROWSE_DONE');
+    await wait('何を調べますか');
+    assert.doesNotMatch(visible(), /browse in use/);
     send('slow\r'); await wait('WAITING_FOR_STOP');
+    await wait(/モデル応答を受信中… Ctrl\+Cで中止 · [1-9]\d*秒/);
     send('\x03'); await wait('中断しました');
     send('delegate\r');
     await wait('子エージェントの結果を待機中');
@@ -213,8 +237,8 @@ test('public CLI terminal path: logo → completion → model providers → conn
     const journal = sessions.map(file => fs.readFileSync(path.join(home, 'sessions', file), 'utf8')).find(text => text.includes('cloud hello'))!;
     const messages = journal.trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'message');
     assert.deepEqual(messages.filter(row => row.message.role === 'user').map(row => row.message.content),
-      ['こんにちは', 'inspect-source', 'inspect-test', 'slow', 'delegate', '追加の依頼', 'delegate-stop', 'cloud hello', 'local again']);
-    assert.equal(requests.length, 13);
+      ['こんにちは', 'inspect-source', 'inspect-test', 'browse-check', 'slow', 'delegate', '追加の依頼', 'delegate-stop', 'cloud hello', 'local again']);
+    assert.equal(requests.length, 15);
     assert.doesNotMatch(output + journal, /tui-cloud-secret/);
     assert.doesNotMatch(journal, /\/connect/);
   } finally {
@@ -226,5 +250,6 @@ test('public CLI terminal path: logo → completion → model providers → conn
     }
     await closed;
     fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(browseBin, { recursive: true, force: true });
   }
 });

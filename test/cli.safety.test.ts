@@ -42,7 +42,8 @@ test('CLI error stays error after EOF and original user whitespace is retained',
     const session = store.load(store.list()[0].id);
     assert.equal(session.status, 'error');
     assert.deepEqual(session.messages[0], { role: 'user', content: '  original request  ' });
-    assert.match(result.output, /目標達成.*未確認/);
+    assert.equal(result.output.split('(応答終了)').length - 1, 1);
+    assert.doesNotMatch(result.output, /回答できたよ！|依頼全体の検証結果/);
     assert.equal(requests, 2);
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); fs.rmSync(home, { recursive: true, force: true }); }
 });

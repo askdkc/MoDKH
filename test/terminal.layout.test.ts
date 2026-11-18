@@ -265,6 +265,53 @@ test('line mode announces a started server once', async () => {
   }
 });
 
+test('browse activity is shown in the right-hand pane only while browse runs', async () => {
+  const t = terminal(110, 30);
+  try {
+    t.ui.write('▶ You: 調査\n', 'user');
+    assert.doesNotMatch(t.text(), /browse in use/);
+    t.ui.setBrowse?.(true);
+    const view = t.text();
+    assert.match(view, /│ browse in use +│/);
+    // The browse row sits next to usage and the language servers, not in the transcript.
+    const sections = view.split('\n').map(row => row.slice(row.indexOf('│')));
+    const browse = sections.findIndex(row => row.startsWith('│ browse in use'));
+    const subagents = sections.findIndex(row => row.startsWith('│ サブエージェント'));
+    assert.ok(browse < subagents, 'browse is reported above the subagent block');
+    t.ui.setBrowse?.(false);
+    assert.doesNotMatch(t.text(), /browse in use/);
+    assert.match(t.text(), /│ 言語サーバー 0稼働 +│/, 'the rest of the pane stays');
+    // 右欄を置けない高さでは状態行に同じ表示を残す(黙って消さない)。
+    t.output.rows = 8;
+    t.output.emit('resize');
+    t.ui.setBrowse?.(true);
+    assert.match(t.text(), /MoDKH +·.*· browse in use/);
+    t.ui.setBrowse?.(false);
+    assert.doesNotMatch(t.text(), /browse in use/);
+  } finally { t.ui.close(); }
+});
+
+test('line mode reports browse activity without a pane', async () => {
+  const previous = process.env.MODKH_PLAIN;
+  process.env.MODKH_PLAIN = '1';
+  const written: string[] = [];
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string) => { written.push(String(chunk)); return true; }) as typeof process.stdout.write;
+  try {
+    const plain = createTerminal('/workspace');
+    plain.setBrowse?.(true);
+    plain.setBrowse?.(true);
+    plain.setBrowse?.(false);
+    assert.equal(written.filter(line => line.includes('browse in use')).length, 1);
+    assert.equal(written.filter(line => line.includes('browse 終了')).length, 1);
+    plain.close();
+  } finally {
+    process.stdout.write = original;
+    if (previous === undefined) delete process.env.MODKH_PLAIN;
+    else process.env.MODKH_PLAIN = previous;
+  }
+});
+
 test('an approval temporarily takes the input without consuming the follow-up draft', async () => {
   const t = terminal();
   try {
