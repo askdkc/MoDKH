@@ -1,4 +1,6 @@
 import { emitKeypressEvents, type Key } from 'node:readline';
+import { activeFileMention, fileCandidates, formatFileMention, type FileCandidate, type FileMention } from './file-mentions.ts';
+import { isPdfPathPrefix } from './pdf.ts';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { TerminalMouseInput, type MouseReport } from './terminal-mouse.ts';
@@ -10,6 +12,7 @@ import { readClipboardImage, writeClipboardText, type ClipboardReader } from './
 import { MAX_IMAGES, parseImage, type ImageAttachment } from '../agent/images.ts';
 import type { ReadStream, WriteStream } from 'node:tty';
 import { LineSource } from './lines.ts';
+import { NYAN_FRAME_MS, NYAN_WIDTH, nyanRows } from './waiting-nyan.ts';
 import type { SubagentActivity } from '../subagents/service.ts';
 import type { RunningServer } from '../language/lsp/pool.ts';
 import {
@@ -32,6 +35,8 @@ export interface ChatTerminal {
   write(text: string, kind?: TranscriptKind): void;
   next(signal?: AbortSignal): Promise<string | null>;
   unread(line: string): void;
+  /** Restore a failed submission as editable text, without resubmitting it. */
+  restoreDraft?(text: string): void;
   ask(title: string, signal?: AbortSignal, secret?: boolean): Promise<string | null>;
   confirm(title: string, signal?: AbortSignal): Promise<string | null>;
   choose(title: string, choices: readonly Choice[], query?: string): Promise<string | null>;
@@ -39,6 +44,8 @@ export interface ChatTerminal {
   showPage(title: string, text: string): Promise<void>;
   setModel(model: string | null): void;
   setActivity?(activity: string | null): void;
+  setTurnToolCount?(count: number): void;
+  setAnimation?(enabled: boolean): void;
   /** Return an error to keep the draft, or null to accept it. */
   beginFollowups?(submit: (text: string) => string | null): (unsent: string[]) => void;
   setSubagent?(activity: SubagentActivity | null, delegationCount: number): void;
@@ -57,6 +64,7 @@ export const COMMANDS: readonly Choice[] = [
   { value: '/connect', label: '/connect', detail: 'プロバイダーに接続' },
   { value: '/models', label: '/models', detail: 'モデルを選択' },
   { value: '/reasoning', label: '/reasoning', detail: '推論レベル (off/minimal/low/medium/high/max)' },
+  { value: '/annimation', label: '/annimation', detail: '待機アニメーション (on/off)' },
   { value: '/agents', label: '/agents', detail: '子の一覧・委譲・同時実行数' },
   { value: '/usage', label: '/usage', detail: 'トークン使用量の内訳' },
   { value: '/pdf', label: '/pdf', detail: 'PDFの本文と画像を送る · /pdf パス | 依頼文' },
@@ -386,19 +394,42 @@ export class TerminalUI implements ChatTerminal {
     this.render();
   }
 
+  private turnToolCount?: number;
+
+  setTurnToolCount(count: number): void {
+    if (this.closed || this.turnToolCount === count) return;
+    this.turnToolCount = count;
+    this.render();
+  }
+
   private activityLabel(): string | null {
     if (!this.activity) return null;
     const seconds = Math.floor((performance.now() - this.activityStarted) / 1000);
     return `${this.activity} · ${seconds}秒`;
   }
 
+  private animationEnabled = process.env.MODKH_NO_ANIMATION !== '1';
+
+  setAnimation(enabled: boolean): void {
+    if (this.closed || this.animationEnabled === enabled) return;
+    this.animationEnabled = enabled;
+    this.updateProgressTimer();
+    this.render();
+  }
+
+  private nyanEnabled(): boolean {
+    return this.color && this.animationEnabled;
+  }
+
   private updateProgressTimer(): void {
-    if (this.activity || this.subagent) {
-      this.progressTimer ??= setInterval(this.render, 1000).unref();
-    } else {
-      clearInterval(this.progressTimer);
-      this.progressTimer = undefined;
-    }
+    clearInterval(this.progressTimer);
+    const interval = this.activity && this.nyanEnabled() ? NYAN_FRAME_MS : 1000;
+    this.progressTimer = this.activity || this.subagent ? setInterval(() => {
+      // Keep the ordinary seconds refresh while a prompt or draft occupies the composer.
+      if (interval === 1000 || (!this.pending && !this.text) ||
+          Math.floor((performance.now() - this.activityStarted) / 1000) !==
+          Math.floor((performance.now() - this.activityStarted - interval) / 1000)) this.render();
+    }, interval).unref() : undefined;
   }
   beginFollowups(submit: (text: string) => string | null): (unsent: string[]) => void {
     this.followup = submit;
@@ -476,6 +507,11 @@ export class TerminalUI implements ChatTerminal {
     this.render();
   }
   unread(line: string): void { this.queued.unshift(line); }
+  restoreDraft(text: string): void {
+    this.text = text;
+    this.cursor = chars(text).length;
+    this.render();
+  }
   get imageCount(): number { return this.images.length; }
   takeImages(): ImageAttachment[] { const images = this.images; this.images = []; this.render(); return images; }
   next(signal?: AbortSignal): Promise<string | null> { return this.wait('何を調べますか？ / でコマンド', undefined, '', signal, false, true); }
@@ -533,6 +569,35 @@ export class TerminalUI implements ChatTerminal {
     if (this.pending && !this.hiddenCompletion && this.text.startsWith('/') && !(/\s/.test(this.text))) return matching(COMMANDS, this.text);
     return undefined;
   }
+  private fileMenu?: { text: string; cursor: number; mention: FileMention; candidates: FileCandidate[]; selected: number; dismissed: boolean };
+
+  private fileOptions() {
+    if (!(this.pending ? this.pending.composer && !this.pending.secret : this.followup)) {
+      this.fileMenu = undefined;
+      return undefined;
+    }
+    if (this.fileMenu?.text !== this.text || this.fileMenu.cursor !== this.cursor) {
+      const mention = activeFileMention(this.text, chars(this.text).slice(0, this.cursor).join('').length);
+      const pdfPath = mention && !this.text.includes('\n') && isPdfPathPrefix(this.text.slice(0, mention.start));
+      this.fileMenu = mention ? { text: this.text, cursor: this.cursor, mention,
+        candidates: fileCandidates(this.cwd, mention.query, pdfPath ? name => /\.pdf$/i.test(name) : undefined),
+        selected: 0, dismissed: false } : undefined;
+    }
+    return this.fileMenu?.dismissed ? undefined : this.fileMenu;
+  }
+
+  private completeFile(mention: FileMention, candidate: FileCandidate): void {
+    const reference = formatFileMention(candidate.path);
+    const rest = this.text.slice(mention.end);
+    const separator = !candidate.directory && !/^\s/u.test(rest) ? ' ' : '';
+    const prefix = this.text.slice(0, mention.start) + reference + separator;
+    if (Buffer.byteLength(prefix + rest) > MAX_INPUT_BYTES) { this.inputNotice = '入力は128 KiB以内にしてください'; return; }
+    this.text = prefix + rest;
+    this.cursor = chars(prefix).length - (candidate.directory && reference.startsWith('@"') ? 1 : 0);
+    this.fileMenu = undefined;
+    this.inputNotice = '';
+  }
+
   private insertText(value: string): void {
     if (this.pending?.choices === APPROVAL_CHOICES || this.replySilenced) return; // OSC 返信の取り込みを入力にしない
     const normalized = clean(value.replace(/\r\n?/g, '\n').replace(/\t/g, '  '));
@@ -796,8 +861,10 @@ export class TerminalUI implements ChatTerminal {
       this.images.pop(); this.inputNotice = ''; this.render(); return;
     }
     const options = this.options();
+    const files = this.fileOptions();
     if (key.name === 'escape' || key.ctrl && key.name === 'd') {
       if (pending?.choices) pending.finish(null);
+      else if (files && key.name === 'escape') { files.dismissed = true; this.render(); }
       else if (options?.length && key.name === 'escape') { this.hiddenCompletion = true; this.render(); }
       else if (!this.text && key.ctrl) pending?.finish(null);
       return;
@@ -806,6 +873,9 @@ export class TerminalUI implements ChatTerminal {
     if (newline) this.insertText('\n');
     else if (options && (key.name === 'up' || key.name === 'down')) {
       this.selection = options.length ? (this.selection + (key.name === 'down' ? 1 : -1) + options.length) % options.length : 0;
+    } else if (files?.candidates.length && (key.name === 'up' || key.name === 'down')) {
+      const count = files.candidates.length;
+      files.selected = (files.selected + (key.name === 'down' ? 1 : -1) + count) % count;
     } else if (composer && key.name === 'up' && !this.text && this.previousInput) {
       this.text = this.previousInput;
       this.cursor = chars(this.text).length;
@@ -817,7 +887,9 @@ export class TerminalUI implements ChatTerminal {
       if (this.clipboardTask) { this.inputNotice = '画像の読込中です。完了後にEnterで送信'; this.render(); return; }
       const selected = options?.[this.selection];
       if (key.name === 'tab') {
-        if (selected && !pending?.choices) { this.text = selected.value; this.cursor = chars(this.text).length; }
+        const candidate = files?.candidates[files.selected];
+        if (files && candidate) this.completeFile(files.mention, candidate);
+        else if (selected && !pending?.choices) { this.text = selected.value; this.cursor = chars(this.text).length; }
       } else if (pending?.choices) { if (selected) pending.finish(selected.value); }
       else if (pending) pending.finish(selected?.value ?? this.text);
       else this.sendFollowup();
@@ -916,7 +988,9 @@ export class TerminalUI implements ChatTerminal {
     const usageRows = showUsage || stackUsage
       ? usageBreakdownLines(this.usage ?? EMPTY_USAGE, SIDEBAR_WIDTH - 4) : [];
     const stackedHeight = stackUsage ? usageRows.length : 0;
-    const inputRows = Math.min(Math.max(1, rows - 8 - stackedHeight), Math.max(composer ? 3 : 1, editor.lines.length));
+    const files = this.fileOptions();
+    const fileRows = files ? Math.max(1, Math.min(files.candidates.length, 4, Math.floor(rows / 6))) : 0;
+    const inputRows = Math.min(Math.max(1, rows - 8 - stackedHeight - fileRows), Math.max(composer ? 3 : 1, editor.lines.length));
     const options = this.options();
     const childPhase = this.subagent
       ? `${this.subagent.phase} · ${Math.floor((performance.now() - this.subagentStarted) / 1000)}秒` : '';
@@ -934,7 +1008,7 @@ export class TerminalUI implements ChatTerminal {
     // ライブの推論は見出し含めて表示。はみ出すときは古い行(先頭)から落とす。
     const reasoningText = this.reasoning.trimEnd() === '' ? [] :
       transcriptLines(`(推論)\n${this.reasoning.trimEnd()}`, width);
-    const reservedForBody = 1 /* divider */ + inputRows + 4 /* status/hints/cwd+footer */ + (options ? 2 : 0) + partialCount + stackedHeight;
+    const reservedForBody = 1 /* divider */ + inputRows + fileRows + 4 /* status/hints/cwd+footer */ + (options ? 2 : 0) + partialCount + stackedHeight;
     const maxReasoning = Math.max(0, Math.min(rows - reservedForBody - 1, 24));
     const liveReasoning = reasoningText.length === 0 ? [] :
       reasoningText.slice(Math.max(0, reasoningText.length - maxReasoning))
@@ -972,18 +1046,30 @@ export class TerminalUI implements ChatTerminal {
       }
       lines.push({ text, style: placeholder && this.pending ? READABLE_TEXT_STYLE : '' });
     }
+    if (files) {
+      const start = Math.max(0, Math.min(files.selected - fileRows + 1, files.candidates.length - fileRows));
+      if (!files.candidates.length) lines.push({ text: 'ファイル候補なし', style: '2' });
+      files.candidates.slice(start, start + fileRows).forEach((candidate, i) => {
+        const active = start + i === files.selected;
+        lines.push({ text: `${active ? '›' : ' '} ${candidate.path}`, style: active ? '97;44' : '' });
+      });
+    }
     const attachments = composer && this.images.length ? ` · 画像${this.images.length}枚 (Ctrl+Xで削除)` : '';
     // 右欄を置けない端末では、状態行に同じ表示を残す。
     const browseBadge = this.browse && !showUsage ? ` · ${BROWSE_ACTIVE_LABEL}` : '';
     const status = this.inputNotice && !this.pending?.secret ? this.inputNotice : `MoDKH  ·  ${this.model ?? '未接続 — /connect'}${attachments}${browseBadge}`;
-    const modelStatus = `│ ${compactChild && (this.pending || editingFollowup) ? childPhase : status}`;
+    const baseStatus = compactChild && (this.pending || editingFollowup) ? childPhase : status;
+    const count = this.turnToolCount === undefined ? '' : `今回のツール実行: ${this.turnToolCount}件`;
+    const badge = count && textWidth(baseStatus + ' · ' + count) <= controlWidth - 2 ? ` · ${count}` : '';
+    const modelStatus = `│ ${baseStatus}${badge}`;
     // A notice is transient feedback, so it is emphasized beyond the standing status line.
     lines.push({ text: modelStatus, style: this.inputNotice && !this.pending?.secret ? `${this.panelAccent};1` : this.panelAccent });
     const hints = editingFollowup ? `${compactChild && this.inputNotice ? this.inputNotice + '  ' : ''}Enter 追加の依頼を送信  Ctrl+C 中止`
       : !this.pending ? 'Ctrl+C 中止（入力は応答完了後）' : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
       : composer ? 'Enter 送信  Ctrl+J 改行  Ctrl+V 画像  Cmd+V テキスト' + (this.mouseInput ? '  ドラッグでコピー' : '') : 'Enter 決定  Ctrl+C 中止';
     const recallHint = (this.pending?.composer || editingFollowup) && !this.text && this.previousInput ? '↑ 前回の入力  ' : '';
-    lines.push({ text: recallHint + hints, style: '2' });
+    const fileHint = files ? '↑↓ ファイル選択  Tab 補完  Esc 閉じる' : '';
+    lines.push({ text: fileHint || recallHint + hints, style: '2' });
     // 右側の内訳を置けない端末では、最下段に使用量の要約を残す。
     const badgeRoom = controlWidth - textWidth(this.cwd) - 2;
     const usageStatus = !this.usageVisible || usageRows.length ? '' : this.usage?.responses
@@ -1004,7 +1090,15 @@ export class TerminalUI implements ChatTerminal {
       return this.paint(fitted, row.style);
     };
     const rightStart = columns - SIDEBAR_WIDTH;
-    const controls = lines.map(row => ' '.repeat(controlMargin) + styled(row, controlWidth));
+    const spriteStart = controlWidth - NYAN_WIDTH;
+    const spriteRows = lines.slice(optionsLines.length + 1, optionsLines.length + 4);
+    const showNyan = this.activity && !this.pending && !this.text && this.nyanEnabled() && inputRows >= 3 &&
+      spriteRows.every(row => textWidth(row.text) + 2 <= spriteStart);
+    const sprite = showNyan ? nyanRows(Math.floor((performance.now() - this.activityStarted) / NYAN_FRAME_MS), this.panelStyle) : [];
+    const controls = lines.map((row, i) => {
+      const art = sprite[i - optionsLines.length - 1];
+      return ' '.repeat(controlMargin) + (art ? styled(row, spriteStart) + art : styled(row, controlWidth));
+    });
     if (stackUsage) {
       controls.splice(controls.length - 2, 0, ...usageRows.map(row => ' '.repeat(rightStart) + this.paintSidebarRow(row)));
     }

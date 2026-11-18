@@ -21,6 +21,7 @@ modkh
 ```
 
 初回起動後、`/connect` で接続先とモデルを選びます。
+モデルやツールの応答を待っている間は、入力欄の空きにレインボー猫が走ります。`/annimation off` で非表示にし、`/annimation on` で戻せます。切り替えは起動中のみ有効です。最初から非表示にするには `MODKH_NO_ANIMATION=1 modkh` で起動してください。待機メッセージと経過時間は引き続き表示されます。
 
 `agenticreplay version` が成功する環境では、[AgenticReplay](https://github.com/askdkc/AgenticReplay) がモデル API の通信をワークスペースの `.agenticreplay/runs/` に記録します。Ollama や LM Studio などの HTTP モデル API も対象です。HTTPS は AgenticReplay の既定ホストと、起動時に `--base-url` で指定したホストを記録します。記録を止めて起動するには `MODKH_AGENTICREPLAY=0 modkh` を使います。
 
@@ -59,6 +60,8 @@ browse status --json
 
 案内に従ってブラウザ拡張を導入・接続し、ブラウザを開いた状態で使います。`--agent none` は他のエージェントへのMCP登録を省く指定です。`status` の `extension.connected` が `true` なら接続済みです。`paired-offline` の場合は、拡張を導入したプロファイルを開き、拡張が有効か確認してください。
 
-MoDKHには「browse CLIで `http://localhost:3000` を開き、画面操作とスクリーンショットで検証して」のように依頼します。操作方法は `browse --help` で確認できます。
+MoDKHの専用 `browse` ツールで開いたタブとポップアップは、応答の完了・エラー・中断時に自動で閉じます。既存のタブは閉じません。終了を確認できなかった場合は対象のグループ名を表示し、セッション終了時にも再確認します。
+
+`run_command` から直接 `browse` CLIを使う場合は自動終了の対象外です。開いたタブのIDを控え、作業後に `browse tabs close --tab <id>` で閉じてください。操作方法は `browse --help` で確認できます。
 
 [依存パッケージ](docs/setup.md) · [言語解析](docs/languages.md) · [Lispプリセット](docs/presets.md)

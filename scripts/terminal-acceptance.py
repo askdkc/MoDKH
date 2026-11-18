@@ -26,6 +26,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
 
+    def do_GET(self):
+        if self.path != '/v1/models':
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(b'{"object":"list","data":[{"id":"llama3.2"}]}')
+
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         requests.append(body)
@@ -62,6 +71,7 @@ with tempfile.TemporaryDirectory(prefix='modkh-pty-') as home:
     env = dict(os.environ, MODKH_HOME=home, TERM='xterm-256color',
                OLLAMA_BASE_URL=f'http://127.0.0.1:{server.server_port}/v1')
     env.pop('MODKH_PLAIN', None)
+    env.pop('MODKH_NO_ANIMATION', None)
     env.pop('NO_COLOR', None)  # This isolated run verifies blue; unit tests cover NO_COLOR.
     child = subprocess.Popen([NODE, str(ENTRY)], stdin=slave, stdout=slave, stderr=slave,
                              env=env, start_new_session=True)
@@ -119,9 +129,11 @@ with tempfile.TemporaryDirectory(prefix='modkh-pty-') as home:
         wait_for('接続しました: ollama/llama3.2')
         send('こんにちは\r')
         wait_for('TUI_RESPONSE_OK')
-        wait_for('回答できたよ！')
+        wait_for('作業が終わったよ！')
         send('slow\r')
         wait_for('WAITING_FOR_STOP')
+        wait_for('モデル応答を受信中… Ctrl+Cで中止 · 1秒')
+        assert '▀'.encode() in output[checkpoint:], 'expected the rainbow cat while waiting'
         send('\x03')
         wait_for('中断しました')
         release.set()

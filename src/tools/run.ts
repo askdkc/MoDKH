@@ -67,7 +67,7 @@ const PARAMETERS = {
     description: { type: 'string', description: '何をするコマンドか(5〜10語、命令形。例: "run unit tests")' },
     command: { type: 'string', description: '実行するコマンド' },
     cwd: { type: 'string', description: '作業ディレクトリ(ルート相対、既定はルート)' },
-    shell: { type: 'string', enum: [...SHELLS], description: '使用するシェル(既定 sh。bash/zsh の構文が必要なときだけ指定)' },
+    shell: { type: 'string', enum: [...SHELLS], description: '使用するシェル(既定 sh。bash は set -eou pipefail を先頭に追加する)' },
     timeoutMs: { type: 'number', description: `制限時間(ミリ秒、既定 ${DEFAULT_TIMEOUT_MS}、上限 ${MAX_TIMEOUT_MS})` },
     run_in_background: { type: 'boolean', description: 'true にすると即座に job_id を返し、結果は job_output で読む。長時間かかる処理で使う' },
   },

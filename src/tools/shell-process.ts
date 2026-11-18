@@ -144,14 +144,15 @@ export class ShellProcess {
 
   constructor(command: string, cwd: string, opts: ShellOptions = {}) {
     requireString(command, 'command');
-    this.shell = resolveShell(opts.shell).name;
+    const { name, file } = resolveShell(opts.shell);
+    this.shell = name;
     const maxOutput = opts.maxOutputBytes ?? 32 * 1024;
     this.out = new TextSink(Math.floor(maxOutput / 2));
     this.err = new TextSink(Math.max(1, Math.ceil(maxOutput / 2)));
     this.timeoutMs = opts.timeoutMs ?? 0;
     this.promoteOnTimeout = opts.onTimeout !== undefined;
-    const file = resolveShell(opts.shell).file;
-    this.child = spawn(file, ['-c', command], {
+    const script = name === 'bash' ? `set -eou pipefail\n${command}` : command;
+    this.child = spawn(file, ['-c', script], {
       cwd,
       ...(opts.env === undefined ? {} : { env: opts.env }),
       detached: true,

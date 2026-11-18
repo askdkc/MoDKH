@@ -9,6 +9,7 @@ import { formalTools } from '../tools/formal.ts';
 import path from 'node:path';
 
 import { pdfUsage, readPdfRequest } from './pdf.ts';
+import { readFileMentions } from './file-mentions.ts';
 import { MAX_IMAGES, type ImageAttachment } from '../agent/images.ts';
 import type { Model, ModelEvent, TokenUsage, ToolCall, ToolResult } from '../agent/types.ts';
 import { buildModelFromRef } from '../model/connection.ts';
@@ -20,7 +21,7 @@ import { runDirectAgent } from './agents.ts';
 import { DEFAULT_SUBAGENT_LIMIT, parseSubagentLimit } from '../subagents/limits.ts';
 import { parseAgentSettings } from '../subagents/settings.ts';
 import { ToolRegistry, defaultToolsWithJobs } from '../tools/registry.ts';
-import { watchBrowseActivity } from '../tools/browse.ts';
+import { BrowseTabs, watchBrowseActivity } from '../tools/browse.ts';
 import { JobRegistry } from '../tools/jobs.ts';
 import { runAgentLoop } from '../agent/loop.ts';
 import { prepareSkillContext, mergeSkillContext, type SkillContext } from '../agent/skills.ts';
@@ -230,7 +231,12 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   for (const diagnostic of [...(config.diagnostics ?? []), ...agentSettings.diagnostics, ...manager.discover().diagnostics]) ui.write(`(プラグイン: ${diagnostic})\n`);
   // Jobs belong to this session: closing the CLI stops them instead of orphaning children.
   const jobs = new JobRegistry();
-  const tools = defaultToolsWithJobs(jobs);
+  const browseTabs = new BrowseTabs();
+  const closeBrowseTabs = async (): Promise<void> => {
+    const remaining = await browseTabs.close();
+    if (remaining.length) ui.write(`(browse: タブの終了を確認できません: ${remaining.join(', ')})\n`);
+  };
+  const tools = defaultToolsWithJobs(jobs, browseTabs);
   // Language analysis is optional: a missing server or grammar never blocks editing or conversation.
   const languageSettings = parseLanguageSettings((config as { language?: unknown }).language ?? DEFAULT_LANGUAGE_SETTINGS);
   const language = new LanguageService({
@@ -320,7 +326,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       ? ['宣言の範囲が必要なときは、言語に合う syntax-search 担当にファイル一件と宣言名を渡す。編集担当には返されたファイル・範囲と変更条件を引き継ぎ、編集前に現行のソースを読み取らせる。'] : []),
   ].join('\n\n') : SYSTEM_PROMPT + (manager.discover().registry.get('modkh-micro-zenki')?.enabled
     ? '\n前鬼（modkh-micro-zenki）が利用可能。状態遷移・競合・不変条件の検証には、対象から有限状態JSONモデルを作成し、start_subagent に pluginId と formalInput:{path:モデルJSON} を渡して前鬼を使う。モデルの仮定・範囲を示し、実装全体の証明と混同しない。単純な変更に不要なモデル検証は追加しない。' : '');
-  const registry = new ToolRegistry([...subagents.parentTools([...headTools, ...languageTools(language)]), ...subagentTools(subagents)]);
+  let turnToolCount = 0;
+  const registry = new ToolRegistry(
+    [...subagents.parentTools([...headTools, ...languageTools(language)]), ...subagentTools(subagents)],
+    () => ui.setTurnToolCount?.(++turnToolCount),
+  );
 
   // 任意メモリ(既定無効)。接続不能でも会話は続く。
   const memory = openKiokukoMemory(config.memory.enabled, {
@@ -355,6 +365,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   let nextMetadataRead = 0;
   let failedCompaction: { model: Model; from: number; eligibleBytes: number } | undefined;
   const runTurn = async (input: string, activeModel: Model | null, direct?: DelegationRequest, images: ImageAttachment[] = [], documentText?: string): Promise<void> => {
+    turnToolCount = 0;
+    ui.setTurnToolCount?.(turnToolCount);
     ui.write(`\n▶ You: ${input}${images.length ? ` [画像${images.length}枚]` : ''}\n`, 'user');
     session.setStatus('active');
     session.append({ role: 'user', content: documentText ? input + '\n\n' + documentText : input, ...(images.length ? { images } : {}) });
@@ -368,23 +380,27 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     };
     // Stop処理の回収が終わるまで、重ねたSIGINTで所有子を置き去りにしない。
     process.on('SIGINT', onSigint);
-    const followups: string[] = [];
+    const followups: { input: string; content: string }[] = [];
     let followupWake = new AbortController();
     const finishFollowups = activeModel && ui.beginFollowups?.(message => {
       if (ac.signal.aborted) return '中止処理中です';
       if (followups.length >= 8) return '追加の依頼は8件まで送信待ちにできます';
-      followups.push(message);
+      let files: string | undefined;
+      try { files = readFileMentions(cwd, message); }
+      catch (error) { return `ファイル添付失敗: ${(error as Error).message}`; }
+      followups.push({ input: message, content: files ? message + '\n\n' + files : message });
       followupWake.abort();
       return null;
     });
+    const restoreFollowups = () => finishFollowups?.(followups.splice(0).map(message => message.input));
     const takeFollowups = () => {
       const messages = followups.splice(0);
       if (messages.length) {
         followupWake = new AbortController();
         ui.setReasoning?.(null);
       }
-      for (const message of messages) ui.write(`\n▶ You: ${message}\n`, 'user');
-      return messages;
+      for (const message of messages) ui.write(`\n▶ You: ${message.input}\n`, 'user');
+      return messages.map(message => message.content);
     };
     try {
       let memoryText: string | null = null;
@@ -527,7 +543,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         jobs,
         ...(reasoningLevel ? { reasoning: reasoningLevel } : {}),
       }) : directOutcome;
-      finishFollowups?.(followups.splice(0));
+      restoreFollowups();
       // 本作業の証拠と状態を先に確定する。メモリ保存はこれを変更しない。
       ui.setReasoning?.(null);
       checkpoint();
@@ -561,8 +577,9 @@ export async function runChat(opts: ChatOptions): Promise<void> {
 
     } finally {
       activeUserRequest = undefined;
-      await subagents.cancelAll('Parent turn ended');
-      finishFollowups?.(followups.splice(0));
+      try { await subagents.cancelAll('Parent turn ended'); }
+      finally { await closeBrowseTabs(); }
+      restoreFollowups();
       ui.setActivity?.(null);
       process.removeListener('SIGINT', onSigint);
       // 中断・エラー時も、その時点までの応答をセッションに残す
@@ -728,7 +745,21 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ui.write(toolDisplay.details(line.slice('/tools'.length).trim()));
         continue;
       }
+      if (/^\/annimation(?:\s|$)/.test(line)) {
+        const mode = line.slice('/annimation'.length).trim();
+        if (mode !== 'on' && mode !== 'off') {
+          ui.write('使い方: /annimation on|off\n');
+        } else if (!ui.setAnimation) {
+          ui.write('行入力モードでは待機アニメーションを表示しません。\n');
+        } else {
+          ui.setAnimation(mode === 'on');
+          ui.write(`待機アニメーション: ${mode}\n`);
+        }
+        continue;
+      }
       if (line === '/help') {
+        ui.write('/annimation on|off: 待機アニメーションの切り替え（起動中のみ）\n');
+        ui.write('ローカルファイルを添付: @パス（↑↓ で候補を選択し、Tab で補完）\n');
         ui.write(`PDFの本文とページ画像を送信: ${pdfUsage}\n`);
         ui.write('/tools: ツール履歴  /tools <番号>: 引数と結果の全文\n');
         ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /usage: トークン使用量  /allow: 承認ポリシー  /agents: 子の一覧・同時実行数  /agents limit <数>: 子の上限変更  /agents run [ID]: 子に依頼  /exit: 終了\n'
@@ -853,8 +884,16 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         }
         await runTurn(pdf.prompt, model, undefined, [...pdf.images, ...(ui.takeImages?.() ?? [])], pdf.text);
       } else {
-        const direct = lisp && !lisp.headInstruction && args.routing === 'auto' ? routeIntent(input, subagents.list()) : undefined;
-        await runTurn(input, model, direct, ui.takeImages?.() ?? []);
+        let files: string | undefined;
+        try { files = readFileMentions(cwd, input); }
+        catch (error) {
+          ui.write(`(ファイル添付失敗: ${(error as Error).message})\n`);
+          ui.restoreDraft?.(input);
+          continue;
+        }
+        // Attachments belong to the chat model, not an automatically chosen child.
+        const direct = !files && lisp && !lisp.headInstruction && args.routing === 'auto' ? routeIntent(input, subagents.list()) : undefined;
+        await runTurn(input, model, direct, ui.takeImages?.() ?? [], files);
       }
       refreshServers();
       if (aborted) {
@@ -866,7 +905,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     clearInterval(serversTimer);
     stopBrowseWatch();
     // 主処理・永続化が失敗しても補助プロセスを回収する。
-    await subagents.cancelAll('Session closed');
+    try { await subagents.cancelAll('Session closed'); }
+    finally { await closeBrowseTabs(); }
     await jobs.close().catch(e => process.stderr.write(`ジョブ停止失敗: ${String(e)}\n`));
     await memory.close().catch(e => process.stderr.write(`メモリ切断失敗: ${String(e)}\n`));
     await language.close().catch(e => process.stderr.write(`言語サーバー終了失敗: ${String(e)}\n`));

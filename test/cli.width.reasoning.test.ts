@@ -77,9 +77,9 @@ test('a real TUI switches from welcome to a split conversation and shows provide
     child.stdin!.write('調べて\r');
     await wait('│ トークン使用量');
     await wait('ANSWER_MARKER');
-    await wait('回答できたよ！');
+    await wait('作業が終わったよ！');
     const conversation = screenFrom(output, 40);
-    assert.match(conversation.join('\n'), /＜ 回答できたよ！/);
+    assert.match(conversation.join('\n'), /＜ 作業が終わったよ！/);
     assert.match(conversation[1], /│ トークン使用量/);
     assert.doesNotMatch(conversation.join('\n'), /██████╗/);
     assert.match(stripVTControlCharacters(output), /REASONING_VISIBLE_MARKER/, 'reasoning is displayed');

@@ -127,7 +127,7 @@ test('public CLI terminal path: logo → completion → model providers → conn
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(preload)}`, entry], {
     cwd: home,
-    env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '0', TERM: 'xterm-256color',
+    env: { ...process.env, NO_COLOR: undefined, MODKH_NO_ANIMATION: '0', MODKH_HOME: home, MODKH_PLAIN: '0', TERM: 'xterm-256color',
       PATH: `${browseBin}${path.delimiter}${process.env.PATH ?? ''}`,
       OLLAMA_BASE_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
       OLLAMA_CLOUD_BASE_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/cloud/v1`, OLLAMA_API_KEY: '' },
@@ -140,8 +140,11 @@ test('public CLI terminal path: logo → completion → model providers → conn
   const send = (text: string) => { start = output.length; child.stdin.write(text); };
   // Match the latest screen, replaying the streamed absolute-position frames (test/tui.screen.ts).
   const visible = () => screenFrom(output, 32).join('\n');
-  const wait = async (text: string | RegExp): Promise<void> => {
-    const matches = () => typeof text === 'string' ? visible().includes(text) : text.test(visible());
+  const wait = async (text: string | RegExp | ((screen: string) => boolean)): Promise<void> => {
+    const matches = () => {
+      const screen = visible();
+      return typeof text === 'function' ? text(screen) : typeof text === 'string' ? screen.includes(text) : text.test(screen);
+    };
     if (matches()) return;
     await new Promise<void>((resolve, reject) => {
       const finish = (error?: Error) => {
@@ -173,11 +176,14 @@ test('public CLI terminal path: logo → completion → model providers → conn
     await wait('何を調べますか');
     assert.doesNotMatch(visible(), /const value = 1/, 'source bodies stay out of the default transcript');
     assert.match(visible(), /\/tools 1/, 'the compact result offers a concrete details command');
+    assert.match(visible(), /今回のツール実行: 1件/);
     send('/tools 1\r');
     await wait('const value = 1');
     await wait('何を調べますか');
     send('inspect-test\r');
     await wait('TEST_INSPECTED');
+    await wait('詳細: /tools 2');
+    assert.match(visible(), /今回のツール実行: 1件/);
     await wait(/│ 言語サーバー 1稼働 +│\n.*│ typescript · .*tui-entry-[^ │]+ +│/);
     await wait('何を調べますか');
     send('browse-check\r');
@@ -186,9 +192,29 @@ test('public CLI terminal path: logo → completion → model providers → conn
     await wait('BROWSE_DONE');
     await wait('何を調べますか');
     assert.doesNotMatch(visible(), /browse in use/);
+    const sprite = (screen: string) => screen.split('\n').filter(row => /│.*[▀▄]/.test(row))
+      .map(row => row.slice(row.search(/[▀▄]/))).join('\n');
+    const beforeAnimationCommands = requests.length;
+    send('/ann'); await wait('/annimation');
+    send('\t off\r'); await wait('待機アニメーション: off');
+    send('/annimation invalid\r'); await wait('使い方: /annimation on|off');
+    assert.equal(requests.length, beforeAnimationCommands, 'animation commands stay local');
+    send('slow\r'); await wait(/モデル応答を受信中… Ctrl\+Cで中止 · [1-9]\d*秒/);
+    assert.match(visible(), /今回のツール実行: 0件/);
+    assert.equal(sprite(visible()), '');
+    send('\x03'); await wait('何を調べますか');
+    send('/annimation on\r'); await wait('待機アニメーション: on');
     send('slow\r'); await wait('WAITING_FOR_STOP');
+    await wait(/モデル応答を受信中… Ctrl\+Cで中止 · \d+秒 +[▀▄]/);
+    const firstFrame = sprite(visible());
+    await wait(screen => {
+      const frame = sprite(screen);
+      return frame !== '' && frame !== firstFrame;
+    });
     await wait(/モデル応答を受信中… Ctrl\+Cで中止 · [1-9]\d*秒/);
     send('\x03'); await wait('中断しました');
+    await wait('何を調べますか');
+    assert.equal(sprite(visible()), '');
     send('delegate\r');
     await wait('子エージェントの結果を待機中');
     await wait('│ サブエージェント 1稼働 / 累計1');
@@ -237,8 +263,8 @@ test('public CLI terminal path: logo → completion → model providers → conn
     const journal = sessions.map(file => fs.readFileSync(path.join(home, 'sessions', file), 'utf8')).find(text => text.includes('cloud hello'))!;
     const messages = journal.trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'message');
     assert.deepEqual(messages.filter(row => row.message.role === 'user').map(row => row.message.content),
-      ['こんにちは', 'inspect-source', 'inspect-test', 'browse-check', 'slow', 'delegate', '追加の依頼', 'delegate-stop', 'cloud hello', 'local again']);
-    assert.equal(requests.length, 15);
+      ['こんにちは', 'inspect-source', 'inspect-test', 'browse-check', 'slow', 'slow', 'delegate', '追加の依頼', 'delegate-stop', 'cloud hello', 'local again']);
+    assert.equal(requests.length, 16);
     assert.doesNotMatch(output + journal, /tui-cloud-secret/);
     assert.doesNotMatch(journal, /\/connect/);
   } finally {

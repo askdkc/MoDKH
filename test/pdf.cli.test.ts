@@ -9,6 +9,11 @@ import type { AddressInfo } from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import { SessionStore } from '../src/session/store.ts';
 import { toResponsesInput } from '../src/model/chatgpt/responses.ts';
+import { PassThrough } from 'node:stream';
+import type { ReadStream, WriteStream } from 'node:tty';
+import { TerminalUI } from '../src/cli/terminal.ts';
+import { readPdfRequest } from '../src/cli/pdf.ts';
+import { screenFrom } from './tui.screen.ts';
 
 test('PDF chat command attaches the selected page and its text to the coding turn', async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-pdf-'));
@@ -35,6 +40,35 @@ test('PDF chat command attaches the selected page and its text to the coding tur
   const xref = pdf.length;
   pdf += `xref\n0 8\n0000000000 65535 f \n${offsets.map(n => String(n).padStart(10, '0') + ' 00000 n \n').join('')}trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   fs.writeFileSync(path.join(root, 'design spec.pdf'), pdf);
+  fs.writeFileSync(path.join(root, 'design notes.txt'), 'not a PDF');
+  const input = new PassThrough() as unknown as ReadStream;
+  input.isRaw = false;
+  input.setRawMode = value => { input.isRaw = value; return input; };
+  const terminalOutput = new PassThrough() as unknown as WriteStream;
+  terminalOutput.columns = 100;
+  terminalOutput.rows = 40;
+  let screen = '';
+  terminalOutput.on('data', chunk => { screen += chunk.toString(); });
+  const terminal = new TerminalUI(root, input, terminalOutput);
+  t.after(() => terminal.close());
+  const submission = terminal.next();
+  input.write('/pdf @des');
+  const visible = screenFrom(screen, 40).join('\n');
+  assert.match(visible, /› design spec\.pdf/);
+  assert.doesNotMatch(visible, /design notes\.txt/);
+  input.write('\t\r');
+  const command = await submission;
+  assert.equal(command?.trim(), '/pdf @"design spec.pdf"');
+  const document = await readPdfRequest(root, command!.trim(), new AbortController().signal, 4);
+  assert.equal(document.images.length, 2);
+  assert.match(document.text, /Build the red button/);
+  assert.match(document.prompt, /要約/);
+  const selected = terminal.next();
+  input.write('/pdf --pages 2 @des');
+  assert.doesNotMatch(screenFrom(screen, 40).join('\n'), /design notes\.txt/);
+  input.write('\t| Implement this layout\r');
+  const selectedCommand = await selected;
+  assert.equal(selectedCommand, '/pdf --pages 2 @"design spec.pdf" | Implement this layout');
   const requests: { messages: { role: string; content: unknown }[] }[] = [];
   const server = http.createServer(async (req, res) => {
     const chunks = [];
@@ -59,7 +93,7 @@ test('PDF chat command attaches the selected page and its text to the coding tur
   let output = '';
   child.stdout.on('data', chunk => { output += chunk; });
   child.stderr.on('data', chunk => { output += chunk; });
-  child.stdin.end('/pdf --pages 3 design spec.pdf | invalid\n/pdf --pages 2 design spec.pdf | Implement this layout\n/exit\n');
+  child.stdin.end(`/pdf --pages 3 design spec.pdf | invalid\n${selectedCommand}\n/exit\n`);
   assert.equal((await once(child, 'close'))[0], 0, output);
   assert.equal(requests.length, 2, output);
   assert.equal(fs.readFileSync(path.join(root, 'button.html'), 'utf8'), '<button>Build</button>');

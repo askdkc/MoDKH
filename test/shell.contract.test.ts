@@ -103,6 +103,21 @@ test('bash and zsh are selectable and the chosen shell is reported', async () =>
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('Bash starts with errexit, nounset, and pipefail while default sh is unchanged', async () => {
+  const dir = root();
+  try {
+    for (const command of ['false', 'unset MODKH_STRICT_TEST; printf "%s" "$MODKH_STRICT_TEST"', 'false | true']) {
+      const result = await run(dir, `${command}\nprintf REACHED`, { shell: 'bash' });
+      assert.equal(result.status, 'ok', result.output);
+      assert.match(result.output, /^\[exit code: [1-9]\d*\]/);
+      assert.doesNotMatch(result.output, /REACHED/);
+    }
+    const sh = await run(dir, 'false | true; printf REACHED');
+    assert.match(sh.output, /^\[exit code: 0\]/);
+    assert.match(sh.output, /REACHED/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('an invalid shell or timeout is rejected before anything runs', async () => {
   const dir = root();
   try {
