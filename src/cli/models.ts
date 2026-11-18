@@ -1,25 +1,24 @@
 import type { ChatTerminal, Choice } from './terminal.ts';
 import { toRefs, SEARCH_ROW_VALUE, LOCAL_MODEL_REFS } from './catalog.ts';
-import { officialModelChoices } from './official-models.ts';
+import { hasModelCredentials, officialModelChoices } from './official-models.ts';
 import { providerModelChoices } from './model-catalog.ts';
-import { knownProviders, supportsLiveModels } from '../model/providers.ts';
+import { knownProviders, providerDefinition, supportsLiveModels } from '../model/providers.ts';
+import { resolveApiKey } from './keys.ts';
 
 /** 一覧APIを持つプロバイダーか。chatgpt は公式Codexの一覧を使うため別扱いにする。 */
 export function listsModels(provider: string): boolean {
-  return provider === 'chatgpt' || (knownProviders().includes(provider) && supportsLiveModels(provider));
+  return provider === 'chatgpt' || supportsLiveModels(provider);
 }
 
 /**
  * `/models` の候補。固定リストは持たず、指定または接続済みのプロバイダーから毎回取得する。
  * 取得できなければ空のまま「一覧外は直接指定」を案内する。
  */
-async function liveSuggestions(provider: string | null, write: (text: string) => void): Promise<string[] | null> {
-  if (provider === null) return [];
+async function liveSuggestions(provider: string, write: (text: string) => void, signal: AbortSignal): Promise<string[] | null> {
   if (provider === 'openai' || provider === 'chatgpt') {
-    return await officialModelChoices(provider, write);
+    return await officialModelChoices(provider, write, signal);
   }
-  if (!supportsLiveModels(provider)) return [];
-  const result = await providerModelChoices(provider, write);
+  const result = await providerModelChoices(provider, write, process.env, signal);
   return result === null ? null : toRefs(provider, result.ids);
 }
 
@@ -29,14 +28,25 @@ function entries(refs: readonly string[], current: string | null): Choice[] {
 
 export async function selectModel(lines: ChatTerminal, query: string, current: string | null): Promise<string | null> {
   const requested = query.trim().split(/[\s/]/)[0];
-  // 語が無いときは接続中のプロバイダーだけを問い合わせる。全プロバイダーへは広げない
-  // (キーの無い接続先まで叩くと失敗の理由が並ぶだけで選択の役に立たない)。
   const currentProvider = current?.split('/')[0];
-  const provider = requested && listsModels(requested)
-    ? requested
-    : currentProvider && listsModels(currentProvider) ? currentProvider : null;
-  const fetched = await liveSuggestions(provider, text => lines.write(text));
-  if (fetched === null) return null;
+  const providers = requested && listsModels(requested) ? [requested]
+    : [...knownProviders(), 'chatgpt'].filter(provider => {
+      if (!listsModels(provider)) return false;
+      if (provider === currentProvider) return true;
+      if (provider === 'chatgpt') return hasModelCredentials(provider);
+      const envName = providerDefinition(provider)?.env;
+      return Boolean(envName && resolveApiKey(provider, process.env, envName));
+    });
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  process.on('SIGINT', cancel);
+  let fetched: string[];
+  try {
+    const results = await Promise.all(providers.map(provider =>
+      liveSuggestions(provider, text => lines.write(text), controller.signal)));
+    if (controller.signal.aborted) return null;
+    fetched = results.flatMap(refs => refs ?? []);
+  } finally { process.removeListener('SIGINT', cancel); }
   // MODKH 自身の擬似モデル(fixed)は取得元がないため、常に候補へ含める。
   const candidates = [...new Set([...LOCAL_MODEL_REFS, ...fetched, ...(current ? [current] : [])])];
   // The search row is pinned first in both modes so Enter never connects to an arbitrary model.

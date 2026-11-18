@@ -570,7 +570,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ? session.messages.filter((m) => m.role === 'assistant' && m.origin !== 'manual').length : 0;
       const provider = parseModelRef(ref).provider;
       const nextModel = makeModel(ref, baseUrl, fixedSkip,
-        resolveApiKey(provider, process.env) ?? sessionKeys.get(canonicalKeyProvider(provider)), { timeoutMs });
+        resolveApiKey(provider, process.env, providerKeyEnv(provider)) ?? sessionKeys.get(canonicalKeyProvider(provider)), { timeoutMs });
       session.setConnection(ref, baseUrl);
       model = nextModel;
       lastInputTokens = undefined;

@@ -166,3 +166,30 @@ test('チャット画面に Responses API の失敗理由と再試行までの�
   assert.match(stdout, /server_is_overloaded/);
   assert.match(stdout, /5分18秒後に再試行/);
 });
+
+test('/models lists saved API and OAuth accounts together and switches without another login', async () => {
+  const setup = `import { writeFileSync } from 'node:fs';
+    writeFileSync(process.env.MODKH_HOME + '/keys.json', JSON.stringify({ openai: 'api-fixture', anthropic: 'anthropic-fixture' }));
+    writeFileSync(process.env.MODKH_HOME + '/chatgpt-auth.json', JSON.stringify({ accessToken: 'oauth-fixture' }));
+    globalThis.fetch = async (url, options) => {
+      const address = String(url);
+      const auth = new Headers(options?.headers).get('authorization');
+      if (address === 'https://api.anthropic.com/v1/models' && new Headers(options?.headers).get('x-api-key') === 'anthropic-fixture')
+        return Response.json({ data: [{ id: 'claude-model' }] });
+      if (address === 'https://api.openai.com/v1/models' && auth === 'Bearer api-fixture')
+        return Response.json({ data: [{ id: 'api-model' }] });
+      if (address.startsWith('https://chatgpt.com/backend-api/codex/models?') && auth === 'Bearer oauth-fixture')
+        return Response.json({ models: [{ slug: 'oauth-model', visibility: 'list' }] });
+      if (address.endsWith('/responses') && auth === 'Bearer oauth-fixture' && JSON.parse(options.body).model === 'oauth-model')
+        return new Response('data: ' + JSON.stringify({type:'response.output_text.delta',delta:'switch-verified'}) + '\\n\\n' +
+          'data: ' + JSON.stringify({type:'response.completed',response:{status:'completed'}}) + '\\n\\n');
+      return new Response(null, { status: 403 });
+    }`;
+  const { stdout } = await chat('/models\noauth-model\n1\nhello\n/models api-model\n1\n/exit\n', '{}', {}, setup);
+  assert.match(stdout, /\d+\. openai\/api-model/);
+  assert.match(stdout, /\d+\. chatgpt\/oauth-model/);
+  assert.match(stdout, /\d+\. anthropic\/claude-model/);
+  assert.match(stdout, /switch-verified/);
+  assert.match(stdout, /接続しました: openai\/api-model/);
+  assert.doesNotMatch(stdout, /認証を開始|api-fixture|oauth-fixture/);
+});

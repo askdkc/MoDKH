@@ -55,14 +55,15 @@ export async function fetchProviderModels(
   if (!supportsLiveModels(provider) || !definition.modelsPath) {
     return { ids: [], note: '一覧APIが未定義。モデルIDを直接入力する' };
   }
-  const base = modelBaseUrl(provider, undefined, env)?.replace(/\/$/, '');
+  const base = (modelBaseUrl(provider, undefined, env) ?? definition.baseURL)?.replace(/\/$/, '');
   if (!base) return { ids: [], note: '接続先URLが未設定' };
   const key = resolveApiKey(provider, env, definition.env);
   if (definition.env && !key) {
     return { ids: [], note: `環境変数 ${definition.env} が未設定` };
   }
   const headers: Record<string, string> = { accept: 'application/json', ...(definition.headers?.() ?? {}) };
-  if (key) headers.authorization = `Bearer ${key}`;
+  if (provider === 'anthropic' && key) headers['x-api-key'] = key;
+  else if (key) headers.authorization = `Bearer ${key}`;
   // Google の一覧APIはキーをクエリで受け取る。
   const url = provider === 'google'
     ? `${base}${definition.modelsPath}?key=${encodeURIComponent(key ?? '')}`
@@ -104,14 +105,16 @@ export async function providerModelChoices(
   provider: string,
   write: (text: string) => void,
   env: NodeJS.ProcessEnv = process.env,
+  signal?: AbortSignal,
 ): Promise<ModelListResult | null> {
   const controller = new AbortController();
   const cancel = () => controller.abort();
-  process.on('SIGINT', cancel);
+  if (!signal) process.on('SIGINT', cancel);
+  const activeSignal = signal ?? controller.signal;
   write(`${provider}: モデル一覧を取得中…（Ctrl+Cで中止）\n`);
   try {
-    const result = await fetchProviderModels(provider, controller.signal, env);
-    if (controller.signal.aborted) {
+    const result = await fetchProviderModels(provider, activeSignal, env);
+    if (activeSignal.aborted) {
       write(`(${provider}: 取得を中止しました。モデルIDの直接入力も使えます)\n`);
       return null;
     }

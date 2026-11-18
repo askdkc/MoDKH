@@ -45,6 +45,7 @@ export const PROVIDERS: Readonly<Record<string, ProviderDefinition>> = {
   openai: { env: 'OPENAI_API_KEY', modelsPath: '/models' },
   anthropic: {
     env: 'ANTHROPIC_API_KEY',
+    baseURL: 'https://api.anthropic.com/v1',
     modelsPath: '/models',
     headers: () => ({ 'anthropic-version': '2023-06-01' }),
   },

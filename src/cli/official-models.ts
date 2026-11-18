@@ -47,23 +47,24 @@ export async function fetchOfficialModels(provider: OfficialProvider, signal: Ab
 }
 
 /** Own cancellation and diagnostics, keeping failed retrieval distinct from an empty catalogue. */
-export async function officialModelChoices(provider: OfficialProvider, write: (text: string) => void): Promise<string[] | null> {
+export async function officialModelChoices(provider: OfficialProvider, write: (text: string) => void, signal?: AbortSignal): Promise<string[] | null> {
   const controller = new AbortController();
   const cancel = () => controller.abort();
-  process.on('SIGINT', cancel);
+  if (!signal) process.on('SIGINT', cancel);
+  const activeSignal = signal ?? controller.signal;
   write(`${provider}: 公式モデル一覧を取得中…（Ctrl+Cで中止）\n`);
   try {
-    const models = await fetchOfficialModels(provider, AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]));
+    const models = await fetchOfficialModels(provider, AbortSignal.any([activeSignal, AbortSignal.timeout(10_000)]));
     write(`${provider}: 公式モデル一覧 ${models.length}件\n`);
     return models;
   } catch (error) {
-    const message = controller.signal.aborted ? '取得を中止しました'
+    const message = activeSignal.aborted ? '取得を中止しました'
       : error instanceof Error && error.name === 'TimeoutError' ? '取得がタイムアウトしました'
       : error instanceof Error && error.message.startsWith('公式モデル一覧') ? error.message
       : hasModelCredentials(provider) ? '公式モデル一覧を取得できませんでした。通信と認証を確認してください'
       : provider === 'openai' ? 'OPENAI_API_KEY が未設定です。/connect openai から接続してください'
       : 'ChatGPT認証が必要です。/connect chatgpt から接続してください';
     write(`(${provider}: ${message}。一覧を開き直すと再取得します。モデルIDの直接入力も使えます)\n`);
-    return controller.signal.aborted ? null : [];
+    return activeSignal.aborted ? null : [];
   } finally { process.removeListener('SIGINT', cancel); }
 }
