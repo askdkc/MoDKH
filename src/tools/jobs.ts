@@ -63,6 +63,9 @@ export class JobRegistry {
   private closed = false;
   /** Settlements the model has not been told about yet, in completion order. */
   private readonly notices: string[] = [];
+  private noticeWake = new AbortController();
+
+  get noticeSignal(): AbortSignal { return this.noticeWake.signal; }
   /** Owner-visible label for a notice; never contains the command's full output. */
   private noticeBytes = 2048;
 
@@ -70,6 +73,7 @@ export class JobRegistry {
 
   /** Drain pending completion notices. Returns [] when every settlement was already reported. */
   takeNotices(): string[] {
+    if (this.noticeWake.signal.aborted) this.noticeWake = new AbortController();
     return this.notices.splice(0, this.notices.length);
   }
 
@@ -145,6 +149,7 @@ export class JobRegistry {
       record.unreadOut = process.out.produced - record.outCursor;
       record.unreadErr = process.err.produced - record.errCursor;
       this.notice(record);
+      this.noticeWake.abort();
       for (const wake of record.waiters) wake();
       record.waiters.clear();
     });

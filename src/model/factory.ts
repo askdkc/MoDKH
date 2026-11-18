@@ -125,8 +125,8 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
           name: spec.provider,
           baseURL: baseUrl!,
           apiKey: key,
-          // Ollama Cloud omits the final usage chunk unless explicitly requested.
-          includeUsage: spec.provider === 'ollama-cloud',
+          // Compatible streaming APIs may omit prompt-token counts unless requested.
+          includeUsage: spec.provider !== 'hermes',
           fetch: fetchModel,
         })(spec.model),
       });

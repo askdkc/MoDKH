@@ -61,6 +61,7 @@ export const PROVIDER_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
 
 /** Extra suggestions for providers without a published catalogue. */
 export const OTHER_SUGGESTIONS: readonly string[] = [
+  'chatgpt/gpt-6.2-astra', 'chatgpt/gpt-6.2-sol', 'openai/gpt-6.2-astra', 'openai/gpt-6.2-sol',
   'opencode/gpt-6-sol', 'opencode/gpt-5.4',
   'infron/openai/gpt-5.2', 'hermes/hermes-agent',
   'anthropic/claude-sonnet-4-5', 'anthropic/claude-opus-4-5',

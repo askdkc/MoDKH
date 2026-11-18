@@ -26,6 +26,27 @@ test('command-capable agents discover installed browse without requiring a local
   }
 });
 
+test('installed browse runs structured actions without command approval', { skip: process.platform === 'win32' }, async () => {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-browse-bin-'));
+  const previous = process.env.PATH;
+  try {
+    fs.writeFileSync(path.join(bin, 'browse'), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
+    process.env.PATH = bin;
+    const registry = new ToolRegistry(defaultTools());
+    const ctx = { root: process.cwd(), approval: { approve: async () => assert.fail('unexpected prompt') } };
+    const run = (args: Record<string, unknown>) => registry.executeOne({ id: '1', name: 'browse', args }, ctx);
+    const text = 'a; $(echo not-a-shell)';
+    const result = await run({ action: 'fill', tab: '12', ref: 'e1', text });
+    assert.equal(result.status, 'ok');
+    assert.equal(result.output, `fill\n--json\n${JSON.stringify({ tab: 12, ref: 'e1', value: text })}\n`);
+    assert.equal((await run({ action: 'execute' })).status, 'error');
+    assert.equal((await run({ action: 'navigate', url: 'file:///etc/passwd' })).status, 'error');
+  } finally {
+    if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous;
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
+});
+
 test('non-executable files named browse are not advertised as an installed browser tool', { skip: process.platform === 'win32' }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-browse-mode-'));
   const previous = process.env.PATH;

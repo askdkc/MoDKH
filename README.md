@@ -42,7 +42,7 @@ modkh
 
 ## ブラウザ検証（任意）
 
-[browse](https://github.com/anomalyco/browse) を使うと、Chrome・Braveなどでページ表示、入力・クリック、スクリーンショット取得を行えます。MoDKHからは `run_command` 経由でCLIを呼び出します。
+[browse](https://github.com/anomalyco/browse) を使うと、Chrome・Braveなどでページ表示、入力・クリック、スクリーンショット取得を行えます。PATH に実行可能な `browse` があれば、MoDKH は専用の `browse` ツールを登録します。接続状態の確認、HTTP(S) ページを開く、スナップショットの取得、クリック、フォーム入力は都度の許可なしで実行します。任意のスクリプトや管理コマンドには、従来どおり `run_command` の承認設定が適用されます。
 
 ```sh
 npm install -g @opencode/browse

@@ -38,7 +38,7 @@ test('a real TUI switches from welcome to a split conversation and shows provide
       })}\n\n`);
       // A provider reasoning delta followed by an answer, so both paths are exercised.
       chunk({ role: 'assistant', reasoning_content: 'REASONING_VISIBLE_MARKER を確認します。' }, null);
-      chunk({ content: 'ANSWER_MARKER こんにちは。\n\nQUESTION_MARKER 何をお手伝いしましょうか？' }, null);
+      chunk({ content: '**ANSWER_MARKER** こんにちは。\n\n`QUESTION_MARKER` 何をお手伝いしましょうか？' }, null);
       chunk({}, 'stop');
       res.end('data: [DONE]\n\n');
     });
@@ -84,8 +84,8 @@ test('a real TUI switches from welcome to a split conversation and shows provide
     assert.match(stripVTControlCharacters(output), /REASONING_VISIBLE_MARKER/, 'reasoning is displayed');
     assert.match(stripVTControlCharacters(output), /\(推論\)/, 'reasoning is labelled');
     assert.match(output, /\x1b\[90mREASONING_VISIBLE_MARKER/);
-    assert.match(output, /\x1b\[1;39mANSWER_MARKER/);
-    assert.match(output, /\x1b\[1;39mQUESTION_MARKER/);
+    assert.match(output, /\x1b\[1mANSWER_MARKER\x1b\[0m/);
+    assert.match(output, /\x1b\[[0-9;]+mQUESTION_MARKER\x1b\[0m/);
     assert.doesNotMatch(output, /\x1b\[90m(?:ANSWER|QUESTION)_MARKER/);
 
     child.stdin!.write('/exit\r');

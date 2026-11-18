@@ -62,6 +62,7 @@ test('all eight presets evaluate in real SBCL; 30 observers plus 8 disabled edit
 test('formal preset configures the head workflow and registers both checkers', async () => {
   const config = await load(fs.readFileSync(new URL('../experiments/presets/formal.lisp', import.meta.url), 'utf8'));
   assert.match(config.headInstruction ?? '', /MoA/);
+  assert.match(config.headInstruction ?? '', /start_subagent/);
   assert.deepEqual(config.entries.map(({ descriptor }) => descriptor.id).sort(), ['micro-goki', 'micro-zenki']);
 });
 

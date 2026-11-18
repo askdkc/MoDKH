@@ -43,7 +43,7 @@ test('reasoning stays gray even when it contains Markdown or resembles a tool me
     for (const line of ['(推論)', '## 検討', '▶ read_file (略)', '```ts', 'const x = 1']) {
       assert.equal(colorizer.line(line, palette, 'reasoning'), `\x1b[90m${line}\x1b[0m`);
     }
-    assert.equal(colorizer.line('何を調べますか？', palette, 'answer'), '\x1b[1;39m何を調べますか？\x1b[0m');
+    assert.equal(colorizer.line('何を調べますか？', palette, 'answer'), '何を調べますか？');
     assert.equal(colorizer.line('会話終了', palette), '会話終了');
   }
 });
@@ -161,4 +161,17 @@ test('shell cards keep literal output readable on dark and light backgrounds', (
     assert.equal(c.state().mode, 'text');
     assert.equal(c.line('╰ 失敗 · exit 1', palette), `\x1b[${palette.result}m╰ 失敗 · exit 1\x1b[0m`);
   }
+});
+
+test('answer Markdown styles prose while keeping fenced examples literal', () => {
+  const c = new TranscriptColorizer();
+  const answer = (line: string) => c.line(line, dark, 'answer');
+  assert.equal(answer('## 動作確認'), '\x1b[1m動作確認\x1b[0m');
+  assert.equal(answer('**都度の許可なし**で `browse` を使う'),
+    '\x1b[1m都度の許可なし\x1b[0mで \x1b[94mbrowse\x1b[0m を使う');
+  assert.equal(answer('````md'), '');
+  assert.equal(answer('**記号もコピー**'), '**記号もコピー**');
+  assert.equal(answer('```').replace(/\x1b\[[;\d]+m/g, ''), '```');
+  assert.equal(answer('````'), '');
+  assert.equal(answer('*再開*'), '\x1b[3m再開\x1b[0m');
 });

@@ -30,7 +30,7 @@ const HELP = `modkh ${VERSION} — MoDKH (Mixture of DKH)
   /agents                                      子エージェント一覧
   /agents run [ID] [依頼]                       子を選んで限定した仕事を委譲
   /models [検索語]                             名前の部分一致検索・番号でモデル選択
-  /reasoning [レベル] [--save]                  推論レベル off/minimal/low/medium/high(既定は前回保存値)
+  /reasoning [レベル] [--save]                  推論レベル off/minimal/low/medium/high/max(既定は前回保存値)
   /connect <provider>/<model> [--base-url <url>]   モデルをその場で接続(AI API / chatgpt / fixed)
 
 接続先:

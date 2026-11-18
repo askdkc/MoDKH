@@ -42,9 +42,9 @@ test('cloud uses the official host and bearer key without inheriting the local e
       for await (const event of model.stream({ messages: [{ role: 'user', content: 'hi' }], tools: [] }, new AbortController().signal)) events.push(event);
       assert.ok(events.some(e => e.type === 'finish' && e.stopReason === 'stop'));
       const usage = events.filter(e => e.type === 'usage');
-      assert.deepEqual(usage, spec.provider === 'ollama-cloud' ? [{
+      assert.deepEqual(usage, [{
         type: 'usage', input: 37, uncachedInput: 37, output: 20, cacheRead: 0, cacheWrite: undefined,
-      }] : []);
+      }]);
     }
     assert.deepEqual(seen, [
       { url: 'https://ollama.com/v1/chat/completions', auth: 'Bearer cloud-test-key', model: 'gemma4:31b' },

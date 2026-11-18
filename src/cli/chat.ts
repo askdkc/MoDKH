@@ -37,6 +37,7 @@ import { TerminalApprovalGate } from './approval.ts';
 import { DEFAULT_POLICY, describePolicy, parsePermissionPolicy, POLICY_LEVELS } from './permissions.ts';
 import { DEFAULT_MAX_TURNS, MAX_TURNS_CEILING, parseMaxTurns } from './limits.ts';
 import { parseCompactionSettings } from './compaction-settings.ts';
+import { positiveTokenCount, readContextWindow } from '../model/context-window.ts';
 import { estimateRequestBytes, planCompaction, projectCompacted, summarizeCompaction } from '../agent/compaction.ts';
 import { loadConfig, updateConfig, parseTimeoutMs, type LiteConfig } from './config.ts';
 import { loadResumedSession, selectInitialConnection } from './initial-connection.ts';
@@ -56,6 +57,12 @@ export interface ChatOptions {
   modelFactory?: typeof buildModelFromRef;
 }
 
+const DELEGATED_INVESTIGATION =
+  'コード調査を委譲するときは、担当する問い・ファイルを切り分け、子には結論と根拠（パス・該当行・観測した挙動）、未確認点の報告を求める。'
+  + '親は子に任せたソースやテストを並行して読み直さず、別の入口・呼び出し元を調べるか、利用可能なツールで具体例やテストを実行して挙動を確かめる。'
+  + 'シェルで複数ファイルを表示するときも子の担当は含めない。テストの実行にテスト本文の再読は不要。'
+  + '結果を統合するときは子が示した根拠を使う。報告の根拠が不足している、矛盾している、または変更で古くなった場合だけ、判断に必要な行やシンボルを絞って確認する。';
+
 const SYSTEM_PROMPT =
   'あなたは端末で動くコーディング支援です。'
   + '委譲前に子の具体的な担当・成果物と、親自身が並行して進める仕事を決める。'
@@ -64,7 +71,8 @@ const SYSTEM_PROMPT =
   + '子の起動は完了ではない。空き枠の範囲で複数の子を統括し、親も独立した調査・比較・統合を進める。'
   + 'list_subagent_runs で状態、subagent_output で結果を取得し、不要な子は cancel_subagent で停止する。'
   + '依存する仕事しか残っていない場合にだけ待機する。編集対象を分け、同じ作業を重複させない。'
-  + '子の結果とツールの証拠を突き合わせ、親が全体の統合・検証・完了判定を行う。'
+  + DELEGATED_INVESTIGATION
+  + '親が全体の統合・検証・完了判定を行う。'
   + '作業ルート内のファイルを読み、変更は edit_file / create_file、確認は run_command を使う。ファイルツールは作業ルート内に制限される。'
   + 'run_command は1回ごとに新しいシェルで動く。cd は次の呼び出しに残らないので cwd を指定し、'
   + 'bash/zsh 固有の構文が必要なときだけ shell を指定する。'
@@ -208,7 +216,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     ui.write(`(設定の maxTurns が不正なため ${DEFAULT_MAX_TURNS} を使用します。1〜${MAX_TURNS_CEILING} の整数)\n`);
   const compactionConfig = parseCompactionSettings(config.compactionKeepTurns, config.compactionAutoBytes);
   for (const warning of compactionConfig.warnings) ui.write(`(圧縮: ${warning})\n`);
-  const { keepTurns, autoBytes } = compactionConfig.settings;
+  const { keepTurns, autoBytes: configuredAutoBytes } = compactionConfig.settings;
 
   const manager = new PluginManager(undefined, undefined, args.stateright);
   if (lisp) manager.registerSessionDefinitions(lisp.entries, lisp.digest);
@@ -291,6 +299,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   const headTools = lisp ? tools.filter(t => ['read_file', 'list_files', 'search_files'].includes(t.name)) : tools;
   const headSystem = lisp ? [
     'MoDKH (Mixture of DKH) head. You have no direct editing, shell or formal verification authority. Edit roles require explicit targetPaths. Integrate persisted child tool evidence and host verification. Report failures and unknowns honestly.',
+    DELEGATED_INVESTIGATION,
     lisp.headInstruction
       ? `Trusted Lisp head instruction:\n${lisp.headInstruction}\n\nConfigured local roles (pluginId, language, taskKind, tools): ${JSON.stringify(
         lisp.entries.filter(entry => entry.descriptor.enabled).map(({ descriptor, definition }) =>
@@ -301,7 +310,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     ...(lisp.entries.some(entry => entry.descriptor.enabled && entry.descriptor.taskKind === 'syntax-search')
       ? ['宣言の範囲が必要なときは、言語に合う syntax-search 担当にファイル一件と宣言名を渡す。編集担当には返されたファイル・範囲と変更条件を引き継ぎ、編集前に現行のソースを読み取らせる。'] : []),
   ].join('\n\n') : SYSTEM_PROMPT + (manager.discover().registry.get('modkh-micro-zenki')?.enabled
-    ? '\n前鬼（modkh-micro-zenki）が利用可能。状態遷移・競合・不変条件の検証には、対象から有限状態JSONモデルを作成し、run_subagent に pluginId と formalInput:{path:モデルJSON} を渡して前鬼を使う。モデルの仮定・範囲を示し、実装全体の証明と混同しない。単純な変更に不要なモデル検証は追加しない。' : '');
+    ? '\n前鬼（modkh-micro-zenki）が利用可能。状態遷移・競合・不変条件の検証には、対象から有限状態JSONモデルを作成し、start_subagent に pluginId と formalInput:{path:モデルJSON} を渡して前鬼を使う。モデルの仮定・範囲を示し、実装全体の証明と混同しない。単純な変更に不要なモデル検証は追加しない。' : '');
   const registry = new ToolRegistry([...subagents.parentTools([...headTools, ...languageTools(language)]), ...subagentTools(subagents)]);
 
   // 任意メモリ(既定無効)。接続不能でも会話は続く。
@@ -332,6 +341,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   };
   saveWorkspaceRecord();
   let sessionSkills: SkillContext | undefined;
+  let lastInputTokens: number | undefined;
+  let contextWindow: number | undefined;
+  let nextMetadataRead = 0;
+  let failedCompaction: { model: Model; from: number; eligibleBytes: number } | undefined;
   const runTurn = async (input: string, activeModel: Model | null, direct?: DelegationRequest, images: ImageAttachment[] = []): Promise<void> => {
     ui.write(`\n▶ You: ${input}${images.length ? ` [画像${images.length}枚]` : ''}\n`, 'user');
     session.setStatus('active');
@@ -347,15 +360,20 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     // Stop処理の回収が終わるまで、重ねたSIGINTで所有子を置き去りにしない。
     process.on('SIGINT', onSigint);
     const followups: string[] = [];
+    let followupWake = new AbortController();
     const finishFollowups = activeModel && ui.beginFollowups?.(message => {
       if (ac.signal.aborted) return '中止処理中です';
       if (followups.length >= 8) return '追加の依頼は8件まで送信待ちにできます';
       followups.push(message);
+      followupWake.abort();
       return null;
     });
     const takeFollowups = () => {
       const messages = followups.splice(0);
-      if (messages.length) ui.setReasoning?.(null);
+      if (messages.length) {
+        followupWake = new AbortController();
+        ui.setReasoning?.(null);
+      }
       for (const message of messages) ui.write(`\n▶ You: ${message}\n`, 'user');
       return messages;
     };
@@ -379,13 +397,17 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const hooks = {
         onSubagentWait: () => ui.setActivity?.('独立作業を終え、子の完了を待機中… Ctrl+Cで中止'),
         onModelRequest: () => {
+          lastInputTokens = undefined;
           ui.setActivity?.(`モデル応答を待機中（${++requests}回目）… Ctrl+Cで中止`);
           if (memoryText !== null && !supplied) {
             auditMemory({ stage: 'supplied' });
             supplied = true;
           }
         },
-        onUsage,
+        onUsage: (reported: TokenUsage) => {
+          lastInputTokens = positiveTokenCount(reported.input);
+          onUsage(reported);
+        },
         onModelActivity: (stage: 'reasoning' | 'tool-input') => ui.setActivity?.(stage === 'reasoning' ? 'モデルが推論中… Ctrl+Cで中止' : 'ツール要求を受信中… Ctrl+Cで中止'),
         // Reasoning is display-only: it never joins assistant content or the persisted messages.
         onReasoning: (delta: string) => ui.setReasoning?.(delta),
@@ -421,7 +443,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         for (const warning of guidance.warnings) ui.write(`(スキル: ${warning})\n`);
       }
       // Later tool results can trigger compaction, but the current turn and its follow-ups stay intact.
-      const plan = continueInChat && activeModel && autoBytes > 0 && !/^(fixed|hermes)\//.test(activeModel.id)
+      const plan = continueInChat && activeModel && configuredAutoBytes !== 0 && !/^(fixed|hermes)\//.test(activeModel.id)
         ? planCompaction(session.messages, keepTurns, session.compaction) : null;
       let attemptedCompaction = false;
       const headChecks = continueInChat ? headCheckCompletion({
@@ -442,9 +464,25 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ...(session.compaction ? { compaction: session.compaction } : {}),
         ...(plan && activeModel ? { autoCompact: async (outgoing) => {
           if (attemptedCompaction) return;
+          if (configuredAutoBytes === undefined) {
+            if (lastInputTokens === undefined) return;
+            contextWindow ??= positiveTokenCount(config.modelContextWindows?.[activeModel.id]);
+            if (!contextWindow && Date.now() >= nextMetadataRead) {
+              nextMetadataRead = Date.now() + 300_000;
+              const { provider } = parseModelRef(activeModel.id);
+              contextWindow = await readContextWindow(activeModel.id, connectionBaseUrl,
+                resolveApiKey(provider) ?? sessionKeys.get(provider) ?? process.env[providerKeyEnv(provider) ?? ''], ac.signal);
+            }
+            if (!contextWindow || lastInputTokens < contextWindow * 0.75 || ac.signal.aborted) return;
+          }
           const before = estimateRequestBytes(outgoing);
-          if (before < autoBytes) return;
+          if (configuredAutoBytes !== undefined && before < configuredAutoBytes) return;
           attemptedCompaction = true;
+          const eligibleBytes = estimateRequestBytes(plan.messages);
+          const previousFailure = failedCompaction?.model === activeModel
+            && failedCompaction.from === (session.compaction?.from ?? 0) ? failedCompaction.eligibleBytes : 0;
+          if (eligibleBytes - previousFailure < (configuredAutoBytes ?? before) / 8) return;
+          failedCompaction = { model: activeModel, from: session.compaction?.from ?? 0, eligibleBytes };
           ui.setActivity?.('会話履歴を自動圧縮中… Ctrl+Cで中止');
           const signal = AbortSignal.any([ac.signal, AbortSignal.timeout(60_000)]);
           const result = await summarizeCompaction(activeModel, plan, signal);
@@ -460,10 +498,12 @@ export async function runChat(opts: ChatOptions): Promise<void> {
             return;
           }
           session.recordCompaction(next, keepTurns);
+          failedCompaction = undefined;
           ui.write('(会話履歴を自動圧縮しました。原文はセッションに保存されています)\n');
           return next;
         } } : {}),
         takeFollowups,
+        followupSignal: () => followupWake.signal,
         ...headChecks?.hooks,
         analyze,
         maxTurns,
@@ -530,6 +570,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const nextModel = makeModel(ref, baseUrl, fixedSkip, resolveApiKey(provider, process.env) ?? sessionKeys.get(provider), { timeoutMs });
       session.setConnection(ref, baseUrl);
       model = nextModel;
+      lastInputTokens = undefined;
+      contextWindow = undefined;
+      nextMetadataRead = 0;
+      failedCompaction = undefined;
       modelId = ref;
       connectionBaseUrl = baseUrl;
       ui.setModel(ref);
@@ -670,7 +714,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ui.write('/tools: ツール履歴  /tools <番号>: 引数と結果の全文\n');
         ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /usage: トークン使用量  /allow: 承認ポリシー  /agents: 子の一覧・同時実行数  /agents limit <数>: 子の上限変更  /agents run [ID]: 子に依頼  /exit: 終了\n'
           + 'macOS: 会話のテキストをドラッグして選択するとコピーします。\n'
-          + '/reasoning off|minimal|low|medium|high [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信（実行中の追加依頼はテキストのみ） / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');
+          + '/reasoning off|minimal|low|medium|high|max [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信（実行中の追加依頼はテキストのみ） / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');
         continue;
       }
       if (line.startsWith('/head ')) { if (!model) { ui.write('/connect でモデルを接続してください\n'); continue; } await runTurn(line.slice(6), model); continue; }

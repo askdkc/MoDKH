@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { MAC_IMAGE_SCRIPT } from '../src/cli/clipboard.ts';
+import { MAC_IMAGE_SCRIPT, MAC_TEXT_SCRIPT } from '../src/cli/clipboard.ts';
 import { parseImage } from '../src/agent/images.ts';
 
 const data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==';
@@ -23,3 +23,18 @@ for (const tiff of [false, true]) {
     assert.equal(bytes.readUInt32BE(20), 1);
   });
 }
+
+test('macOS transcript copy writes only plain string data to the pasteboard', { skip: process.platform !== 'darwin' }, () => {
+  const text = '都度の許可なし\n    browse';
+  const script = MAC_TEXT_SCRIPT.replace('$.NSPasteboard.generalPasteboard', '$.NSPasteboard.pasteboardWithUniqueName') + `
+    const result = {types: ObjC.deepUnwrap(board.types), text: ObjC.unwrap(board.stringForType($.NSPasteboardTypeString))};
+    board.releaseGlobally;
+    JSON.stringify(result);
+  `;
+  const result = JSON.parse(execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script], {
+    input: text, encoding: 'utf8', timeout: 10000,
+  }));
+  assert.equal(result.text, text);
+  assert.ok(result.types.includes('public.utf8-plain-text'));
+  assert.deepEqual(result.types.filter((type: string) => !['public.utf8-plain-text', 'NSStringPboardType'].includes(type)), []);
+});

@@ -124,7 +124,7 @@ export function headCheckCompletion(turn: HeadCheckTurn) {
       repeats = pending === lastMissing ? repeats + 1 : 0;
       lastMissing = pending;
       if (repeats >= 2) return { errorMessage: `未完了: ${pending}` };
-      return { continueWith: `(ホストの完了確認) ${pending}。完了を報告する前に、未確認の担当だけを run_subagent で呼んでください。${editMissing ? ' 先に編集担当に変更そのものを指示し、targetPaths と同じ操作の現状・期待結果を behaviorChange.before / behaviorChange.after に渡してください。' : ' 前鬼には formalInput.path（モデルJSON）、後鬼には証明元 formalInput.path を渡します。'} 拒否または結果不明の操作は再送しないでください。` };
+      return { continueWith: `(ホストの完了確認) ${pending}。完了を報告する前に、未確認の担当だけを start_subagent で呼んでください。${editMissing ? ' 先に編集担当に変更そのものを指示し、targetPaths と同じ操作の現状・期待結果を behaviorChange.before / behaviorChange.after に渡してください。' : ' 前鬼には formalInput.path（モデルJSON）、後鬼には証明元 formalInput.path を渡します。'} 拒否または結果不明の操作は再送しないでください。` };
     }
 
     return undefined;

@@ -256,3 +256,26 @@ test('busy terminal distinguishes model reasoning from completion without showin
     assert.match(t.text(), /処理中/);
   } finally { t.ui.close(); }
 });
+
+test('Up recalls the last submitted chat text for editing, including accepted followups', async () => {
+  const t = terminal();
+  try {
+    const first = t.ui.next();
+    t.key('paste-start'); t.key('', '一行目\n二行目🙂'); t.key('paste-end');
+    t.key('return');
+    assert.equal(await first, '一行目\n二行目🙂');
+
+    const secret = t.ui.ask('key', undefined, true);
+    t.key('', 'private'); t.key('return'); await secret;
+
+    const sent: string[] = [];
+    const finish = t.ui.beginFollowups(text => { sent.push(text); return null; });
+    t.key('up'); t.key('backspace'); t.key('', '！'); t.key('return');
+    finish([]);
+    assert.deepEqual(sent, ['一行目\n二行目！']);
+
+    const next = t.ui.next();
+    t.key('up'); t.key('return');
+    assert.equal(await next, sent[0]);
+  } finally { t.ui.close(); }
+});

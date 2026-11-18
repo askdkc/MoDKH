@@ -25,11 +25,13 @@ test('releasing a drag copies the selected transcript without wrapping, sidebar 
   try {
     const prompt = ui.next(AbortSignal.timeout(5000));
     ui.write('▶ You: はじめ\n', 'user');
-    const answer = '日本語の長い行。'.repeat(10) + '\n\n    code()';
-    ui.write(answer + '\n', 'answer');
+    const phrase = '日本語の長い行。'.repeat(10);
+    const answer = phrase + '\n\ncode()';
+    ui.write('**日本語', 'answer');
+    ui.write(phrase.slice(3) + '**\n\n' + '\x1b[31m`code()`\x1b[0m\n', 'answer');
     const rows = screenFrom(screen, output.rows);
     const first = rows.findIndex(row => row.startsWith('日本語')) + 1;
-    const last = rows.findIndex(row => row.startsWith('    code()')) + 1;
+    const last = rows.findIndex(row => row.startsWith('code()')) + 1;
     assert.ok(first > 0 && last > first + 2);
     input.write(`\x1b[<0;1;${first}M\x1b[<32;90;${last}M`);
     assert.deepEqual(copies, [], 'mouse motion does not write to the clipboard');

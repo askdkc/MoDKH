@@ -1,12 +1,13 @@
 import type { ReasoningLevel } from '../agent/types.ts';
 
+import { harnessProfile } from './harness-profile.ts';
 export type { ReasoningLevel };
 
 /**
  * `/reasoning` のレベルと、各プロバイダーへの変換。
- * 対応していないレベル・プロバイダーは「送らない」を返す仕様(既定の初期値に任せる)。
+ * 保存するのは希望レベル。モデル別の変換は送信時だけ行う。
  */
-export const REASONING_LEVELS: readonly ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high'];
+export const REASONING_LEVELS: readonly ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'max'];
 
 export function parseReasoningLevel(value: unknown): ReasoningLevel | null {
   if (typeof value !== 'string') return null;
@@ -24,11 +25,19 @@ const GOOGLE_BUDGET: Partial<Record<ReasoningLevel, number>> = { off: 0, low: 20
  * google では thinkingBudget:0 で無効化を明示する。chatgpt/deepseek/fixed は対象外。
  * unknown レベルは必ず undefined(誤ったパラメーターをそのまま送らない)。
  */
-export function reasoningProviderOptions(provider: string, level: unknown): Record<string, unknown> | undefined {
-  if (level === null || typeof level !== 'string') return undefined;
-  const parsed = parseReasoningLevel(level);
-  if (!parsed) return undefined;
-  const eff = parsed === 'off' ? undefined : parsed === 'minimal' ? 'minimal' : parsed;
+export function reasoningProviderOptions(provider: string, level: unknown, model = ''): Record<string, unknown> | undefined {
+  const requested = parseReasoningLevel(level);
+  if (!requested) return undefined;
+  const slug = model.split('/').at(-1)?.toLowerCase() ?? '';
+  const thinking = { type: requested === 'off' ? 'disabled' : 'enabled' };
+  if (/^deepseek-v4(?:[.:-]|$)/.test(slug)) {
+    const effort = requested === 'medium' ? 'high' : requested === 'minimal' ? 'low' : requested;
+    return { [provider]: { thinking, ...(requested !== 'off' && { reasoningEffort: effort }) } };
+  }
+  if (/^glm-(?:5(?:[.:-]|$)|4\.[567](?:[:-]|$))/.test(slug)) return { [provider]: { thinking } };
+  if (/^deepseek-(?:chat|reasoner|r1)(?:[:-]|$)/.test(slug)) return undefined;
+  const parsed = requested === 'max' ? 'high' : requested === 'minimal' ? 'low' : requested;
+  const eff = responsesReasoningEffort(requested, model);
   switch (provider) {
     case 'openai':
       return eff === undefined ? undefined : { openai: { reasoningEffort: eff } };
@@ -56,8 +65,16 @@ export function reasoningProviderOptions(provider: string, level: unknown): Reco
 }
 
 /** Responses(Codex) API の reasoning effort。off と未知のレベルはキー自体を送らない。 */
-export function responsesReasoningEffort(level: unknown): string | undefined {
+export function responsesReasoningEffort(level: unknown, model = ''): string | undefined {
   const parsed = parseReasoningLevel(level);
   if (!parsed || parsed === 'off') return undefined;
+  const slug = model.split('/').at(-1) ?? '';
+  if (/^gpt-(?:4|3\.5)/.test(slug)) return undefined;
+  if (parsed === 'max') {
+    if (harnessProfile(model)) return 'max';
+    if (/^gpt-5\.[234](?:-|$)/.test(slug)) return 'xhigh';
+    return 'high';
+  }
+  if (parsed === 'minimal' && !/^gpt-5(?:-(?:mini|nano))?$/.test(slug)) return 'low';
   return parsed;
 }

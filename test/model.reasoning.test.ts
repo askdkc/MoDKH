@@ -24,6 +24,9 @@ test('reasoning options are provider specific and off sends nothing', () => {
   // OpenAI互換系はプロバイダー名自身をキーにして server 側 reasoning_effort へ渡る。
   assert.deepEqual(reasoningProviderOptions('ollama-cloud', 'high'), { 'ollama-cloud': { reasoningEffort: 'high' } });
   assert.deepEqual(reasoningProviderOptions('fixed', 'low'), undefined);
+  assert.deepEqual(reasoningProviderOptions('deepseek', 'medium', 'deepseek-v4-pro'), { deepseek: { thinking: { type: 'enabled' }, reasoningEffort: 'high' } });
+  assert.deepEqual(reasoningProviderOptions('openai', 'max', 'gpt-6.2-astra'), { openai: { reasoningEffort: 'max' } });
+  assert.deepEqual(reasoningProviderOptions('openai', 'minimal', 'gpt-6.2-sol'), { openai: { reasoningEffort: 'low' } });
 });
 
 test('compatible providers carry reasoning_effort on the wire', async () => {
@@ -41,12 +44,19 @@ test('compatible providers carry reasoning_effort on the wire', async () => {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
     const port = (server.address() as AddressInfo).port;
-    for (const [level, expected] of [['low', 'low'], ['off', undefined]] as const) {
-      const model = resolveModel({ provider: 'ollama-cloud', model: 'glm-test', baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'k' });
+    for (const [id, level, expected, thinking] of [
+      ['generic', 'low', 'low', undefined], ['generic', 'off', undefined, undefined],
+      ['generic', 'max', 'high', undefined],
+      ['deepseek-v4-pro:0813', 'max', 'max', 'enabled'], ['deepseek-v4-pro:0813', 'off', undefined, 'disabled'],
+      ['glm-5.3', 'max', undefined, 'enabled'], ['glm-5.3', 'off', undefined, 'disabled'],
+    ] as const) {
+      const model = resolveModel({ provider: 'ollama-cloud', model: id, baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'k' });
       const result: ModelEvent[] = [];
       for await (const ev of model.stream(REQ(level), new AbortController().signal)) result.push(ev);
       assert.equal((result.at(-1) as { stopReason: string }).stopReason, 'stop');
-      assert.equal((bodies.at(-1)! as { reasoning_effort?: string }).reasoning_effort, expected, `level=${level}`);
+      const body = bodies.at(-1)! as { reasoning_effort?: string; thinking?: { type: string } };
+      assert.equal(body.reasoning_effort, expected, `${id} effort for ${level}`);
+      assert.equal(body.thinking?.type, thinking, `${id} thinking for ${level}`);
     }
   } finally {
     server.closeAllConnections();

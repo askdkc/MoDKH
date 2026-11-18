@@ -10,6 +10,7 @@ import {
   type ToolSet,
 } from 'ai';
 import { toolContext } from './context.ts';
+import { harnessProfile, CODEX_62_DEFAULTS } from './harness-profile.ts';
 import { reasoningProviderOptions } from './reasoning.ts';
 import { parseImages } from '../agent/images.ts';
 import type { Model, ModelEvent, ModelRequest, TokenUsage, ToolSpec } from '../agent/types.ts';
@@ -107,7 +108,11 @@ export class AiSdkModel implements Model {
     let errorMessage: string | undefined;
     let sawToolCall = false;
     let finishReason: 'stop' | 'tool-calls' | 'length' | undefined;
-    const reasoning = reasoningProviderOptions(this.provider ?? '', req.reasoning);
+    const defaults = harnessProfile(this.id) ? CODEX_62_DEFAULTS : undefined;
+    const reasoning = reasoningProviderOptions(this.provider ?? '', req.reasoning ?? defaults?.reasoning, this.id);
+    // Only native OpenAI Responses is known to support text.verbosity.
+    const providerOptions = defaults && this.provider === 'openai'
+      ? { openai: { ...reasoning?.openai as object, textVerbosity: defaults.verbosity } } : reasoning;
     const thinking = this.provider === 'anthropic' && reasoning?.anthropic !== undefined;
     const thinkingBudget = thinking
       ? (reasoning!.anthropic as { thinking: { budgetTokens?: number } }).thinking.budgetTokens : undefined;
@@ -122,7 +127,7 @@ export class AiSdkModel implements Model {
         onError: () => {},
         maxRetries: 0, // A transport failure does not establish that the request was unsent.
         // providerOptions の実値はすべて JSON オブジェクト。SDK型は index signature が緩いため型の詰め替え。
-        ...(reasoning ? { providerOptions: reasoning as never } : {}),
+        ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
         ...(thinking ? { maxOutputTokens: (thinkingBudget ?? 0) + 8192 } : {}),
       });
       for await (const part of result.fullStream) {

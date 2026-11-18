@@ -29,10 +29,11 @@ export interface LiteConfig {
   /** 圧縮で生のまま残す直近ターン数。parseKeepTurns で検証する。 */
   compactionKeepTurns?: unknown;
   /**
-   * 会話本文がこのサイズ(推定UTF-8バイト)に達したら自動で圧縮する。既定は128 KiB、0で無効。
+   * 会話本文がこのサイズ(推定UTF-8バイト)に達したら自動で圧縮する。既定では入力トークン数を使う、0で無効。
    * トークン数やプロバイダーのコンテキスト上限とは別の目安。
    */
   compactionAutoBytes?: unknown;
+  modelContextWindows?: Record<string, unknown>;
   diagnostics?: string[];
 }
 
@@ -101,6 +102,7 @@ function toLiteConfig(parsed: Record<string, unknown>): LiteConfig {
     timeoutMs: parsed.timeoutMs,
     compactionKeepTurns: parsed.compactionKeepTurns,
     compactionAutoBytes: parsed.compactionAutoBytes,
+    modelContextWindows: parsed.modelContextWindows as LiteConfig['modelContextWindows'],
     memory: {
       enabled: memory?.enabled === true,
       command: memory?.command ?? DEFAULT_CONFIG.memory.command,

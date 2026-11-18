@@ -119,7 +119,7 @@ export type AgentMessage =
 /**
  * 推論レベル。off は「明示的に止めたい」意志であり、その対応はプロバイダーごとに置く。
  */
-export type ReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high';
+export type ReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'max';
 
 export interface ModelRequest {
   messages: AgentMessage[];

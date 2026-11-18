@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { modelInstructions } from '../model/harness-profile.ts';
 import type { AgentMessage, Model, ModelEvent, TokenUsage, ToolCall, ToolResult, ToolSpec } from './types.ts';
 import { ToolRegistry } from '../tools/registry.ts';
 import { prepareSkillContext, type SkillContext } from './skills.ts';
@@ -50,6 +51,8 @@ export interface AgentLoopOptions {
   checkpoint?(): void;
   /** Follow-ups are consumed only between complete assistant/tool exchanges. */
   takeFollowups?(): string[];
+  /** Aborted when a follow-up is queued. Only interrupts an idle wait, never a child. */
+  followupSignal?(): AbortSignal;
   /** Trusted host workflow may require more work before this response can close. */
   terminalToolBlock?(): string | undefined;
   beforeComplete?(): Promise<{ continueWith: string } | { errorMessage: string } | undefined>;
@@ -120,7 +123,8 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
   const task = messages.findLast(message => message.role === 'user');
   const skills = opts.skills === false ? undefined : (opts.skillContext ?? prepareSkillContext(task?.content ?? '', opts.root));
   if (skills) opts.hooks?.onSkillContext?.(skills);
-  const system = skills?.text ? (opts.system ?? '') + skills.text : opts.system;
+  const guidance = modelInstructions(opts.model.id) + (skills?.text ?? '');
+  const system = guidance ? (opts.system ?? '') + guidance : opts.system;
   // The provider sees the projection; the transcript keeps the full text for audit and replay safety.
   let compaction = opts.compaction;
   let truncatedResponse: AgentMessage | undefined;
@@ -228,18 +232,20 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
         if (opts.subagents?.hasUnknown) return { outcome: 'interrupted' };
         continue;
       }
-      if (opts.subagents?.hasPending) {
-        // The model has no independent tool work left. Wait for one settlement, not all children.
-        opts.hooks?.onSubagentWait?.();
-        await opts.subagents.waitForChange(opts.signal);
-        continue;
-      }
       const pending = opts.jobs?.takeNotices() ?? [];
       if (pending.length > 0) {
         append({ role: 'user', content: `(バックグラウンドジョブの完了通知)\n${pending.join('\n\n')}` });
         continue;
       }
       if (stopReason === 'stop' && turn + 1 < maxTurns && appendFollowups()) continue;
+      if (opts.subagents?.hasPending) {
+        const wake = [opts.signal];
+        if (opts.jobs) wake.push(opts.jobs.noticeSignal);
+        if (opts.followupSignal) wake.push(opts.followupSignal());
+        opts.hooks?.onSubagentWait?.();
+        await opts.subagents.waitForChange(AbortSignal.any(wake));
+        continue;
+      }
       if (stopReason === 'stop' && opts.beforeComplete) {
         const decision = await opts.beforeComplete();
         if (opts.signal.aborted) return { outcome: 'interrupted' };

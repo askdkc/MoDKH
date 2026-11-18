@@ -7,6 +7,7 @@ import { runAgentLoop } from '../src/agent/loop.ts';
 import { SubagentService, subagentTools, type SubagentOptions } from '../src/subagents/service.ts';
 import { PluginManager } from '../src/plugins/manager.ts';
 import { SessionStore } from '../src/session/store.ts';
+import { JobRegistry } from '../src/tools/jobs.ts';
 import { FixedModel, type FixedStep } from '../src/model/fixed.ts';
 import { defaultTools, ToolRegistry } from '../src/tools/registry.ts';
 import { TerminalApprovalGate } from '../src/cli/approval.ts';
@@ -334,6 +335,52 @@ test('async delegation lets the parent work with two live children, then collect
   assert.ok(f.parent.delegations().every(r => r.result?.status === 'completed'));
   assert.ok(parentModel.requests.some(r => r.messages.some(m => m.role === 'user' && m.content.includes('子エージェントの完了通知'))));
 });
+
+for (const wake of ['followup', 'job'] as const) {
+  test(`parent resumes for a ${wake} during child wait and still integrates the child`, async t => {
+    const f = fixture(t);
+    let releaseChild!: () => void;
+    const child = new Promise<void>(resolve => { releaseChild = resolve; });
+    const service = new SubagentService({ ...f.opts, connection: () => ({ ref: 'fixed/child', create: () => ({
+      id: 'fixed/child', async *stream() { await child; yield* done; },
+    }) }) });
+    const jobs = new JobRegistry();
+    t.after(() => jobs.close());
+    const queued: string[] = [];
+    const arrived = new AbortController();
+    const model = new FixedModel([done, done, done]);
+    await service.start(request, owner());
+    let handledWhilePending = false;
+    const timeout = setTimeout(releaseChild, 5000);
+    t.after(() => clearTimeout(timeout));
+    let submitted = false;
+    const result = await runAgentLoop(f.parent.messages, {
+      model, registry: new ToolRegistry([]), root: f.root, approval: f.opts.approval,
+      signal: new AbortController().signal, subagents: service, jobs, skills: false,
+      followupSignal: () => arrived.signal,
+      takeFollowups: () => queued.splice(0),
+      hooks: {
+        onSubagentWait() {
+          if (submitted) return;
+          submitted = true;
+          setImmediate(() => {
+            if (wake === 'job') jobs.start({ command: 'echo independent-result', cwd: f.root, shell: 'sh' });
+            else { queued.push('independent-result'); arrived.abort(); }
+          });
+        },
+        onModelRequest() {
+          if (f.parent.messages.some(m => m.role === 'user' && m.content.includes('independent-result'))) {
+            if (service.hasPending) handledWhilePending = true;
+            releaseChild();
+          }
+        },
+      },
+    });
+    assert.equal(handledWhilePending, true);
+    assert.equal(result.outcome, 'complete');
+    assert.ok(model.requests.at(-1)?.messages.some(m => m.role === 'user' && m.content.includes('子エージェントの完了通知')));
+  });
+}
 
 test('async tools enforce two slots, expose running status, cancel independently and preserve cold receipts', async t => {
   const f = fixture(t);

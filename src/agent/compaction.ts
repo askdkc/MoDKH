@@ -28,13 +28,12 @@ export interface CompactionState {
 
 /** 生のまま残す直近ターン数の既定値。 */
 export const DEFAULT_COMPACTION_KEEP_TURNS = 6;
-export const DEFAULT_COMPACTION_AUTO_BYTES = 128 * 1024;
 
 export interface CompactionSettings {
   /** 生のまま残す直近ターン数。 */
   keepTurns: number;
   /** 推定バイト数のしきい値。0 は自動圧縮なし。 */
-  autoBytes: number;
+  autoBytes: number | undefined;
 }
 
 export interface CompactionPlan {

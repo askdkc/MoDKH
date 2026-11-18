@@ -39,7 +39,7 @@ modkh chat --lisp-config experiments/presets/formal.lisp --trust-lisp-sha256 REV
   --lean-contract Expected.lean --lean-theorem orders_cancel
 ```
 
-通常チャットでは、MoA の親エージェントが **役小角（`enno-oduno`）** を担います。役小角は依頼を検証できる単位に分け、担当ごとの作業と確認条件を `run_subagent` の `task` に、全体の目的と関係する依存関係を `context` に渡します。委譲ごとに結果を受け取ってから次の担当に進みます。前鬼（`micro-zenki`）には `formalInput.path` で Stateright のモデルJSONを、後鬼（`micro-goki`）には `formalInput.path` で証明元の Lean ファイルを指定します。ホストは指定されたパスで各担当の検証ツールを一度実行します。起動時の `--lean-contract` と `--lean-theorem` は対象定理の照合に使います。後鬼から命題不一致が返れば、その条件は不合格として記録します。役小角は両者のツール結果と実装の受け入れ結果を元の依頼に照らして確認します。
+通常チャットでは、MoA の親エージェントが **役小角（`enno-oduno`）** を担います。役小角は依頼を検証できる単位に分け、担当ごとの作業と確認条件を `start_subagent` の `task` に、全体の目的と関係する依存関係を `context` に渡します。担当を起動した後も親は独立した調査や確認を進め、子の結果が必要になった時点で待ちます。前鬼（`micro-zenki`）には `formalInput.path` で Stateright のモデルJSONを、後鬼（`micro-goki`）には `formalInput.path` で証明元の Lean ファイルを指定します。ホストは指定されたパスで各担当の検証ツールを一度実行します。起動時の `--lean-contract` と `--lean-theorem` は対象定理の照合に使います。後鬼から命題不一致が返れば、その条件は不合格として記録します。役小角は両者のツール結果と実装の受け入れ結果を元の依頼に照らして確認します。
 
 `formal.lisp` に登録されているのは検証担当です。実装の編集も委譲する場合は、確認済みの同じ Lisp ファイルに編集担当と [検証コマンド・対象ファイルの設定](modkh.md#one-file-edit-and-independent-acceptance)を加え、SHA-256 を取り直してください。
 

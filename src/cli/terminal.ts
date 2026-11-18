@@ -2,7 +2,7 @@ import { emitKeypressEvents, type Key } from 'node:readline';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { TerminalMouseInput, type MouseReport } from './terminal-mouse.ts';
-import { reflowTranscript, selectedTranscript, transcriptLine, transcriptLines, type DragSelection, type TranscriptLine, type TranscriptScreenLine } from './transcript-selection.ts';
+import { reflowTranscript, selectedTranscript, transcriptLine, transcriptLines, type DragSelection, type TranscriptScreenLine } from './transcript-selection.ts';
 import { EMPTY_USAGE, USAGE_HEADING, usageFooter, usageBadgeLine, usageBreakdownLines, type UsageTotals } from './usage.ts';
 import { chars, clean, fitText, textWidth, wrap, wrapText, editorLayout, verticalCursor, lineEdge } from './editor.ts';
 export { textWidth, fitText } from './editor.ts';
@@ -51,7 +51,7 @@ export interface ChatTerminal {
 export const COMMANDS: readonly Choice[] = [
   { value: '/connect', label: '/connect', detail: 'プロバイダーに接続' },
   { value: '/models', label: '/models', detail: 'モデルを選択' },
-  { value: '/reasoning', label: '/reasoning', detail: '推論レベル (off/minimal/low/medium/high)' },
+  { value: '/reasoning', label: '/reasoning', detail: '推論レベル (off/minimal/low/medium/high/max)' },
   { value: '/agents', label: '/agents', detail: '子の一覧・委譲・同時実行数' },
   { value: '/usage', label: '/usage', detail: 'トークン使用量の内訳' },
   { value: '/tools', label: '/tools', detail: 'ツール履歴 · /tools <番号> で全文' },
@@ -60,6 +60,13 @@ export const COMMANDS: readonly Choice[] = [
   { value: '/help', label: '/help', detail: '操作ガイド' },
   { value: '/exit', label: '/exit', detail: '終了' },
 ];
+
+function isChatCommand(text: string): boolean {
+  if (text.includes('\n')) return false;
+  const command = text.trim().split(/\s+/, 1)[0];
+  return command === '/quit' || command === '/head' || COMMANDS.some(choice => choice.value === command);
+}
+
 const LOGO = [
   '███╗   ███╗        ██████╗  ██╗  ██╗ ██╗  ██╗',
   '████╗ ████║        ██╔══██╗ ██║ ██╔╝ ██║  ██║',
@@ -175,8 +182,8 @@ export class TerminalUI implements ChatTerminal {
   private selection = 0;
   private pending?: Pending;
   private queued: string[] = [];
-  /** スクロールバックへ確定待ちの完成行(折り返し済み)。 */
-  private queue: (TranscriptLine & { kind: TranscriptKind })[] = [];
+  /** 描画を待っている、折り返し前の論理行。 */
+  private queue: { text: string; kind: TranscriptKind }[] = [];
   private transcriptRows = new Map<number, TranscriptScreenLine>();
   private liveTranscriptRows = new Map<number, TranscriptScreenLine>();
   private drag?: DragSelection;
@@ -217,6 +224,7 @@ export class TerminalUI implements ChatTerminal {
   private paste = false;
   private pasteBuffer = '';
   private pasteBytes = 0;
+  private previousInput = '';
   private editorScroll = 0;
   private images: ImageAttachment[] = [];
   private clipboardTask?: AbortController;
@@ -369,11 +377,12 @@ export class TerminalUI implements ChatTerminal {
 
   private sendFollowup(): void {
     if (!this.text.trim() || !this.followup) return;
-    const command = this.text.includes('\n') ? '' : this.text.trim().split(/\s+/, 1)[0];
-    const isCommand = command === '/quit' || command === '/head' || COMMANDS.some(choice => choice.value === command);
-    const error = isCommand ? 'スラッシュコマンドは応答完了後に使えます' : this.followup(this.text);
+    const error = isChatCommand(this.text) ? 'スラッシュコマンドは応答完了後に使えます' : this.followup(this.text);
     this.inputNotice = error ?? '追加の依頼を受け付けました';
-    if (error === null) { this.text = ''; this.cursor = 0; this.editorScroll = 0; }
+    if (error === null) {
+      this.previousInput = this.text;
+      this.text = ''; this.cursor = 0; this.editorScroll = 0;
+    }
   }
 
   private hasUsagePane(): boolean {
@@ -458,6 +467,7 @@ export class TerminalUI implements ChatTerminal {
         signal?.removeEventListener('abort', abort);
         this.clipboardTask?.abort(); this.clipboardTask = undefined;
         this.paste = false; this.pasteBuffer = ''; this.pasteBytes = 0;
+        if (composer && value?.trim() && !isChatCommand(value)) this.previousInput = value;
         if (value === null && composer) this.images = [];
         this.pending = undefined;
         this.text = draft?.text ?? ''; this.cursor = draft?.cursor ?? 0;
@@ -752,6 +762,11 @@ export class TerminalUI implements ChatTerminal {
     if (newline) this.insertText('\n');
     else if (options && (key.name === 'up' || key.name === 'down')) {
       this.selection = options.length ? (this.selection + (key.name === 'down' ? 1 : -1) + options.length) % options.length : 0;
+    } else if (composer && key.name === 'up' && !this.text && this.previousInput) {
+      this.text = this.previousInput;
+      this.cursor = chars(this.text).length;
+      this.hiddenCompletion = true;
+      this.inputNotice = '';
     } else if (composer && (key.name === 'up' || key.name === 'down')) {
       this.cursor = verticalCursor(this.text, this.cursor, this.editorWidth(), key.name === 'up' ? -1 : 1);
     } else if (key.name === 'return' || key.name === 'enter' || key.name === 'tab') {
@@ -777,7 +792,7 @@ export class TerminalUI implements ChatTerminal {
   };
 
   /**
-   * トランスクリプトへ追記する。完成行は直ちに折り返して出力待ちキューへ。
+   * トランスクリプトへ追記する。完成行を出力待ちキューへ。装飾と折り返しは描画時に行う。
    * 会話の始まり(`▶`)を検出したら、それ以降の行を広めの幅で折り返す。
    */
   private appendTranscript(text: string, kind: TranscriptKind): void {
@@ -785,7 +800,6 @@ export class TerminalUI implements ChatTerminal {
     let lineKind = this.partial ? this.partialKind : kind;
     if (kind === 'user') this.usageVisible = true;
     if (kind === 'user' || /(^|\n)▶/.test(text) || /https:\/\//.test(text)) this.started = true;
-    const width = this.width();
     for (;;) {
       const at = source.indexOf('\n');
       if (at < 0) {
@@ -797,9 +811,25 @@ export class TerminalUI implements ChatTerminal {
       source = source.slice(at + 1);
       // 会話が始まる前の案内行はウェルカムブロックへ(会話開始時に一括で出力する)。
       if (!this.started) this.bootLines.push(logicalLine);
-      else for (const wrapped of transcriptLine(logicalLine, width, true)) this.queue.push({ ...wrapped, kind: lineKind });
+      else this.queue.push({ text: logicalLine, kind: lineKind });
       lineKind = kind;
     }
+  }
+
+  private renderTranscriptLine(raw: string, kind: TranscriptKind, width: number, newline: boolean,
+    colorizer: TranscriptColorizer): TranscriptScreenLine[] {
+    const source = clean(raw);
+    const colored = colorizer.line(source, this.palette, kind);
+    const text = clean(colored);
+    if (kind === 'answer' && source && !text) return [];
+    if (kind === 'user') {
+      return transcriptLine(text, width, newline).map(line => {
+        const padded = line.text.padEnd(line.text.length + width - textWidth(line.text));
+        const painted = this.color && line.text ? this.paint(padded, `${this.panelStyle};${this.palette.user}`) : line.text;
+        return { ...line, painted };
+      });
+    }
+    return reflowTranscript([{ text, painted: this.color ? colored : text, newline }], width);
   }
 
   private paint(text: string, code: string): string { return this.color ? `\x1b[${code}m${text}\x1b[0m` : text; }
@@ -819,12 +849,8 @@ export class TerminalUI implements ChatTerminal {
     const width = this.started ? this.width() : Math.max(8, Math.min(columns - 4, 80));
     // 会話開始前だけ中央寄せを残す。会話中は余白を付けず、画面上の位置とコピー結果を一致させる。
     const marginPrefix = this.started ? '' : ' '.repeat(Math.max(0, Math.floor((columns - width) / 2)));
-    const stream = this.queue.splice(0).map(({ kind, ...line }): TranscriptScreenLine => {
-      const painted = !this.color ? line.text : kind === 'user' && line.text
-        ? this.paint(line.text.padEnd(line.text.length + width - textWidth(line.text)), `${this.panelStyle};${this.palette.user}`)
-        : this.colorizer.line(line.text, this.palette, kind);
-      return { ...line, painted };
-    });
+    const stream = this.queue.splice(0).flatMap(line =>
+      this.renderTranscriptLine(line.text, line.kind, width, true, this.colorizer));
     this.colorizerState = this.colorizer.state();
     // 起動時の案内だけを履歴に残す。ロゴはウェルカム画面の一部。
     if (this.started && !this.bootFlushed) {
@@ -857,8 +883,8 @@ export class TerminalUI implements ChatTerminal {
     const controlWidth = this.controlWidth();
     const controlMargin = this.controlMargin();
 
-    const partialRows = this.partial ? transcriptLines(this.partial, width)
-      .map(line => ({ ...line, painted: this.color ? this.fork().line(line.text, this.palette, this.partialKind) : line.text })) : [];
+    const partialRows = this.partial
+      ? this.renderTranscriptLine(this.partial, this.partialKind, width, false, this.fork()) : [];
     const partialLines = partialRows.map(line => line.painted);
     const partialCount = partialLines.length;
     // ライブの推論は見出し含めて表示。はみ出すときは古い行(先頭)から落とす。
@@ -910,7 +936,8 @@ export class TerminalUI implements ChatTerminal {
     const hints = editingFollowup ? `${compactChild && this.inputNotice ? this.inputNotice + '  ' : ''}Enter 追加の依頼を送信  Ctrl+C 中止`
       : !this.pending ? 'Ctrl+C 中止（入力は応答完了後）' : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
       : composer ? 'Enter 送信  Ctrl+J 改行  Ctrl+V 画像  Cmd+V テキスト' + (this.mouseInput ? '  ドラッグでコピー' : '') : 'Enter 決定  Ctrl+C 中止';
-    lines.push({ text: hints, style: '2' });
+    const recallHint = (this.pending?.composer || editingFollowup) && !this.text && this.previousInput ? '↑ 前回の入力  ' : '';
+    lines.push({ text: recallHint + hints, style: '2' });
     // 右側の内訳を置けない端末では、最下段に使用量の要約を残す。
     const badgeRoom = controlWidth - textWidth(this.cwd) - 2;
     const usageStatus = !this.usageVisible || usageRows.length ? '' : this.usage?.responses

@@ -6,6 +6,7 @@ import { createFileTool, editFileTool } from './edit.ts';
 import { runCommandTool } from './run.ts';
 import { jobTools } from './job-tools.ts';
 import { webTools } from './web.ts';
+import { browseTools } from './browse.ts';
 import { skillTools } from './skills.ts';
 import type { JobRegistry } from './jobs.ts';
 
@@ -100,7 +101,7 @@ export class ToolRegistry {
 
 /** 初版が提供する5区分のツール群(作成/編集は別ツール)。 */
 export function defaultTools(): Tool[] {
-  return [listFilesTool, searchFilesTool, readFileTool, createFileTool, editFileTool, runCommandTool, ...webTools, ...skillTools];
+  return [listFilesTool, searchFilesTool, readFileTool, createFileTool, editFileTool, runCommandTool, ...browseTools(), ...webTools, ...skillTools];
 }
 
 /** The same tools plus background execution, which needs a per-session job registry. */

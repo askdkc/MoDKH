@@ -1,7 +1,7 @@
 /**
  * 圧縮(compaction)の設定値。値の検証だけを持ち、判断は呼び出し元が行う。
  */
-import { DEFAULT_COMPACTION_AUTO_BYTES, DEFAULT_COMPACTION_KEEP_TURNS, type CompactionSettings } from '../agent/compaction.ts';
+import { DEFAULT_COMPACTION_KEEP_TURNS, type CompactionSettings } from '../agent/compaction.ts';
 
 export { DEFAULT_COMPACTION_KEEP_TURNS };
 
@@ -44,7 +44,7 @@ export function parseCompactionSettings(
       warnings.push(`設定の compactionKeepTurns が不正なため ${DEFAULT_COMPACTION_KEEP_TURNS} を使用します。${KEEP_TURNS_MIN}〜${KEEP_TURNS_MAX} の整数`);
     } else keepTurns = parsed;
   }
-  let autoBytes = DEFAULT_COMPACTION_AUTO_BYTES;
+  let autoBytes: number | undefined;
   if (autoBytesValue !== undefined) {
     const parsed = parseAutoBytes(autoBytesValue);
     if (parsed === null) {

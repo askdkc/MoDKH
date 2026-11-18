@@ -1,6 +1,7 @@
 import type { AgentMessage, Model, ModelEvent, ModelRequest, TokenUsage } from '../../agent/types.ts';
 
 import { toolContext } from '../context.ts';
+import { harnessProfile, CODEX_62_DEFAULTS } from '../harness-profile.ts';
 import { responsesReasoningEffort } from '../reasoning.ts';
 import { parseImages, imageDataUrl } from '../../agent/images.ts';
 
@@ -86,9 +87,11 @@ export class ResponsesApiModel implements Model {
 
   async *stream(req: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent> {
     // /reasoning で指定した effort を付与する。off と未知のレベルはキー自体を送らない。
-    const effort = responsesReasoningEffort(req.reasoning);
+    const defaults = harnessProfile(this.model) ? CODEX_62_DEFAULTS : undefined;
+    const effort = responsesReasoningEffort(req.reasoning ?? defaults?.reasoning, this.model);
     const body = {
       model: this.model,
+      ...(defaults ? { text: { verbosity: defaults.verbosity } } : {}),
       instructions: req.system,
       input: toResponsesInput(req.messages),
       tools: req.tools.map((t) => ({

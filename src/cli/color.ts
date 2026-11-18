@@ -1,10 +1,11 @@
 /**
  * トランスクリプトの行単位の色分け。外部依存なし。
- * - 推論はグレー、回答の本文は端末の前景色で太字
+ * - 推論はグレー、回答は Markdown の強調やコードを端末のスタイルで表示
  * - diff(+/-/@@/---/+++)は追加=緑・削除=赤
  * - ``` コードブロック内は簡易トークナイザー(文字列・コメント・キーワード・数値)
  * ライト/ダーク両方で読みやすいよう背景判定ごとにパレットを替える。
  */
+import { answerMarkdown } from './answer-markdown.ts';
 import { stripVTControlCharacters } from 'node:util';
 
 export type Background = 'dark' | 'light';
@@ -140,27 +141,46 @@ export function sourceLine(raw: string): { body: string } | null {
 export type TranscriptKind = 'system' | 'user' | 'answer' | 'reasoning';
 export type ColorMode = 'text' | 'code';
 
-export interface ColorizerState { mode: ColorMode; inDiff: boolean; inToolOutput: boolean }
+export interface ColorizerState { answerFence?: string; mode: ColorMode; inDiff: boolean; inToolOutput: boolean }
 
 /** Tool output lines that never quote source: they carry their own meaning. */
 const TOOL_OUTPUT_META = /^\s*(?:\(結果[.:]|… 残り|検索 |対象: |作業場所: |\[exit code|\(エラー)/;
 
 /** コードブロックとdiffの状態を行間で引き継いで色を付ける。 */
 export class TranscriptColorizer {
+  private answerFence?: string;
   private mode: ColorMode = 'text';
   private inDiff = false;
   /** Set while drawing the body of one tool result, cleared by the next `▶` line or blank line. */
   private inToolOutput = false;
 
   /** 完成行までの状態を保存しておき、未完了行(ライブ表示)の色分けに複製する。 */
-  state(): ColorizerState { return { mode: this.mode, inDiff: this.inDiff, inToolOutput: this.inToolOutput }; }
+  state(): ColorizerState { return { answerFence: this.answerFence, mode: this.mode, inDiff: this.inDiff, inToolOutput: this.inToolOutput }; }
   restore(state: ColorizerState): void {
+    this.answerFence = state.answerFence;
     this.mode = state.mode;
     this.inDiff = state.inDiff;
     this.inToolOutput = state.inToolOutput;
   }
 
   line(raw: string, palette: Palette, kind: TranscriptKind = 'system'): string {
+    if (kind === 'answer') {
+      const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(raw);
+      if (this.answerFence) {
+        if (fence?.[1].startsWith(this.answerFence) && !fence[2].trim()) {
+          this.answerFence = undefined;
+          return '';
+        }
+        return highlightCodeLine(raw, palette);
+      }
+      if (fence && !(fence[1][0] === '`' && fence[2].includes('`'))) {
+        this.answerFence = fence[1];
+        return '';
+      }
+      return answerMarkdown(raw, palette);
+    }
+    this.answerFence = undefined;
+    if (kind === 'user') return raw;
     const trimmed = raw.trim();
     const blank = trimmed.length === 0;
     if (kind === 'reasoning') return blank ? raw : `\x1b[${palette.reasoning}m${raw}\x1b[0m`;
@@ -193,7 +213,6 @@ export class TranscriptColorizer {
       const source = sourceLine(raw);
       if (source !== null) return this.prefix(raw, source.body, highlightCodeLine(source.body, palette));
     }
-    if (kind === 'answer') return `\x1b[${READABLE_TEXT_STYLE}m${raw}\x1b[0m`;
     if (/^#{1,6} /.test(trimmed)) return `\x1b[${palette.heading}m${raw}\x1b[0m`;
     if (/^▶ You:/.test(raw)) return `\x1b[${palette.user}m${raw}\x1b[0m`;
     if (/^▶ /.test(raw)) { this.inToolOutput = false; return `\x1b[${palette.tool}m${raw}\x1b[0m`; }
