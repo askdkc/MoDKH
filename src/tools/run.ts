@@ -82,6 +82,8 @@ const PARAMETERS = {
  */
 export const DEFAULT_PROMOTE_ON_TIMEOUT = true;
 
+const BACKGROUND_JOB_HELP = 'ジョブが終了すると通知が届きます。実行中に出力を確認するには job_output、中止するには job_kill に上のジョブIDを指定してください。';
+
 export const runCommandTool: Tool = {
   name: 'run_command',
   operationIdentity: OPERATION_IDENTITY,
@@ -101,7 +103,7 @@ export const runCommandTool: Tool = {
       return [
         `[job_id: ${view.id}] [status: ${view.status}]`,
         `作業場所: ${view.cwd}`,
-        'job_output で出力を読み、job_kill で止める。完了は通知でも届く。',
+        BACKGROUND_JOB_HELP,
       ].join('\n');
     }
     const timeoutMs = positiveInt(args.timeoutMs, 'timeoutMs', MAX_TIMEOUT_MS) ?? DEFAULT_TIMEOUT_MS;
@@ -140,7 +142,7 @@ export const runCommandTool: Tool = {
       return [
         `[job_id: ${outcome.view.id}] [status: ${outcome.view.status}]`,
         `制限時間(${timeoutMs}ms)に達したためバックグラウンドジョブへ移した。コマンドは実行を続けている。`,
-        'job_output で続きを読み、job_kill で止める。完了は通知でも届く。',
+        BACKGROUND_JOB_HELP,
       ].join('\n');
     }
     return describeShellResult(outcome.result);

@@ -12,7 +12,7 @@ import { readClipboardImage, writeClipboardText, type ClipboardReader } from './
 import { MAX_IMAGES, parseImage, type ImageAttachment } from '../agent/images.ts';
 import type { ReadStream, WriteStream } from 'node:tty';
 import { LineSource } from './lines.ts';
-import { WHALE_FRAME_MS, whaleRow } from './waiting-nyan.ts';
+import { WHALE_FRAME_MS, whaleRow } from './waiting-whales.ts';
 import type { SubagentActivity } from '../subagents/service.ts';
 import type { RunningServer } from '../language/lsp/pool.ts';
 import {
