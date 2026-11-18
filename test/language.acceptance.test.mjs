@@ -9,13 +9,15 @@ from language_acceptance_state import analysis_observed, retry_read
 waiting = '解析: partial typescript [typescript:waiting]'
 error = "解析: ok typescript [typescript:observed]。1件\\nType 'string' is not assignable to type 'number'"
 clean = '解析: ok typescript [typescript:observed]。診断0件'
+expected = "Type 'string' is not assignable to type 'number'"
 assert not analysis_observed(waiting)
-assert retry_read(waiting, 1)
-assert not retry_read(waiting, 30)
-assert analysis_observed(error) and not retry_read(error, 1)
-assert analysis_observed(clean) and not retry_read(clean, 1)
+assert retry_read(waiting, 1, expected)
+assert not retry_read(waiting, 30, expected)
+assert analysis_observed(error) and not retry_read(error, 1, expected)
+assert analysis_observed(clean) and retry_read(clean, 1, expected)
+assert not retry_read(clean, 1, '診断0件')
 assert not analysis_observed('解析: 未実施')
-assert not retry_read('解析: 未実施', 1)
+assert not retry_read('解析: 未実施', 1, expected)
 `], { cwd: fileURLToPath(new URL('../scripts/', import.meta.url)), encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
 });
@@ -30,7 +32,8 @@ from language_acceptance_state import retry_read
 tree = ast.parse(open(sys.argv[1]).read())
 handler = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'Model')
 ns = dict(http=http, json=json, time=SimpleNamespace(monotonic=lambda: 1, sleep=lambda _: None),
-          requests=[], analysis_started=None, retry_read=retry_read)
+          requests=[], analysis_started=None, retry_read=retry_read,
+          expected_diagnostic="Type 'string' is not assignable to type 'number'")
 exec(compile(ast.Module(body=[handler], type_ignores=[]), sys.argv[1], 'exec'), ns)
 def respond(output=None):
     messages = [{'role':'user', 'content':'Read src/bad.ts'}]
@@ -52,8 +55,16 @@ ready = "解析: ok typescript [typescript:observed]。1件\\nType 'string' is n
 answer = respond(ready)
 assert answer['finish_reason'] == 'stop'
 assert "Type 'string'" in answer['delta']['content']
-ns['analysis_started'] = -30
-assert respond(waiting)['finish_reason'] == 'stop', 'silent server must not loop forever'
+clean = '解析: ok typescript [typescript:observed]。診断0件'
+assert respond(clean)['finish_reason'] == 'tool_calls', 'empty syntax report must not end the broken-file check'
+assert respond(ready)['finish_reason'] == 'stop', 'the later semantic error completes the broken-file check'
+ns['analysis_started'] = -29
+assert respond(waiting)['finish_reason'] == 'stop', 'silent server must not loop at the 30-second deadline'
+assert respond(clean)['finish_reason'] == 'stop', 'a missing semantic error must still reach the deadline'
+ns['expected_diagnostic'] = '診断0件'
+ns['analysis_started'] = None
+assert respond(ready)['finish_reason'] == 'tool_calls', 'the fixed-file check waits for an observed clean report'
+assert respond(clean)['finish_reason'] == 'stop'
 `, script], { cwd: fileURLToPath(new URL('../scripts/', import.meta.url)), encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
 });

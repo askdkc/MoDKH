@@ -21,6 +21,9 @@ env = {**os.environ, "MODKH_HOME": home, "MODKH_PLAIN": "1"}
 failures = []
 requests = []
 analysis_started = None
+TYPE_ERROR = "Type 'string' is not assignable to type 'number'"
+CLEAN_DIAGNOSTICS = "診断0件"
+expected_diagnostic = TYPE_ERROR
 
 
 def check(label, condition, detail=""):
@@ -41,7 +44,7 @@ class Model(http.server.BaseHTTPRequestHandler):
         observed = json.loads(results[-1]["content"])["output"] if results else ""
         if results and analysis_started is None:
             analysis_started = time.monotonic()
-        waiting = bool(results) and retry_read(observed, time.monotonic() - analysis_started)
+        waiting = bool(results) and retry_read(observed, time.monotonic() - analysis_started, expected_diagnostic)
         if not results or waiting:
             if waiting:
                 time.sleep(0.5)
@@ -83,8 +86,9 @@ try:
     check("a language server was installed into the managed area", os.path.exists(state_path))
     check("the project gained no server dependency", not os.path.exists(os.path.join(project, "node_modules")))
     check("the project lockfile was not modified", not os.path.exists(os.path.join(project, "package-lock.json")))
-    check("the model received a real type diagnostic",
-          analysis_observed(first.stdout) and "Type 'string' is not assignable to type 'number'" in first.stdout, first.stdout[-1500:])
+    check("the model received a real type diagnostic", any(
+        line.startswith("OBSERVED_ANALYSIS ") and analysis_observed(line) and TYPE_ERROR in line
+        for line in first.stdout.splitlines()), first.stdout[-1500:])
     check("the analysis was reached through the ordinary read path", len(requests) >= 2 and all(
         call["function"]["name"] == "read_file"
         for request in requests for message in request["messages"]
@@ -93,15 +97,15 @@ try:
     before = state()
     with open(os.path.join(project, "src", "bad.ts"), "w", encoding="utf-8") as handle:
         handle.write("export const value: number = 42;\n")
+    expected_diagnostic = CLEAN_DIAGNOSTICS
     second = run_cli()
     check("the reuse CLI exited cleanly", second.returncode == 0, second.stderr[-1200:])
     after = state()
     check("reuse did not reinstall the server", before["servers"] == after["servers"])
-    check("the fixed file no longer reports the type error",
-          analysis_observed(second.stdout) and "診断0件" in second.stdout
-          and "Type 'string' is not assignable to type 'number'" not in second.stdout, second.stdout[-1500:])
-    diagnostics_lines = [line for line in second.stdout.splitlines() if "OBSERVED_ANALYSIS" in line]
-    check("the second read still carried analysis output", bool(diagnostics_lines), second.stdout[-800:])
+    check("the fixed file no longer reports the type error", any(
+        line.startswith("OBSERVED_ANALYSIS ") and analysis_observed(line)
+        and CLEAN_DIAGNOSTICS in line and TYPE_ERROR not in line
+        for line in second.stdout.splitlines()), second.stdout[-1500:])
 
     status = subprocess.run(["node", cli, "language", "status"], capture_output=True, text=True, env=env, timeout=120)
     check("language status reports typescript as installed", "typescript" in status.stdout and "yes" in status.stdout,
