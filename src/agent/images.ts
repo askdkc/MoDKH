@@ -1,5 +1,6 @@
 export interface ImageAttachment { mediaType: 'image/png'; data: string }
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_IMAGE_PIXELS = 40_000_000;
 export const MAX_IMAGES = 4;
 
 /** Clipboard and persisted JSON are data boundaries; never treat image text as a path or URL. */
@@ -16,7 +17,7 @@ export function parseImage(value: unknown): ImageAttachment {
     || !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
     || bytes.toString('ascii', 12, 16) !== 'IHDR') throw new Error('PNG画像データが不正です');
   const width = bytes.readUInt32BE(16), height = bytes.readUInt32BE(20);
-  if (!width || !height || width * height > 40_000_000) throw new Error('画像は4,000万画素以内にしてください');
+  if (!width || !height || width * height > MAX_IMAGE_PIXELS) throw new Error('画像は4,000万画素以内にしてください');
   return { mediaType: 'image/png', data: image.data };
 }
 

@@ -47,6 +47,7 @@
     "@ai-sdk/openai-compatible": "^3.0.85",
     "ai": "^7.0.163",
     "marked": "^18.2.1",
+    "sharp": "^0.35.5",
     "undici": "^7.29.1",
     "vscode-jsonrpc": "^10.0.0",
     "web-tree-sitter": "0.25.10"

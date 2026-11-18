@@ -17,6 +17,7 @@ export interface ToolResult {
   name: string;
   status: 'ok' | 'error' | 'unknown' | 'not-executed';
   output: string;
+  image?: ImageAttachment;
 }
 
 /** モデルへ渡すツール定義(JSON Schema の parameters を含む)。 */
@@ -84,7 +85,7 @@ export interface Tool {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
-  execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string | Pick<ToolResult, 'status' | 'output'>>;
+  execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string | Pick<ToolResult, 'status' | 'output' | 'image'>>;
 }
 
 /** Input includes both cache reads and cache writes when the provider reports them. */

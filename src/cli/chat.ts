@@ -80,6 +80,7 @@ const SYSTEM_PROMPT =
   + DELEGATED_INVESTIGATION
   + '親が全体の統合・検証・完了判定を行う。'
   + '作業ルート内のファイルを読み、変更は edit_file / create_file、確認は run_command を使う。ファイルツールは作業ルート内に制限される。'
+  + '3Dゲームの制作ではプレイヤーの入力・カメラ・画面の変化を実機で確かめる。写実的なキャラクターは既存のモデル・テクスチャと利用条件を調べ、指定された体形・顔立ち・材質をレンダーで確認する。'
   + 'run_command は1回ごとに新しいシェルで動く。cd は次の呼び出しに残らないので cwd を指定し、'
   + 'bash/zsh 固有の構文が必要なときだけ shell を指定する。'
   + 'run_command の終了コードが0以外でも、それは実行結果であり失敗の報告ではない。'
@@ -311,7 +312,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     if (result.status === 'unavailable' && kind === 'read') return null;
     return formatDiagnostics(result);
   };
-  const headTools = lisp ? tools.filter(t => ['read_file', 'list_files', 'search_files'].includes(t.name)) : tools;
+  const headTools = lisp ? tools.filter(t => ['read_file', 'list_files', 'search_files', 'view_image'].includes(t.name)) : tools;
   const headSystem = lisp ? [
     'MoDKH (Mixture of DKH) head. You have no direct editing, shell or formal verification authority. Edit roles require explicit targetPaths. Integrate persisted child tool evidence and host verification. Report failures and unknowns honestly.',
     DELEGATED_INVESTIGATION,

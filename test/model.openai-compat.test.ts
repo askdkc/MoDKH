@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -41,7 +43,7 @@ interface RecordedRequest {
 }
 
 /** OpenAI互換の最小偽サーバ。1回目はツール要求、2回目は最終テキストを返す。 */
-async function startFakeServer(): Promise<{ url: string; close(): Promise<void>; requests: RecordedRequest[] }> {
+async function startFakeServer(requestedTool = { name: 'read_file', arguments: '{"path":"a.txt"}' }): Promise<{ url: string; close(): Promise<void>; requests: RecordedRequest[] }> {
   const requests: RecordedRequest[] = [];
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -64,7 +66,7 @@ async function startFakeServer(): Promise<{ url: string; close(): Promise<void>;
                   index: 0,
                   id: 'call_1',
                   type: 'function',
-                  function: { name: 'read_file', arguments: '{"path":"a.txt"}' },
+                  function: requestedTool,
                 },
               ],
             },
@@ -193,4 +195,49 @@ test('image input reaches the OpenAI-compatible API as an image, not a text plac
       { type: 'image_url', image_url: { url: `data:image/png;base64,${data}` } },
     ]);
   } finally { await fake.close(); }
+});
+
+for (const ext of ['png', 'jpg', 'jpeg']) test(`CLI sends a workspace ${ext} frame as PNG pixels`, async t => {
+  const { default: sharp } = await import('sharp');
+  const frame = 'frame.' + ext;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-render-loop-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const fake = await startFakeServer({ name: 'view_image', arguments: JSON.stringify({ path: frame }) });
+  t.after(() => fake.close());
+  const data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==';
+  const original = ext === 'png' ? Buffer.from(data, 'base64')
+    : await sharp({ create: { width: 3, height: 2, channels: 3, background: 'red' } })
+      .withMetadata({ orientation: 6 }).jpeg().toBuffer();
+  fs.writeFileSync(path.join(root, frame), original);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-render-home-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ language: { autoInstall: false } }));
+  const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+  const child = spawn(process.execPath, [entry, 'chat', '--cwd', root, '--model', 'compatible/vision', '--base-url', fake.url], {
+    env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' }, timeout: 20000,
+  });
+  let log = '';
+  child.stdout.on('data', chunk => { log += chunk; });
+  child.stderr.on('data', chunk => { log += chunk; });
+  const closed = once(child, 'close');
+  child.stdin.end(`3Dゲームの ${frame} を見てカメラ位置を確認して\n/exit\n`);
+  assert.equal((await closed)[0], 0, log);
+  assert.equal(fake.requests.length, 2, log);
+  const specs = fake.requests[0].body.tools as { function: { name: string } }[];
+  assert.ok(specs.some(tool => tool.function.name === 'view_image'));
+  const wire = fake.requests[1].body.messages as { role: string; content: unknown }[];
+  assert.equal(wire.at(-2)?.role, 'tool');
+  const content = wire.at(-1)?.content;
+  assert.ok(Array.isArray(content));
+  assert.equal(content[1].type, 'image_url');
+  const url = content[1].image_url.url;
+  assert.match(url, /^data:image\/png;base64,/);
+  if (ext === 'png') assert.equal(url, 'data:image/png;base64,' + data);
+  else {
+    const png = sharp(Buffer.from(url.split(',')[1], 'base64'));
+    const meta = await png.metadata();
+    assert.deepEqual([meta.format, meta.width, meta.height], ['png', 2, 3]);
+    assert.deepEqual(await png.raw().toBuffer(), await sharp(original).autoOrient().raw().toBuffer());
+  }
+  assert.deepEqual(fs.readFileSync(path.join(root, frame)), original);
 });

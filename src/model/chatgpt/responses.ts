@@ -23,7 +23,7 @@ interface ResponsesInputItem {
   call_id?: string;
   name?: string;
   arguments?: string;
-  output?: string;
+  output?: string | ({ type: 'input_text'; text: string } | { type: 'input_image'; image_url: string; detail: 'auto' })[];
 }
 
 /** 会話履歴(CLI 保持)を Responses API の input へ変換する。 */
@@ -50,10 +50,12 @@ export function toResponsesInput(messages: AgentMessage[]): ResponsesInputItem[]
       }
     } else {
       for (const [resultIndex, r] of m.results.entries()) {
+        const text = JSON.stringify({ status: r.status, output: outputs.get(`${index}:${resultIndex}`) });
         out.push({
           type: 'function_call_output',
           call_id: r.callId,
-          output: JSON.stringify({ status: r.status, output: outputs.get(`${index}:${resultIndex}`) }),
+          output: r.image ? [{ type: 'input_text', text },
+            { type: 'input_image', image_url: imageDataUrl(r.image), detail: 'auto' }] : text,
         });
       }
     }

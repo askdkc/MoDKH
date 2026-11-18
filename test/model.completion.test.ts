@@ -8,7 +8,8 @@ import type { ModelEvent } from '../src/agent/types.ts';
 
 test('model input preserves structured tool status instead of only its prose', () => {
   const input = toResponsesInput([{ role: 'tool', results: [{ callId: 'c', name: 'effect', status: 'unknown', output: 'partial evidence' }] }]);
-  assert.deepEqual(JSON.parse(input[0].output!), { status: 'unknown', output: 'partial evidence' });
+  assert.ok(typeof input[0].output === 'string');
+  assert.deepEqual(JSON.parse(input[0].output), { status: 'unknown', output: 'partial evidence' });
 });
 
 for (const terminal of ['', 'response.failed', 'response.incomplete']) {

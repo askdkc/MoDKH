@@ -12,7 +12,7 @@ import {
 import { toolContext } from './context.ts';
 import { harnessProfile, CODEX_62_DEFAULTS } from './harness-profile.ts';
 import { reasoningProviderOptions } from './reasoning.ts';
-import { parseImages } from '../agent/images.ts';
+import { parseImage, parseImages } from '../agent/images.ts';
 import type { Model, ModelEvent, ModelRequest, TokenUsage, ToolSpec } from '../agent/types.ts';
 
 export interface AiSdkModelOptions {
@@ -29,6 +29,9 @@ export interface AiSdkModelOptions {
 
 function toCoreMessages(req: ModelRequest): ModelMessage[] {
   const out: ModelMessage[] = [];
+  // Chat Completions accepts images in user content. Keep each tool batch contiguous
+  // and attach its observations only after all matching tool receipts.
+  const observations: Extract<ModelMessage, { role: 'user' }>[] = [];
   const outputs = toolContext(req.messages);
   for (const [index, m] of req.messages.entries()) {
     if (m.role === 'user') {
@@ -58,6 +61,15 @@ function toCoreMessages(req: ModelRequest): ModelMessage[] {
         output: { type: 'text', value: JSON.stringify({ status: r.status, output: outputs.get(`${index}:${resultIndex}`) }) },
       }));
       out.push({ role: 'tool', content: parts });
+      for (const result of m.results) {
+        if (!result.image) continue;
+        const image = parseImage(result.image);
+        observations.push({ role: 'user', content: [
+          { type: 'text', text: `Image returned by tool call ${JSON.stringify(result.callId)} (observation).` },
+          { type: 'file', data: Buffer.from(image.data, 'base64'), mediaType: image.mediaType },
+        ] });
+      }
+      if (req.messages[index + 1]?.role !== 'tool') out.push(...observations.splice(0));
     }
   }
   return out;

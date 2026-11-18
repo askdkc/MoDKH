@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { Tool, ToolCall, ToolContext, ToolResult } from '../agent/types.ts';
 import { ToolError } from '../agent/types.ts';
 import { listFilesTool, searchFilesTool, readFileTool } from './files.ts';
+import { viewImageTool } from './view-image.ts';
 import { createFileTool, editFileTool } from './edit.ts';
 import { runCommandTool } from './run.ts';
 import { jobTools } from './job-tools.ts';
@@ -88,7 +89,7 @@ export class ToolRegistry {
       const output = await tool.execute(call.args as Record<string, unknown>, { ...ctx, callId: call.id });
       if (typeof output === 'string') return { ...base, status: 'ok', output };
       if (!output || !['ok', 'error', 'unknown', 'not-executed'].includes(output.status) || typeof output.output !== 'string') throw new Error('Invalid tool outcome');
-      return { ...base, status: output.status, output: output.output };
+      return { ...base, status: output.status, output: output.output, ...(output.image && { image: output.image }) };
     } catch (e) {
       if (e instanceof ToolError && (e.code === 'NOT_EXECUTED' || e.code === 'DENIED')) {
         return { ...base, status: e.code === 'DENIED' ? 'error' : 'not-executed', output: `[${e.code}] ${e.message}` };
@@ -105,7 +106,7 @@ export class ToolRegistry {
 
 /** 初版が提供する5区分のツール群(作成/編集は別ツール)。 */
 export function defaultTools(tabs?: BrowseTabs): Tool[] {
-  return [listFilesTool, searchFilesTool, readFileTool, createFileTool, editFileTool, runCommandTool, ...browseTools(tabs), ...webTools, ...skillTools];
+  return [listFilesTool, searchFilesTool, readFileTool, viewImageTool, createFileTool, editFileTool, runCommandTool, ...browseTools(tabs), ...webTools, ...skillTools];
 }
 
 /** The same tools plus background execution, which needs a per-session job registry. */

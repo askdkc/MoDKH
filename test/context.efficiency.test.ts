@@ -26,6 +26,7 @@ test('tool projection preserves call IDs, statuses and audit text while encoding
   assert.ok(Buffer.byteLength(projected) < TOOL_OUTPUT_BYTES);
   const wire = toResponsesInput(messages)[0];
   assert.equal(wire.call_id, 'a');
+  assert.ok(typeof wire.output === 'string');
   assert.equal(JSON.parse(wire.output!).status, 'unknown');
   assert.equal(decode(JSON.parse(wire.output!).output), output);
   assert.deepEqual(messages, before);

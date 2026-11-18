@@ -75,6 +75,7 @@ test('legacy huge tool results are bounded for both APIs without rewriting audit
     assert.ok(Buffer.byteLength(result.output) <= 16 * 1024);
     const response = toResponsesInput(messages);
     const item = response.find(item => item.type === 'function_call_output')!;
+    assert.ok(typeof item.output === 'string');
     assert.ok(Buffer.byteLength(item.output!) < 32 * 1024);
     assert.equal(JSON.parse(item.output!).status, 'unknown');
     assert.equal(messages[2].role === 'tool' && messages[2].results[0].output, output);
@@ -88,7 +89,10 @@ test('context prefixes preserve UTF-8 and repeated receipt objects do not erase 
   assert.equal(utf8Prefix('あ🙂ab', 7), 'あ🙂');
   const shared = { callId: 'same', name: 'read_file', status: 'unknown' as const, output: 'SHARED_SENTINEL ' + 'x'.repeat(40000) };
   const messages: AgentMessage[] = Array.from({ length: 16 }, () => ({ role: 'tool', results: [shared] }));
-  const wire = toResponsesInput(messages).map(item => JSON.parse(item.output!));
+  const wire = toResponsesInput(messages).map(item => {
+    assert.ok(typeof item.output === 'string');
+    return JSON.parse(item.output);
+  });
   assert.match(wire.at(-1).output, /SHARED_SENTINEL/);
   assert.equal(wire[0].output, wire.at(-1).output);
   assert.ok(wire.every(item => item.status === 'unknown'));

@@ -54,3 +54,26 @@ test('PNG attachments survive session restart and Responses input preserves thei
   fs.appendFileSync(file, JSON.stringify({ type: 'message', message: { role: 'user', content: '', images: [{ mediaType: 'image/png', data: 'invalid' }] } }) + '\n');
   assert.throws(() => store.load(session.id), /画像|PNG/);
 });
+
+test('a workspace render reaches the next Responses request as pixels tied to the tool call', async t => {
+  const { ToolRegistry, defaultTools } = await import('../src/tools/registry.ts');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-render-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, 'frame.png'), Buffer.from(image.data, 'base64'));
+  const registry = new ToolRegistry(defaultTools());
+  const call = { id: 'frame', name: 'view_image', args: { path: 'frame.png' } };
+  const ctx = { root, approval: { approve: async () => assert.fail('read-only') } };
+  const result = await registry.executeOne(call, ctx);
+  assert.equal(result.status, 'ok', result.output);
+  const session = new SessionStore(root).create(root, 'chatgpt/vision');
+  session.append({ role: 'assistant', content: '', toolCalls: [call] });
+  session.append({ role: 'tool', results: [result] });
+  const wire = toResponsesInput(new SessionStore(root).load(session.id).messages).at(-1)!;
+  assert.equal(wire.call_id, call.id);
+  assert.ok(Array.isArray(wire.output));
+  assert.deepEqual(wire.output.at(-1), { type: 'input_image', image_url: imageDataUrl(image), detail: 'auto' });
+  fs.writeFileSync(path.join(root, 'frame.png'), 'invalid');
+  for (const file of ['frame.png', '../frame.png']) {
+    assert.equal((await registry.executeOne({ ...call, args: { path: file } }, ctx)).status, 'error');
+  }
+});
