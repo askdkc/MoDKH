@@ -16,8 +16,10 @@ import type { JobRegistry } from './jobs.ts';
  */
 export class ToolRegistry {
   private tools: Map<string, Tool>;
+  private readonly onExecute?: () => void;
 
-  constructor(tools: Tool[], private readonly onExecute?: () => void) {
+  constructor(tools: Tool[], onExecute?: () => void) {
+    this.onExecute = onExecute;
     this.tools = new Map();
     for (const tool of tools) {
       if (this.tools.has(tool.name)) throw new Error(`Duplicate tool: ${tool.name}`);

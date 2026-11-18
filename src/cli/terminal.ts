@@ -12,7 +12,7 @@ import { readClipboardImage, writeClipboardText, type ClipboardReader } from './
 import { MAX_IMAGES, parseImage, type ImageAttachment } from '../agent/images.ts';
 import type { ReadStream, WriteStream } from 'node:tty';
 import { LineSource } from './lines.ts';
-import { NYAN_FRAME_MS, NYAN_WIDTH, nyanRows } from './waiting-nyan.ts';
+import { WHALE_FRAME_MS, whaleRow } from './waiting-nyan.ts';
 import type { SubagentActivity } from '../subagents/service.ts';
 import type { RunningServer } from '../language/lsp/pool.ts';
 import {
@@ -417,13 +417,13 @@ export class TerminalUI implements ChatTerminal {
     this.render();
   }
 
-  private nyanEnabled(): boolean {
+  private canAnimate(): boolean {
     return this.color && this.animationEnabled;
   }
 
   private updateProgressTimer(): void {
     clearInterval(this.progressTimer);
-    const interval = this.activity && this.nyanEnabled() ? NYAN_FRAME_MS : 1000;
+    const interval = this.activity && this.canAnimate() ? WHALE_FRAME_MS : 1000;
     this.progressTimer = this.activity || this.subagent ? setInterval(() => {
       // Keep the ordinary seconds refresh while a prompt or draft occupies the composer.
       if (interval === 1000 || (!this.pending && !this.text) ||
@@ -1030,8 +1030,13 @@ export class TerminalUI implements ChatTerminal {
         optionsLines.push({ text: label, style: active ? '97;44' : choice.pinned ? '2' : '' });
       });
     }
-    const lines: { text: string; style: string }[] = [...optionsLines,
-      { text: this.started && !showUsage ? '─'.repeat(width) : '', style: ACCENT }];
+    // Reuse the divider row so the animation never moves or covers the editor.
+    const water = this.activity && !this.pending && !this.text && this.canAnimate()
+      ? whaleRow(Math.floor((performance.now() - this.activityStarted) / WHALE_FRAME_MS), controlWidth) : '';
+    const lines: { text: string; style: string }[] = [...optionsLines, {
+      text: water || (this.started && !showUsage ? '─'.repeat(width) : ''),
+      style: water ? this.panelAccent : ACCENT,
+    }];
     const editorStart = partialCount + liveReasoning.length + lines.length;
     // 入力欄が表示行数を超えたら、カーソルが常に窓内に来るようにスクロールする。
     if (cursor.row < this.editorScroll) this.editorScroll = cursor.row;
@@ -1090,15 +1095,7 @@ export class TerminalUI implements ChatTerminal {
       return this.paint(fitted, row.style);
     };
     const rightStart = columns - SIDEBAR_WIDTH;
-    const spriteStart = controlWidth - NYAN_WIDTH;
-    const spriteRows = lines.slice(optionsLines.length + 1, optionsLines.length + 4);
-    const showNyan = this.activity && !this.pending && !this.text && this.nyanEnabled() && inputRows >= 3 &&
-      spriteRows.every(row => textWidth(row.text) + 2 <= spriteStart);
-    const sprite = showNyan ? nyanRows(Math.floor((performance.now() - this.activityStarted) / NYAN_FRAME_MS), this.panelStyle) : [];
-    const controls = lines.map((row, i) => {
-      const art = sprite[i - optionsLines.length - 1];
-      return ' '.repeat(controlMargin) + (art ? styled(row, spriteStart) + art : styled(row, controlWidth));
-    });
+    const controls = lines.map(row => ' '.repeat(controlMargin) + styled(row, controlWidth));
     if (stackUsage) {
       controls.splice(controls.length - 2, 0, ...usageRows.map(row => ' '.repeat(rightStart) + this.paintSidebarRow(row)));
     }

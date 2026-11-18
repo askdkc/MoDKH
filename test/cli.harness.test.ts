@@ -12,6 +12,7 @@ const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.
 for (const resume of [false, true]) {
   test(`public CLI researches, edits with approval and runs a real test (${resume ? 'legacy oversized history' : 'ignored replay archive'})`, async () => {
     const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-harness-flow-')));
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ language: { autoInstall: false } }));
     const root = path.join(home, 'project'); fs.mkdirSync(root);
     assert.equal(spawnSync('git', ['init', '--quiet', root]).status, 0);
     fs.mkdirSync(path.join(root, 'src')); fs.mkdirSync(path.join(root, 'test')); fs.mkdirSync(path.join(root, '.agenticreplay'));

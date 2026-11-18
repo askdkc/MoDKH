@@ -7,7 +7,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { EventEmitter, once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { screenFrom } from './tui.screen.ts';
+import { createScreenReplay } from './tui.screen.ts';
 
 // Stream-level terminal integration, not a substitute for the real PTY acceptance script.
 const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
@@ -134,12 +134,24 @@ test('public CLI terminal path: logo → completion → model providers → conn
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let output = '', error = '';
-  child.stdout.on('data', data => { output += data; });
+  const replay = createScreenReplay(32);
+  let pending = '', screen = '';
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (data: string) => {
+    output += data;
+    pending += data;
+    // Each render ends by showing or hiding the cursor. Keep partial frames for the next read.
+    const end = Math.max(pending.lastIndexOf('\x1b[?25h'), pending.lastIndexOf('\x1b[?25l'));
+    if (end < 0) return;
+    const boundary = end + '\x1b[?25h'.length;
+    screen = replay(pending.slice(0, boundary)).join('\n');
+    pending = pending.slice(boundary);
+  });
   child.stderr.on('data', data => { error += data; });
   let start = 0;
   const send = (text: string) => { start = output.length; child.stdin.write(text); };
   // Match the latest screen, replaying the streamed absolute-position frames (test/tui.screen.ts).
-  const visible = () => screenFrom(output, 32).join('\n');
+  const visible = () => screen;
   const wait = async (text: string | RegExp | ((screen: string) => boolean)): Promise<void> => {
     const matches = () => {
       const screen = visible();
@@ -192,8 +204,7 @@ test('public CLI terminal path: logo → completion → model providers → conn
     await wait('BROWSE_DONE');
     await wait('何を調べますか');
     assert.doesNotMatch(visible(), /browse in use/);
-    const sprite = (screen: string) => screen.split('\n').filter(row => /│.*[▀▄]/.test(row))
-      .map(row => row.slice(row.search(/[▀▄]/))).join('\n');
+    const whaleRow = (screen: string) => screen.split('\n').find(row => /[🐋🐳]/u.test(row)) ?? '';
     const beforeAnimationCommands = requests.length;
     send('/ann'); await wait('/annimation');
     send('\t off\r'); await wait('待機アニメーション: off');
@@ -201,20 +212,26 @@ test('public CLI terminal path: logo → completion → model providers → conn
     assert.equal(requests.length, beforeAnimationCommands, 'animation commands stay local');
     send('slow\r'); await wait(/モデル応答を受信中… Ctrl\+Cで中止 · [1-9]\d*秒/);
     assert.match(visible(), /今回のツール実行: 0件/);
-    assert.equal(sprite(visible()), '');
+    assert.equal(whaleRow(visible()), '');
     send('\x03'); await wait('何を調べますか');
     send('/annimation on\r'); await wait('待機アニメーション: on');
     send('slow\r'); await wait('WAITING_FOR_STOP');
-    await wait(/モデル応答を受信中… Ctrl\+Cで中止 · \d+秒 +[▀▄]/);
-    const firstFrame = sprite(visible());
+    await wait(/[🐋🐳]/u);
+    const firstFrame = whaleRow(visible());
+    const firstColumn = firstFrame.search(/[🐋🐳]/u);
+    assert.match(firstFrame, /[~∿]/u, 'waves share the whale row');
+    const screenRows = visible().split('\n');
+    assert.match(screenRows[screenRows.indexOf(firstFrame) + 1] ?? '', /^│ モデル応答を(?:待機|受信)中/,
+      'the animation is directly above, not inside, the composer');
+    assert.doesNotMatch(visible(), /│.*[▀▄]/);
     await wait(screen => {
-      const frame = sprite(screen);
-      return frame !== '' && frame !== firstFrame;
+      const column = whaleRow(screen).search(/[🐋🐳]/u);
+      return column >= 0 && column !== firstColumn;
     });
     await wait(/モデル応答を受信中… Ctrl\+Cで中止 · [1-9]\d*秒/);
     send('\x03'); await wait('中断しました');
     await wait('何を調べますか');
-    assert.equal(sprite(visible()), '');
+    assert.equal(whaleRow(visible()), '');
     send('delegate\r');
     await wait('子エージェントの結果を待機中');
     await wait('│ サブエージェント 1稼働 / 累計1');
@@ -238,7 +255,7 @@ test('public CLI terminal path: logo → completion → model providers → conn
     await wait('追加の依頼を受け付けました');
     send('\x03');
     await wait('中断しました');
-    await wait('│ 保留の依頼');
+    await wait(screen => screen.includes('│ 保留の依頼') && screen.includes('Enter 送信  Ctrl+J 改行'));
     send('\x15'); await wait('何を調べますか');
     assert.match(visible(), /│ サブエージェント 0稼働 \/ 累計2/);
     send('/connect\r'); await wait('Hermes Agent');
