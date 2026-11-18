@@ -51,9 +51,9 @@ test('モデル一覧取得の失敗後も既存接続を保つ', async () => {
   assert.match(stdout, /接続中: fixed\/scripted/);
 });
 
-test('/connect lists all seven providers and can return without sending a message', async () => {
+test('/connect lists every model provider and can return without sending a message', async () => {
   const { stdout, session } = await chat('/connect\n\n/exit\n');
-  for (const provider of ['OpenAI', 'OpenCode', 'Ollama Local', 'Ollama Cloud', 'OpenRouter', 'Infron', 'Hermes Agent']) assert.ok(stdout.includes(provider), provider);
+  for (const provider of ['OpenAI', 'OpenCode Zen', 'OpenCode Go', 'Ollama Local', 'Ollama Cloud', 'OpenRouter', 'Infron', 'Hermes Agent']) assert.ok(stdout.includes(provider), provider);
   assert.doesNotMatch(session, /"role":"user"/);
 });
 
@@ -65,22 +65,51 @@ test('未接続のまま送信すると警告だけでなく接続フローが�
   assert.doesNotMatch(session, /"role":"user"/, 'the message is not sent to a model that does not exist');
 });
 
+// Ollama の一覧は固定値を持たないため、テストはローカルの偽エンドポイントで隔離する。
+// 実プロバイダーの並び順に依存させると、モデル追加のたびにテストが壊れる。
+async function ollamaFakeServer() {
+  const server = http.createServer((req, res) => {
+    const cloud = req.url?.startsWith('/cloud/');
+    if (req.url?.endsWith('/models')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ object: 'list', data: cloud
+        ? [{ id: 'gemma4:31b' }, { id: 'glm-5.3' }]
+        : [{ id: 'llama3.2' }, { id: 'qwen3.8-max' }] }));
+      return;
+    }
+    res.writeHead(404); res.end();
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  return {
+    env: { OLLAMA_API_KEY: 'test-cloud-key', OLLAMA_BASE_URL: `${base}/v1`, OLLAMA_CLOUD_BASE_URL: `${base}/cloud/v1` },
+    close: () => new Promise<void>(resolve => server.close(() => resolve())),
+  };
+}
+
 test('cloud and local pickers select separate models; cloud failure preserves the existing connection', async () => {
-  // Row 1 is the pinned keyword search, so the first model is row 2.
-  const { stdout, session } = await chat('/connect\nollama-cloud\n2\n/connect\n\n/connect ollama\n2\n/connect\n\n/exit\n', '{}', { OLLAMA_API_KEY: 'test-cloud-key' });
-  assert.match(stdout, /接続しました: ollama-cloud\/gemma4:31b/);
-  assert.match(stdout, /接続しました: ollama\/llama3.2/);
-  assert.doesNotMatch(stdout + session, /test-cloud-key/);
+  const fake = await ollamaFakeServer();
+  try {
+    // Row 1 is the pinned keyword search, so the first model is row 2.
+    const { stdout, session } = await chat('/connect\nollama-cloud\n2\n/connect\n\n/connect ollama\n2\n/connect\n\n/exit\n', '{}', fake.env);
+    assert.match(stdout, /接続しました: ollama-cloud\/gemma4:31b/);
+    assert.match(stdout, /接続しました: ollama\/llama3\.2/);
+    assert.doesNotMatch(stdout + session, /test-cloud-key/);
+  } finally { await fake.close(); }
   const missing = await chat('/connect fixed/scripted\n/connect ollama-cloud\n/connect\n\n/exit\n');
   assert.match(missing.stdout, /OLLAMA_API_KEY/);
   assert.match(missing.stdout, /接続中: fixed\/scripted/);
 });
 
 test('/models can search the cloud-only namespace', async () => {
-  const { stdout } = await chat('/models ollama-cloud/\n1\n/exit\n', '{}', { OLLAMA_API_KEY: 'test-cloud-key' });
-  assert.match(stdout, /1\. ollama-cloud\/gemma4:31b/);
-  assert.doesNotMatch(stdout, /ollama\/llama3.2/);
-  assert.match(stdout, /接続しました: ollama-cloud\/gemma4:31b/);
+  const fake = await ollamaFakeServer();
+  try {
+    // 検索語はプロバイダー名だけなので、候補は取得した一覧の順(検索行の次が1番)になる。
+    const { stdout } = await chat('/models ollama-cloud\n1\n/exit\n', '{}', fake.env);
+    assert.match(stdout, /1\. ollama-cloud\/gemma4:31b/);
+    assert.doesNotMatch(stdout, /ollama\/llama3\.2/);
+    assert.match(stdout, /接続しました: ollama-cloud\/gemma4:31b/);
+  } finally { await fake.close(); }
 });
 
 test('/connect は認証先を案内し、キャンセルできる', async () => {

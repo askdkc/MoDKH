@@ -66,9 +66,14 @@ export class TerminalApprovalGate implements ApprovalGate {
 
   private async prompt(req: ApprovalScope): Promise<boolean> {
     this.io.write(`\n--- 承認要求(${req.kind}) ---\n${req.title}\n${req.detail}\n`);
-    const answer = await this.askOrInterrupt('実行しますか? [y/N] ', req.signal);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 180_000);
+    const signal = req.signal ? AbortSignal.any([req.signal, controller.signal]) : controller.signal;
+    let answer: string | null;
+    try { answer = await this.askOrInterrupt('実行しますか？（回答期限3分）', signal); }
+    finally { clearTimeout(timer); }
     if (answer === null) {
-      this.io.write('(中断により拒否)\n');
+      this.io.write(controller.signal.aborted ? '(3分以内に回答がなかったため拒否)\n' : '(中断により拒否)\n');
       return false;
     }
     const ok = answer.trim().toLowerCase() === 'y';

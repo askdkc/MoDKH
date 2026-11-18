@@ -33,6 +33,7 @@ export interface ChatTerminal {
   next(signal?: AbortSignal): Promise<string | null>;
   unread(line: string): void;
   ask(title: string, signal?: AbortSignal, secret?: boolean): Promise<string | null>;
+  confirm(title: string, signal?: AbortSignal): Promise<string | null>;
   choose(title: string, choices: readonly Choice[], query?: string): Promise<string | null>;
   /** Show a read-only page, returning when it is dismissed (or printed in line mode). */
   showPage(title: string, text: string): Promise<void>;
@@ -48,6 +49,8 @@ export interface ChatTerminal {
   setReasoning?(delta: string | null): void;
   close(): void;
 }
+const APPROVAL_CHOICES: readonly Choice[] = [{ value: 'n', label: '拒否' }, { value: 'y', label: '承認' }];
+
 export const COMMANDS: readonly Choice[] = [
   { value: '/connect', label: '/connect', detail: 'プロバイダーに接続' },
   { value: '/models', label: '/models', detail: 'モデルを選択' },
@@ -122,6 +125,7 @@ class PlainTerminal implements ChatTerminal {
   }
   close(): void { this.lines.close(); }
   ask(title: string, signal?: AbortSignal): Promise<string | null> { this.write(`${title}\n`); return this.next(signal); }
+  confirm(title: string, signal?: AbortSignal): Promise<string | null> { return this.ask(title + ' [y/N]', signal); }
   async choose(title: string, choices: readonly Choice[], query = ''): Promise<string | null> {
     for (;;) {
       const matches = matching(choices, query);
@@ -437,6 +441,7 @@ export class TerminalUI implements ChatTerminal {
   takeImages(): ImageAttachment[] { const images = this.images; this.images = []; this.render(); return images; }
   next(signal?: AbortSignal): Promise<string | null> { return this.wait('何を調べますか？ / でコマンド', undefined, '', signal, false, true); }
   ask(title: string, signal?: AbortSignal, secret = false): Promise<string | null> { return this.wait(title, undefined, '', signal, secret); }
+  confirm(title: string, signal?: AbortSignal): Promise<string | null> { return this.wait(title, APPROVAL_CHOICES, '', signal); }
   choose(title: string, choices: readonly Choice[], query = ''): Promise<string | null> { return this.wait(title, choices, query); }
   showPage(title: string, text: string): Promise<void> {
     if (this.closed) return Promise.resolve();
@@ -453,7 +458,7 @@ export class TerminalUI implements ChatTerminal {
   private wait(title: string, choices?: readonly Choice[], query = '', signal?: AbortSignal, secret = false, composer = false): Promise<string | null> {
     if (signal?.aborted || this.closed) return Promise.resolve(null);
     if (this.page || this.pending) throw new Error('端末の入力待ちは同時に1件だけです');
-    if (this.queued.length) return Promise.resolve(this.queued.shift()!);
+    if (choices !== APPROVAL_CHOICES && this.queued.length) return Promise.resolve(this.queued.shift()!);
     if (!composer) this.leaveHistory();
     const draft = !composer && this.text
       ? { text: this.text, cursor: this.cursor, scroll: this.editorScroll, notice: this.inputNotice } : undefined;
@@ -490,7 +495,7 @@ export class TerminalUI implements ChatTerminal {
     return undefined;
   }
   private insertText(value: string): void {
-    if (this.replySilenced) return; // OSC 返信の取り込みを入力にしない
+    if (this.pending?.choices === APPROVAL_CHOICES || this.replySilenced) return; // OSC 返信の取り込みを入力にしない
     const normalized = clean(value.replace(/\r\n?/g, '\n').replace(/\t/g, '  '));
     const added = chars((this.pending?.composer || (!this.pending && this.followup)) ? normalized : normalized.replace(/\n/g, ' '));
     const parts = chars(this.text);
@@ -921,7 +926,7 @@ export class TerminalUI implements ChatTerminal {
     this.editorScroll = Math.max(0, Math.min(this.editorScroll, Math.max(0, editor.lines.length - inputRows)));
     for (let i = 0; i < inputRows; i++) {
       const line = editor.lines[this.editorScroll + i] ?? '';
-      const placeholder = i === 0 && !this.text ? (this.pending?.choices ? 'Search…' : this.pending?.title ?? this.activity ?? '処理中… Ctrl+C で中止') : '';
+      const placeholder = i === 0 && !this.text ? (this.pending?.choices === APPROVAL_CHOICES ? '' : this.pending?.choices ? 'Search…' : this.pending?.title ?? this.activity ?? '処理中… Ctrl+C で中止') : '';
       let text = `│ ${line || placeholder}`;
       if (compactChild && !this.pending && this.subagent && (!editingFollowup || (!this.text && i > 0))) {
         text = `│ ${[childPhase, this.subagent.pluginId, childTask][i] ?? ''}`;

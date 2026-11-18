@@ -218,12 +218,14 @@ export function createFetchUrlTool(options: WebOptions = {}): Tool {
       const target = parseTarget(args.url);
       const maxBytes = Math.min(positiveInt(args.maxBytes, 'maxBytes', maxBytesLimit) ?? DEFAULT_MAX_BYTES, MAX_BYTES_LIMIT);
       const timeoutMs = positiveInt(args.timeoutMs, 'timeoutMs', MAX_TIMEOUT_MS) ?? defaultTimeout;
-      const { signal, timedOut } = signalFor(ctx, timeoutMs);
+      let remainingMs = timeoutMs;
 
       let url = target;
       const hops: string[] = [];
       for (let hop = 0; ; hop++) {
-        await approveFetch(ctx, url, hop === 0 ? '外部URLの取得' : `転送 ${hop} 回目の取得先`, `本文上限 ${maxBytes} バイト / 制限時間 ${timeoutMs}ms`);
+        await approveFetch(ctx, url, hop === 0 ? '外部URLの取得' : `転送 ${hop} 回目の取得先`, `本文上限 ${maxBytes} バイト / 通信時間の上限 ${timeoutMs}ms（承認待ちを除く）`);
+        const started = performance.now();
+        const { signal, timedOut } = signalFor(ctx, Math.ceil(remainingMs));
         let response: Response;
         try {
           response = await fetch(url, { method: 'GET', redirect: 'manual', signal, headers: { accept: 'text/html,application/json,text/plain;q=0.9,*/*;q=0.5' } });
@@ -245,6 +247,8 @@ export function createFetchUrlTool(options: WebOptions = {}): Tool {
           }
           if (next.username || next.password) throw new ToolError('FETCH_FAILED', '転送先のURLに資格情報が含まれる');
           hops.push(`${response.status} ${url.href} → ${next.href}`);
+          remainingMs -= performance.now() - started;
+          if (remainingMs <= 0) throw new ToolError('TIMEOUT', `通信時間が上限 ${timeoutMs}ms に達した: ${url.href}`);
           url = next;
           continue;
         }

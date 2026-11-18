@@ -12,6 +12,20 @@ export type SavedKeys = Record<string, string>;
 const PROVIDER_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 const MAX_KEY_LENGTH = 4096;
 
+/**
+ * 1つのキーで複数の接続先を使うプロバイダー。OpenCode Zen と Go は同じ
+ * OPENCODE_API_KEY を共有するため、保存名を代表名へ寄せて片方の入力で両方を使えるようにする。
+ */
+export const KEY_ALIASES: Readonly<Record<string, string>> = {
+  'opencode-go': 'opencode',
+};
+
+/** キーの保存・解決に使う代表名。別名なら代表名を返す。 */
+export function canonicalKeyProvider(provider: string): string {
+  const name = normalizeProvider(provider);
+  return KEY_ALIASES[name] ?? name;
+}
+
 export function keysPath(): string {
   return path.join(configDir(), 'keys.json');
 }
@@ -58,7 +72,7 @@ function writeKeys(keys: SavedKeys): void {
 }
 
 export function saveKey(provider: string, key: string): { provider: string; path: string } {
-  const name = normalizeProvider(provider), value = normalizeKey(key);
+  const name = canonicalKeyProvider(provider), value = normalizeKey(key);
   const keys = loadSavedKeys();
   keys[name] = value;
   writeKeys(keys);
@@ -66,7 +80,7 @@ export function saveKey(provider: string, key: string): { provider: string; path
 }
 
 export function removeKey(provider: string): boolean {
-  const name = normalizeProvider(provider);
+  const name = canonicalKeyProvider(provider);
   const keys = loadSavedKeys();
   if (!(name in keys)) return false;
   delete keys[name];
@@ -79,9 +93,20 @@ export function savedKeyProviders(): string[] {
   return Object.keys(loadSavedKeys()).sort();
 }
 
-/** Environment first, then the saved key. An empty environment value is ignored. */
+/**
+ * Environment first, then the saved key. An empty environment value is ignored.
+ * Aliased providers resolve through the representative name, so one saved key serves every
+ * endpoint of the same account (OpenCode Zen and Go) whether it is exported or stored.
+ */
 export function resolveApiKey(provider: string, env: NodeJS.ProcessEnv = process.env, envName?: string | null): string | undefined {
   const fromEnv = envName ? env[envName]?.trim() : undefined;
   if (fromEnv) return fromEnv;
-  return loadSavedKeys()[normalizeProvider(provider)];
+  const saved = loadSavedKeys();
+  const name = canonicalKeyProvider(provider);
+  if (saved[name]) return saved[name];
+  // 別名で保存された値も代表名から解決する(同じアカウントのキーを共有する)。
+  for (const [alias, canonical] of Object.entries(KEY_ALIASES)) {
+    if (canonical === name && saved[alias]) return saved[alias];
+  }
+  return undefined;
 }

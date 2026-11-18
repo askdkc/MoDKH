@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import type { ReadStream, WriteStream } from 'node:tty';
 import { TerminalUI, textWidth, fitText } from '../src/cli/terminal.ts';
-import { CONNECT_PROVIDERS } from '../src/cli/providers.ts';
+import { modelProviders } from '../src/cli/providers.ts';
 import { screenFrom, screenText } from './tui.screen.ts';
 
 function terminal(columns = 100, rows = 30, options?: { readClipboardImage?: (signal: AbortSignal) => Promise<{ mediaType: 'image/png'; data: string }> }) {
@@ -28,13 +28,15 @@ test('TUI shows MODKH once, completes /conn, searches and selects providers by k
     assert.match(t.text(), /MoDKH  ·  Coding Harness/);
     assert.match(t.text(), /\/connect/);
     t.key('return'); assert.equal(await command, '/connect');
-    const select = t.ui.choose('Connect an integration', CONNECT_PROVIDERS);
+    const select = t.ui.choose('Connect an integration', modelProviders());
     const menu = t.text();
-    for (const p of CONNECT_PROVIDERS) assert.ok(menu.includes(p.label), p.label);
+    for (const p of modelProviders()) assert.ok(menu.includes(p.label), p.label);
+    // 検索キー専用の登録はモデル接続の一覧に出さない。
+    assert.equal(menu.includes('Brave Search'), false, 'a key-only entry is not a model provider');
     t.input.emit('keypress', 'open', {});
     t.key('down'); t.key('return');
     assert.equal(await select, 'opencode');
-    const cancel = t.ui.choose('Connect', CONNECT_PROVIDERS);
+    const cancel = t.ui.choose('Connect', modelProviders());
     t.key('escape'); assert.equal(await cancel, null);
     const next = t.ui.next(); t.input.emit('keypress', '続き', {}); t.key('return'); assert.equal(await next, '続き');
   } finally { t.ui.close(); }
@@ -140,7 +142,7 @@ test('Unicode editing, paste safety, empty search and resize retain focus', asyn
     t.key('paste-start'); t.key('return', '\r'); t.input.emit('keypress', '/exit', {}); t.key('paste-end');
     t.output.columns = 24; t.output.rows = 10; t.output.emit('resize');
     t.key('return'); assert.equal(await line, '日本\n/exit'); // Pasted newlines are preserved, never executed.
-    const empty = t.ui.choose('Providers', CONNECT_PROVIDERS, 'not-a-provider');
+    const empty = t.ui.choose('Providers', modelProviders(), 'not-a-provider');
     assert.match(t.text(), /該当なし/);
     t.key('return'); t.key('escape'); assert.equal(await empty, null);
     assert.equal(textWidth('日本🙂'), 6); assert.equal(fitText('日本🙂', 5), '日本');

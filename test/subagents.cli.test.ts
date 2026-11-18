@@ -85,6 +85,8 @@ test('CLI parent reads independently while two child API requests are live and i
     assert.equal(parentWorked, true, output);
     // The first request must guide tool selection even when spawn and parent reads share a batch.
     assert.match(parentRequests[0], /報告の根拠が不足/);
+    assert.match(parentRequests[0], /境界値を実際の判定に入力し、結果を観測/);
+    assert.match(parentRequests[0], /実測と報告が食い違ったら、該当する分岐の行だけ/);
     assert.equal(peak, 3, 'parent plus two children concurrently use the API');
     assert.ok(parentRequests.some(r => r.includes('Inspect left verified fixture result') && r.includes('Inspect right verified fixture result')), output);
     const logs = fs.readdirSync(path.join(f.home, 'sessions')).map(file => fs.readFileSync(path.join(f.home, 'sessions', file), 'utf8').trim().split('\n').map(line => JSON.parse(line)));

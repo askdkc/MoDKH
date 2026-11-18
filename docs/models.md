@@ -2,14 +2,16 @@
 
 ## モデル参照と選択画面
 
-`modkh` を起動し、`/connect` で OpenAI / OpenCode / Ollama Local / Ollama Cloud / OpenRouter / Infron / Hermes Agent を選ぶ。
+`modkh` を起動し、`/connect` で OpenAI / OpenCode Zen / OpenCode Go / Ollama Local / Ollama Cloud / OpenRouter / Infron / Hermes Agent を選ぶ。
 TTYでは入力で検索、↑↓で選択、Enterで決定、Escで戻る。OpenAIではChatGPT OAuthとAPIキーを選べる。
 APIキーは環境変数を優先し、未設定ならTTYで伏せ字入力できる。入力したキーは `keys.json`(0600)に保存し、次回起動時に再利用する。
 OpenAIのモデル一覧は選択画面を開くたびに公式から取得する。APIキーでは `https://api.openai.com/v1/models`、
 ChatGPT OAuthでは公式Codexと同じ `https://chatgpt.com/backend-api/codex/models` を使い、アカウントに返されたモデルIDを表示する。
 `/models openai`、`/models chatgpt` でも再取得できる。取得中はCtrl+Cで中止でき、失敗時は理由を表示する。
 古い固定リストや保存済み一覧へのフォールバックは行わない。再度開いて取得し直すか、モデルIDを直接指定できる。
-他のプロバイダーの `/models` は組み込み候補であり、利用可能なモデルの完全な一覧ではない。
+他のプロバイダーも同じ方針で、`/connect` と `/models` を開くたびに各プロバイダーの一覧APIから取得する。
+AIプロバイダーはモデルの追加・廃止が多いため、組み込みの固定モデル一覧は持たない。
+`fixed/scripted`(オフライン検証用)だけは取得元が無いため常に候補に出す。
 
 `chat --model <provider>/<model>`、または `/connect <provider>/<model> [--base-url <url>]` で直接指定もできる。
 接続に失敗しても別の接続先へ自動で切り替えない。モデルの選択だけではAPI到達や利用権限は検証されない。
@@ -30,7 +32,8 @@ ChatGPT OAuthでは公式Codexと同じ `https://chatgpt.com/backend-api/codex/m
 | Provider | 認証 | 既定URL・設定 |
 | --- | --- | --- |
 | `openai` | `OPENAI_API_KEY` | OpenAI API |
-| `opencode` | `OPENCODE_API_KEY` | `https://opencode.ai/inference/openai/v1` / `OPENCODE_BASE_URL` |
+| `opencode` | `OPENCODE_API_KEY` | `https://opencode.ai/zen/v1` / `OPENCODE_BASE_URL` |
+| `opencode-go` | `OPENCODE_API_KEY`(Zenと共通) | `https://opencode.ai/zen/go/v1` / `OPENCODE_GO_BASE_URL` |
 | `ollama`（Local） | 不要 | `http://127.0.0.1:11434/v1` / `OLLAMA_BASE_URL` |
 | `ollama-cloud` | `OLLAMA_API_KEY` | `https://ollama.com/v1` / `OLLAMA_CLOUD_BASE_URL` |
 | `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
@@ -49,15 +52,30 @@ MODKHの個別承認やStopでリモートの副作用を制御・停止でき�
 
 `/connect` には **Ollama Local** と **Ollama Cloud** を別々に表示する。
 ローカルは従来どおり `/connect ollama`。クラウドは `/connect ollama-cloud` でキーとモデルを選ぶ。
-`/models ollama-cloud/` でもクラウド候補に絞り込める。
+`/models ollama-cloud` でもクラウド候補に絞り込める。
 
-クラウドの組み込み候補は `gemma4:31b`、`gpt-oss:120b`、`gpt-oss:20b`。
-一覧外は直接入力できる。候補は固定リストで、モデルの利用可否は送信時に確認する。
+どちらの候補も固定値ではなく、`/v1/models` から取得した最新の一覧をそのまま並べる。
+取得できなければ理由を表示し、モデルIDの直接入力を案内する。モデルの利用可否は送信時に確認する。
 [公式の直接接続手順](https://docs.ollama.com/api/openai-compatibility)に従い、
 `https://ollama.com/v1` と `OLLAMA_API_KEY` を使う。ローカルOllamaのインストール・サインインは不要。
 直接APIでは `:cloud` 接尾辞を付けず、[API一覧のモデル名](https://ollama.com/api/tags)をそのまま使う。
 `OLLAMA_BASE_URL` はLocalだけ、`OLLAMA_CLOUD_BASE_URL` はCloudだけに適用する。
 Cloudのキー未設定・通信失敗時にLocalへ自動で切り替えない。
+
+## OpenCode Zen / Go
+
+`/connect` には **OpenCode Zen** と **OpenCode Go** を別々に表示する。
+どちらも同じ `OPENCODE_API_KEY` を使うため、片方で入力したキーがもう片方にも適用される
+(保存名は `opencode` に寄せ、旧版が `opencode-go` で保存したキーも読み替える)。
+
+| 接続先 | ベースURL | 差し替え用の環境変数 |
+| --- | --- | --- |
+| Zen | `https://opencode.ai/zen/v1` | `OPENCODE_BASE_URL` |
+| Go | `https://opencode.ai/zen/go/v1` | `OPENCODE_GO_BASE_URL` |
+
+Go は会話ごとの安定したセッションIDを要求し、無い場合は `400 MissingSessionID` を返す。
+MODKHは `x-opencode-session` にプロセス単位のIDを、`user-agent` に `modkh/<version>` を付けて送る。
+モデル一覧は両方とも `GET /models` から取得する(ZenとGoで内容は異なる)。
 
 ## Sign in with ChatGPT
 

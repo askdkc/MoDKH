@@ -41,7 +41,7 @@ import { positiveTokenCount, readContextWindow } from '../model/context-window.t
 import { estimateRequestBytes, planCompaction, projectCompacted, summarizeCompaction } from '../agent/compaction.ts';
 import { loadConfig, updateConfig, parseTimeoutMs, type LiteConfig } from './config.ts';
 import { loadResumedSession, selectInitialConnection } from './initial-connection.ts';
-import { keysPath, loadSavedKeys, saveKey, removeKey, savedKeyProviders, resolveApiKey } from './keys.ts';
+import { keysPath, loadSavedKeys, saveKey, removeKey, savedKeyProviders, resolveApiKey, canonicalKeyProvider } from './keys.ts';
 import { parseReasoningLevel, REASONING_LEVELS, type ReasoningLevel } from '../model/reasoning.ts';
 import { recordSessionRecord } from '../session/workspace.ts';
 
@@ -61,6 +61,8 @@ const DELEGATED_INVESTIGATION =
   'コード調査を委譲するときは、担当する問い・ファイルを切り分け、子には結論と根拠（パス・該当行・観測した挙動）、未確認点の報告を求める。'
   + '親は子に任せたソースやテストを並行して読み直さず、別の入口・呼び出し元を調べるか、利用可能なツールで具体例やテストを実行して挙動を確かめる。'
   + 'シェルで複数ファイルを表示するときも子の担当は含めない。テストの実行にテスト本文の再読は不要。'
+  + '境界を含むかどうかが結論を左右し、手元の実測では両方の条件が成り立つときは、親が境界値を実際の判定に入力し、結果を観測する。'
+  + '実測と報告が食い違ったら、該当する分岐の行だけを開いて照合する。境界値を実行できないときは未検証と明記する。'
   + '結果を統合するときは子が示した根拠を使う。報告の根拠が不足している、矛盾している、または変更で古くなった場合だけ、判断に必要な行やシンボルを絞って確認する。';
 
 const SYSTEM_PROMPT =
@@ -180,7 +182,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       ui.write(`(モデル ${candidate} を復元できません: ${(e as Error).message})\n`);
       const provider = parseModelRef(candidate).provider;
       const keyEnv = providerKeyEnv(provider);
-      if (keyEnv && !process.env[keyEnv] && !sessionKeys.has(provider)) {
+      if (keyEnv && !process.env[keyEnv] && !sessionKeys.has(canonicalKeyProvider(provider))) {
         ui.write(`(保存済みキーが無いため復元できません。/connect ${provider} でキーを保存すると次回から自動で復元します)\n`);
       }
     }
@@ -205,7 +207,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   // The saved policy applies from the first turn; /allow changes it for this session only.
   const savedPolicy = config.permissions === undefined ? DEFAULT_POLICY : parsePermissionPolicy(String(config.permissions)) ?? DEFAULT_POLICY;
   const approval = new TerminalApprovalGate({
-    ask: async (_prompt, signal) => (await ui.ask('承認: y で実行 / それ以外は拒否', signal)) ?? '',
+    ask: async (prompt, signal) => (await ui.confirm(prompt, signal)) ?? '',
     write: (t) => ui.write(t),
   }, savedPolicy);
   if (config.permissions !== undefined && parsePermissionPolicy(String(config.permissions)) === null)
@@ -267,7 +269,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       if (!ref) throw new Error('/connect でモデルを接続してください');
       const provider = parseModelRef(ref).provider;
       const baseUrl = ref === modelId ? connectionBaseUrl : undefined;
-      const key = sessionKeys.get(provider);
+      const key = sessionKeys.get(canonicalKeyProvider(provider));
       return { ref, create: () => makeModel(ref, baseUrl, 0, key, { timeoutMs }) };
     },
     progress: message => ui.write(`${ui.interactive ? message.replace(/^(\[[^\]]+\]) 子を実行: .+$/, '$1 子を実行中') : message}\n`),
@@ -471,7 +473,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
               nextMetadataRead = Date.now() + 300_000;
               const { provider } = parseModelRef(activeModel.id);
               contextWindow = await readContextWindow(activeModel.id, connectionBaseUrl,
-                resolveApiKey(provider) ?? sessionKeys.get(provider) ?? process.env[providerKeyEnv(provider) ?? ''], ac.signal);
+                resolveApiKey(provider) ?? sessionKeys.get(canonicalKeyProvider(provider)) ?? process.env[providerKeyEnv(provider) ?? ''], ac.signal);
             }
             if (!contextWindow || lastInputTokens < contextWindow * 0.75 || ac.signal.aborted) return;
           }
@@ -567,7 +569,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const fixedSkip = ref.startsWith('fixed/')
         ? session.messages.filter((m) => m.role === 'assistant' && m.origin !== 'manual').length : 0;
       const provider = parseModelRef(ref).provider;
-      const nextModel = makeModel(ref, baseUrl, fixedSkip, resolveApiKey(provider, process.env) ?? sessionKeys.get(provider), { timeoutMs });
+      const nextModel = makeModel(ref, baseUrl, fixedSkip,
+        resolveApiKey(provider, process.env) ?? sessionKeys.get(canonicalKeyProvider(provider)), { timeoutMs });
       session.setConnection(ref, baseUrl);
       model = nextModel;
       lastInputTokens = undefined;
@@ -612,22 +615,24 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           await loginChatGpt({ ...opts.loginOptions, write: text => ui.write(text) });
           ui.write('認証しました: chatgpt。モデルを選んでください。\n');
         } catch (e) { ui.write(`(認証できません: ${(e as Error).message})\n`); return; }
-      } else if ('keyOnly' in provider) {
+      } else if (provider.keyOnly === true && provider.key) {
         // 検索キーの登録だけを行う。モデル接続はしない。
-        if (process.env[provider.key]) { ui.write(`${provider.key} は環境変数で設定済みです(そちらが優先されます)。\n`); return; }
-        if (!ui.interactive) { ui.write(`${provider.key} を環境変数に設定してください。行入力モードではキーを表示させないため入力を受け付けません。\n`); return; }
-        const key = (await ui.ask(`${provider.key} を入力（保存先: ${keysHint()} / 空行で戻る）`, undefined, true))?.trim();
+        const keyEnv = provider.key;
+        if (process.env[keyEnv]) { ui.write(`${keyEnv} は環境変数で設定済みです(そちらが優先されます)。\n`); return; }
+        if (!ui.interactive) { ui.write(`${keyEnv} を環境変数に設定してください。行入力モードではキーを表示させないため入力を受け付けません。\n`); return; }
+        const key = (await ui.ask(`${keyEnv} を入力（保存先: ${keysHint()} / 空行で戻る）`, undefined, true))?.trim();
         if (!key || key === '/cancel') return;
         if (key.startsWith('/')) { ui.unread(key); return; }
-        try { saveKey(provider.value, key); ui.write(`(${provider.key} を保存しました。web_search で使用します)\n`); }
+        try { saveKey(provider.value, key); ui.write(`(${keyEnv} を保存しました。web_search で使用します)\n`); }
         catch (e) { ui.write(`(キーを保存できません: ${(e as Error).message})\n`); }
         return;
-      } else if (provider.key && !process.env[provider.key] && !sessionKeys.has(target)) {
+      } else if (provider.key && !process.env[provider.key] && !sessionKeys.has(canonicalKeyProvider(target))) {
         if (!ui.interactive) { ui.write(`${provider.key} を環境変数に設定して再接続してください。行入力モードではキーを表示させないため入力を受け付けません。\n`); return; }
         const key = (await ui.ask(`${provider.key} を入力（保存先: ${keysHint()} / 空行で戻る）`, undefined, true))?.trim();
         if (!key || key === '/cancel') return;
         if (key.startsWith('/')) { ui.unread(key); return; }
-        sessionKeys.set(target, key);
+        // 同じキーを共有する接続先(Zen/Go)は代表名で保持し、片方の入力で両方を使えるようにする。
+        sessionKeys.set(canonicalKeyProvider(target), key);
         // Persist immediately so the next launch does not ask again. Failure to save does not
         // block this connection, but it is reported instead of silently forgetting the key.
         try { saveKey(target, key); ui.write(`(${provider.key} を保存しました)\n`); }

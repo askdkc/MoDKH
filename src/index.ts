@@ -3,8 +3,9 @@
 
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { APP_VERSION } from './version.ts';
 
-const VERSION = '0.1.0';
+const VERSION = APP_VERSION;
 
 const HELP = `modkh ${VERSION} — MoDKH (Mixture of DKH)
 
@@ -25,26 +26,34 @@ const HELP = `modkh ${VERSION} — MoDKH (Mixture of DKH)
   /connect                                     検索できるプロバイダー一覧
   /connect openai                              ChatGPT OAuth / APIキーを選択
   /connect chatgpt                             ブラウザで ChatGPT 認証
+  /connect opencode                            OpenCode Zen のモデル選択
+  /connect opencode-go                         OpenCode Go のモデル選択(同じ OPENCODE_API_KEY)
   /connect ollama                              Ollama Local のモデル選択
   /connect ollama-cloud                        Ollama Cloud の認証・モデル選択
   /agents                                      子エージェント一覧
   /agents run [ID] [依頼]                       子を選んで限定した仕事を委譲
-  /models [検索語]                             名前の部分一致検索・番号でモデル選択
+  /models [検索語]                             接続先からモデル一覧を取得して選択
   /reasoning [レベル] [--save]                  推論レベル off/minimal/low/medium/high/max(既定は前回保存値)
   /connect <provider>/<model> [--base-url <url>]   モデルをその場で接続(AI API / chatgpt / fixed)
 
 接続先:
   fixed/scripted                              固定応答モデル(オフライン検証用)
   openai|anthropic|google|deepseek/<model>    AI SDK アダプター
-  opencode|openrouter|infron|ollama|hermes/<model> OpenAI互換アダプター
+  opencode|opencode-go/<model>                OpenCode Zen / Go(同じ OPENCODE_API_KEY)
+  openrouter|infron|ollama|hermes/<model>     OpenAI互換アダプター
   ollama-cloud/<model>                        Ollama Cloud (OLLAMA_API_KEY)
   groq|xai|lmstudio/<model>                    既存の互換アダプター
   compatible/<model> --base-url <url>         任意のOpenAI互換URL
   chatgpt/<model>                             Sign in with ChatGPT(/connect で認証可能)
 
+モデル一覧は固定値を持たず、/connect と /models のたびに各プロバイダーの一覧APIから取得する。
+取得できないときは理由を表示し、モデルIDの直接入力を案内する(古い一覧へのフォールバックはしない)。
+
 キーは環境変数から読む(例: OPENAI_API_KEY, ANTHROPIC_API_KEY,
 GOOGLE_GENERATIVE_AI_API_KEY, DEEPSEEK_API_KEY, OPENCODE_API_KEY, OPENROUTER_API_KEY,
 INFRON_API_KEY, HERMES_API_KEY, OLLAMA_API_KEY, GROQ_API_KEY, XAI_API_KEY)。
+OPENCODE_API_KEY は OpenCode Zen と Go の両方で使う(片方の入力で両方に接続できる)。
+接続先URLの差し替え: OPENCODE_BASE_URL (Zen) / OPENCODE_GO_BASE_URL (Go)。
 
 TTYではMODKHロゴ・コマンド補完・検索メニューを表示。↑↓/Enterで選択、Escで戻る。
 出力は通常のスクリーンバッファに流れるので、端末のスクロール(マウスホイール等)で履歴を辿れる。

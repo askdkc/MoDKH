@@ -23,3 +23,29 @@ test('parallel approvals display one prompt and cancel a queued child without ta
   answers[1]('n');
   assert.equal(await third, false);
 });
+
+test('each displayed approval gets three minutes and expiry releases its input', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const signals: AbortSignal[] = [];
+  const answers: ((s: string) => void)[] = [];
+  const written: string[] = [];
+  const gate = new TerminalApprovalGate({ write: s => written.push(s), ask: (_, signal) => {
+    signals.push(signal!);
+    return new Promise(resolve => answers.push(resolve));
+  } }, 'none');
+  const req = { kind: 'command' as const, title: 'GET', detail: 'url' };
+  const first = gate.approve(req);
+  const second = gate.approve(req);
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(179_999);
+  assert.equal(signals[0].aborted, false);
+  answers[0]('y');
+  assert.equal(await first, true);
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(179_999);
+  assert.equal(signals[1].aborted, false);
+  t.mock.timers.tick(1);
+  assert.equal(signals[1].aborted, true);
+  assert.equal(await second, false);
+  assert.match(written.join(''), /3分.*拒否/);
+});

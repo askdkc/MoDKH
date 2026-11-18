@@ -1,11 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { PassThrough } from 'node:stream';
 import type { ReadStream, WriteStream } from 'node:tty';
 import { TerminalUI, type Choice } from '../src/cli/terminal.ts';
 import { chooseProviderModel } from '../src/cli/providers.ts';
-import { SEARCH_ROW_VALUE, suggestionsFor } from '../src/cli/catalog.ts';
+import { SEARCH_ROW_VALUE, toRefs } from '../src/cli/catalog.ts';
 import { screenFrom } from './tui.screen.ts';
+
+function restore(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name]; else process.env[name] = value;
+}
 
 function terminal(columns = 110, rows = 30) {
   const input = new PassThrough() as unknown as ReadStream;
@@ -68,10 +77,24 @@ test('orderless search ignores word order and separators', async () => {
 });
 
 test('choosing the search row asks for a keyword and reopens the list filtered', async () => {
+  // 一覧はプロバイダーから取得するため、並びが固定の偽サーバーで隔離する。
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ data: [{ id: 'gemma4:31b' }, { id: 'deepseek-v4.1-flash' }, { id: 'glm-5.3-flash' }] }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const previous = { url: process.env['OLLAMA_CLOUD_BASE_URL'], key: process.env['OLLAMA_API_KEY'], home: process.env['MODKH_HOME'] };
+  process.env['OLLAMA_CLOUD_BASE_URL'] = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+  process.env['OLLAMA_API_KEY'] = 'picker-test-key';
+  process.env['MODKH_HOME'] = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-picker-'));
   const t = terminal();
   try {
     const picked = chooseProviderModel(t.ui, 'ollama-cloud');
-    await new Promise(resolve => setImmediate(resolve));
+    // 一覧は非同期取得なので、ピッカーが出るまで待つ(固定リストのように即座には出ない)。
+    for (let i = 0; i < 200 && !t.screen().includes('キーワード検索'); i++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.match(t.screen(), /キーワード検索/, 'the picker opens after the live list arrives');
     // Enter on an empty box selects the pinned search row instead of an arbitrary model.
     t.input.emit('keypress', '', { name: 'return' });
     await new Promise(resolve => setImmediate(resolve));
@@ -89,12 +112,19 @@ test('choosing the search row asks for a keyword and reopens the list filtered',
     t.input.emit('keypress', '', { name: 'down' });
     t.input.emit('keypress', '', { name: 'return' });
     assert.equal(await picked, 'ollama-cloud/deepseek-v4.1-flash');
-  } finally { t.ui.close(); }
+  } finally {
+    t.ui.close();
+    restore('OLLAMA_CLOUD_BASE_URL', previous.url);
+    restore('OLLAMA_API_KEY', previous.key);
+    if (previous.home === undefined) fs.rmSync(process.env['MODKH_HOME'] ?? '', { recursive: true, force: true });
+    restore('MODKH_HOME', previous.home);
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });
 
 test('the search row never becomes a model reference', async () => {
   assert.equal(typeof SEARCH_ROW_VALUE, 'string');
-  const list = suggestionsFor('ollama-cloud');
+  const list = toRefs('ollama-cloud', ['deepseek-v4.1-flash']);
   assert.equal(list.includes(SEARCH_ROW_VALUE), false, 'the marker is not a model id');
-  assert.ok(list.every(ref => /^ollama-cloud\//.test(ref)));
+  assert.ok(list.every((ref: string) => /^ollama-cloud\//.test(ref)));
 });

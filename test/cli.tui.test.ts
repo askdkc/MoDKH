@@ -21,7 +21,7 @@ const preload = `
   process.on('exit', () => { if (process.stdin.isRaw) process.exitCode = 91; });
 `;
 
-test('public CLI terminal path: logo → completion → seven providers → connect → response → Stop → child progress → recover → exit', async () => {
+test('public CLI terminal path: logo → completion → model providers → connect → response → Stop → child progress → recover → exit', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-tui-entry-'));
   const fixtureLsp = new URL('./fixtures/fake-lsp.mjs', import.meta.url).pathname;
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
@@ -35,7 +35,18 @@ test('public CLI terminal path: logo → completion → seven providers → conn
   const requests: Record<string, unknown>[] = [];
   let releaseChild: (() => void) | undefined;
   const childRequests = new EventEmitter();
+  // モデル一覧は固定せずプロバイダーから取得するため、テスト用サーバーが一覧も返す。
+  const MODELS: Record<string, { data: { id: string }[] }> = {
+    '/v1/models': { data: [{ id: 'llama3.2' }, { id: 'qwen3.8-max' }] },
+    '/cloud/v1/models': { data: [{ id: 'gemma4:31b' }, { id: 'glm-5.3' }] },
+  };
   const server = http.createServer((req, res) => {
+    const catalog = MODELS[req.url ?? ''];
+    if (catalog) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ object: 'list', ...catalog }));
+      return;
+    }
     let body = '';
     req.on('data', data => { body += data; });
     req.on('end', () => {
@@ -130,9 +141,10 @@ test('public CLI terminal path: logo → completion → seven providers → conn
     await wait('何を調べますか'); assert.match(output, /██████/); assert.match(output, /MoDKH  ·  Coding Harness/);
     send('/conn'); await wait('Commands');
     send('\r'); await wait('Hermes Agent');
-    for (const label of ['OpenAI', 'OpenCode', 'Ollama Local', 'Ollama Cloud', 'OpenRouter', 'Infron', 'Hermes Agent']) assert.ok(output.slice(start).includes(label), label);
+    for (const label of ['OpenAI', 'OpenCode Zen', 'OpenCode Go', 'Ollama Local', 'Ollama Cloud', 'OpenRouter', 'Infron', 'Hermes Agent']) assert.ok(output.slice(start).includes(label), label);
     send('oll'); await wait('│ oll');
-    send('\r'); await wait('ollama/llama3.2');
+    send('\r'); await wait('ollama — モデルを選択');
+    await wait('ollama/llama3.2');
     // The keyword-search row is pinned first, so Down selects the first model.
     send('\x1b[B'); await wait('› ollama/llama3.2');
     send('\r'); await wait('接続しました: ollama/llama3.2');

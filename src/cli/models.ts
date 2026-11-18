@@ -1,43 +1,51 @@
 import type { ChatTerminal, Choice } from './terminal.ts';
-import { allSuggestions, suggestionsFor, noteFor, isRecommended, SEARCH_ROW_VALUE } from './catalog.ts';
-import { hasModelCredentials, officialModelChoices } from './official-models.ts';
+import { toRefs, SEARCH_ROW_VALUE, LOCAL_MODEL_REFS } from './catalog.ts';
+import { officialModelChoices } from './official-models.ts';
+import { providerModelChoices } from './model-catalog.ts';
+import { knownProviders, supportsLiveModels } from '../model/providers.ts';
 
-/** 接続保証ではなく選択用の候補。一覧外は /connect で直接指定できる。 */
-export const MODEL_SUGGESTIONS: readonly string[] = allSuggestions();
+/** 一覧APIを持つプロバイダーか。chatgpt は公式Codexの一覧を使うため別扱いにする。 */
+export function listsModels(provider: string): boolean {
+  return provider === 'chatgpt' || (knownProviders().includes(provider) && supportsLiveModels(provider));
+}
+
+/**
+ * `/models` の候補。固定リストは持たず、指定または接続済みのプロバイダーから毎回取得する。
+ * 取得できなければ空のまま「一覧外は直接指定」を案内する。
+ */
+async function liveSuggestions(provider: string | null, write: (text: string) => void): Promise<string[] | null> {
+  if (provider === null) return [];
+  if (provider === 'openai' || provider === 'chatgpt') {
+    return await officialModelChoices(provider, write);
+  }
+  if (!supportsLiveModels(provider)) return [];
+  const result = await providerModelChoices(provider, write);
+  return result === null ? null : toRefs(provider, result.ids);
+}
 
 function entries(refs: readonly string[], current: string | null): Choice[] {
-  return refs.map(ref => {
-    const detail = [
-      isRecommended(ref) ? 'おすすめ' : '',
-      ref === current ? '選択中' : '',
-      noteFor(ref) ?? '',
-    ].filter(Boolean).join(' · ');
-    return { value: ref, label: ref, ...(detail ? { detail } : {}) };
-  });
+  return refs.map(ref => ({ value: ref, label: ref, ...(ref === current ? { detail: '選択中' } : {}) }));
 }
 
 export async function selectModel(lines: ChatTerminal, query: string, current: string | null): Promise<string | null> {
-  const official: string[] = [];
   const requested = query.trim().split(/[\s/]/)[0];
-  for (const provider of ['openai', 'chatgpt'] as const) {
-    if (requested === provider || hasModelCredentials(provider) && (!requested || !['openai', 'chatgpt'].includes(requested))) {
-      const fetched = await officialModelChoices(provider, text => lines.write(text));
-      if (fetched === null) return null;
-      official.push(...fetched);
-    }
-  }
-  const candidates = [...new Set([...MODEL_SUGGESTIONS, ...official, ...(current ? [current] : [])])];
+  // 語が無いときは接続中のプロバイダーだけを問い合わせる。全プロバイダーへは広げない
+  // (キーの無い接続先まで叩くと失敗の理由が並ぶだけで選択の役に立たない)。
+  const currentProvider = current?.split('/')[0];
+  const provider = requested && listsModels(requested)
+    ? requested
+    : currentProvider && listsModels(currentProvider) ? currentProvider : null;
+  const fetched = await liveSuggestions(provider, text => lines.write(text));
+  if (fetched === null) return null;
+  // MODKH 自身の擬似モデル(fixed)は取得元がないため、常に候補へ含める。
+  const candidates = [...new Set([...LOCAL_MODEL_REFS, ...fetched, ...(current ? [current] : [])])];
   // The search row is pinned first in both modes so Enter never connects to an arbitrary model.
   const searchRow: Choice = { value: SEARCH_ROW_VALUE, label: '🔍 キーワード検索', pinned: true };
   if (lines.interactive) {
-    const provider = query.trim().split(/\s+/)[0];
-    const providerList = provider && !provider.includes('/') && /^[a-z][a-z0-9-]*$/.test(provider)
-      ? suggestionsFor(provider, current) : [];
-    const ordered = [...new Set([...providerList, ...candidates])];
     let keyword = query;
     for (;;) {
       const selected = await lines.choose('モデル候補 — 利用可否はアカウントによります',
-        [searchRow, ...entries(ordered, current)], keyword);
+        [searchRow, ...entries(candidates, current)], keyword);
       if (selected !== SEARCH_ROW_VALUE) return selected;
       const answer = (await lines.ask('キーワード検索（空白区切りは語順自由。例: seek deep / 空行・/cancelで戻る）'))?.trim();
       if (!answer || answer === '/cancel') { keyword = ''; continue; }
@@ -51,8 +59,7 @@ export async function selectModel(lines: ChatTerminal, query: string, current: s
     const matches = candidates.filter((ref) => terms.every((term) => ref.toLowerCase().includes(term)));
     lines.write('モデル候補 (利用可否は接続先・アカウントによります):\n');
     matches.forEach((ref, i) => {
-      const note = [isRecommended(ref) ? 'おすすめ' : '', noteFor(ref) ?? ''].filter(Boolean).join(' · ');
-      lines.write(`${i + 1}. ${ref}${note ? `  ${note}` : ''}${ref === current ? ' (選択中)' : ''}\n`);
+      lines.write(`${i + 1}. ${ref}${ref === current ? ' (選択中)' : ''}\n`);
     });
     if (matches.length === 0) lines.write('該当するモデルはありません。\n');
     lines.write('番号で選択 / 文字列で再検索（語順自由: seek deep）/ * で全件 / 空行・/cancel で戻る\n一覧外: /connect <provider>/<model> [--base-url <url>]\n');

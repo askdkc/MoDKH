@@ -322,3 +322,16 @@ test('保存済みキーの解決は brave-search の名前を使う(既定の�
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('fetch_url は転送先の承認待ちを通信時間に含めない', async () => {
+  const server = await serve({ '/start': { status: 302, headers: { location: '/page' } }, '/page': { body: 'approved page' } });
+  try {
+    const gate = { async approve(req: ApprovalRequest) {
+      if (req.detail.includes('/page')) await new Promise(resolve => setTimeout(resolve, 650));
+      return true;
+    } };
+    const out = await call(createFetchUrlTool(), { url: server.origin + '/start', timeoutMs: 500 }, ctx(gate));
+    assert.match(out, /approved page/);
+    assert.deepEqual(server.hits, ['/start', '/page']);
+  } finally { await server.close(); }
+});

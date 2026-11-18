@@ -1,100 +1,66 @@
 /**
- * Model catalogs shown by the picker and `/models`.
+ * Picker metadata shared by `/connect` and `/models`.
  *
- * The Ollama Cloud list is a snapshot of `GET https://ollama.com/v1/models` taken while building
- * this release, so the picker works offline and without a key. It is a convenience list, not an
- * entitlement: a model may require a plan the account does not have, and the service may add or
- * retire models at any time. `/connect <provider>/<model>` always accepts an ID from outside this
- * list, and `modkh models refresh` can rewrite the snapshot from the live endpoint.
+ * There is deliberately no bundled model list here. AI providers add and retire models far more
+ * often than this project releases, so a baked-in list silently offers IDs that no longer exist.
+ * Model candidates come from `model-catalog.ts`, which asks the provider each time the picker
+ * opens. This module only holds stable facts: display order, labels and the search-row marker.
  */
-export interface CatalogEntry {
-  /** Full `<provider>/<model>` reference used everywhere else. */
-  readonly ref: string;
-  /** Short description for the picker; never a capability guarantee. */
-  readonly note?: string;
-}
-
-/** Snapshot of the Ollama Cloud catalogue with a short note for well-known families. */
-export const OLLAMA_CLOUD_CATALOG: readonly CatalogEntry[] = [
-  { ref: 'ollama-cloud/gemma4:31b' },
-  { ref: 'ollama-cloud/gpt-oss:120b', note: '大規模' },
-  { ref: 'ollama-cloud/gpt-oss:20b', note: '軽量' },
-  { ref: 'ollama-cloud/deepseek-v4.1-flash', note: '高速・低コスト' },
-  { ref: 'ollama-cloud/deepseek-v4.1-flash:1017', note: '高速・版固定' },
-  { ref: 'ollama-cloud/deepseek-v4-pro:0813', note: '高精度' },
-  { ref: 'ollama-cloud/glm-5.3', note: '汎用' },
-  { ref: 'ollama-cloud/glm-5.3-flash', note: '高速' },
-  { ref: 'ollama-cloud/glm-5.2' },
-  { ref: 'ollama-cloud/kimi-k3.1-pro', note: '長文・高精度' },
-  { ref: 'ollama-cloud/kimi-k3' },
-  { ref: 'ollama-cloud/kimi-k2.7-code', note: 'コード' },
-  { ref: 'ollama-cloud/kimi-k2.6' },
-  { ref: 'ollama-cloud/minimax-m3' },
-  { ref: 'ollama-cloud/minimax-m3.1-flash', note: '高速' },
-  { ref: 'ollama-cloud/mimo-v2.6-pro' },
-  { ref: 'ollama-cloud/mimo-v2.6-flash', note: '高速' },
-  { ref: 'ollama-cloud/mistral-large-4' },
-  { ref: 'ollama-cloud/nemotron-3-ultra', note: '大規模' },
-  { ref: 'ollama-cloud/nemotron-3-super' },
-  { ref: 'ollama-cloud/inkling-2-small', note: '軽量' },
-  { ref: 'ollama-cloud/clef:27b' },
-  { ref: 'ollama-cloud/muse-spark-open' },
-  { ref: 'ollama-cloud/beam' },
-];
 
 /** Sentinel value for the pinned search row; never a real model reference. */
-export const SEARCH_ROW_VALUE = '\u0000search'
-
-/** The endpoint and the date of the snapshot above; shown by `modkh models status`. */
-export const OLLAMA_CLOUD_SOURCE = {
-  url: 'https://ollama.com/v1/models',
-  capturedAt: '2026-11-14',
-} as const;
+export const SEARCH_ROW_VALUE = '\u0000search';
 
 /**
- * Recommended defaults per provider, marked in the picker rather than reordered: existing
- * references and their positions are relied on by other callers, so the list order is stable.
+ * MODKH 自身が提供する擬似モデル。プロバイダーが公開する一覧ではないため、ここだけは固定で持つ
+ * (オフライン検証用の fixed と、任意URLの compatible は取得元が存在しない)。
  */
-export const PROVIDER_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
-  'ollama-cloud': ['ollama-cloud/deepseek-v4.1-flash', 'ollama-cloud/glm-5.3-flash', 'ollama-cloud/glm-5.3'],
-};
+export const LOCAL_MODEL_REFS: readonly string[] = ['fixed/scripted'];
 
-/** Extra suggestions for providers without a published catalogue. */
-export const OTHER_SUGGESTIONS: readonly string[] = [
-  'chatgpt/gpt-6.2-astra', 'chatgpt/gpt-6.2-sol', 'openai/gpt-6.2-astra', 'openai/gpt-6.2-sol',
-  'opencode/gpt-6-sol', 'opencode/gpt-5.4',
-  'infron/openai/gpt-5.2', 'hermes/hermes-agent',
-  'anthropic/claude-sonnet-4-5', 'anthropic/claude-opus-4-5',
-  'google/gemini-2.5-pro', 'google/gemini-2.5-flash',
-  'deepseek/deepseek-chat', 'deepseek/deepseek-reasoner',
-  'openrouter/openai/gpt-5.2', 'groq/llama-3.3-70b-versatile',
-  'xai/grok-3', 'ollama/llama3.2', 'lmstudio/local-model', 'fixed/scripted',
+/**
+ * Providers offered by `/connect`, in display order. `keyOnly` entries store a credential
+ * without connecting a model (web search). A model list is never attached to these rows.
+ */
+export interface ConnectProvider {
+  readonly value: string;
+  readonly label: string;
+  /** Shown as the row detail; the credential or endpoint, never a model list. */
+  readonly detail: string;
+  /** Environment variable holding the API key; null when the endpoint needs none. */
+  readonly key: string | null;
+  readonly keyOnly?: true;
+}
+
+/** Rows are data only; providers and endpoints are validated by `model/providers.ts`. */
+export const CONNECT_PROVIDERS: readonly ConnectProvider[] = [
+  { value: 'openai', label: 'OpenAI', detail: 'ChatGPT OAuth (chatgpt) / OPENAI_API_KEY', key: 'OPENAI_API_KEY' },
+  { value: 'opencode', label: 'OpenCode Zen', detail: 'Console · OPENCODE_API_KEY', key: 'OPENCODE_API_KEY' },
+  { value: 'opencode-go', label: 'OpenCode Go', detail: 'Console · 同じ OPENCODE_API_KEY', key: 'OPENCODE_API_KEY' },
+  { value: 'ollama', label: 'Ollama Local', detail: 'ローカル · OLLAMA_BASE_URL', key: null },
+  { value: 'ollama-cloud', label: 'Ollama Cloud', detail: 'ollama.com · OLLAMA_API_KEY', key: 'OLLAMA_API_KEY' },
+  { value: 'openrouter', label: 'OpenRouter', detail: 'OPENROUTER_API_KEY', key: 'OPENROUTER_API_KEY' },
+  { value: 'infron', label: 'Infron', detail: 'INFRON_API_KEY', key: 'INFRON_API_KEY' },
+  { value: 'hermes', label: 'Hermes Agent', detail: 'API server · HERMES_API_KEY', key: 'HERMES_API_KEY' },
+  // Web検索のキー登録専用。モデル接続の一覧には含めない。
+  { value: 'brave-search', label: 'Brave Search', detail: 'web_search 用のキー · BRAVE_SEARCH_API_KEY', key: 'BRAVE_SEARCH_API_KEY', keyOnly: true },
 ];
+
+/** `/connect` に出す行(検索キー専用の登録は除く)。 */
+export function modelProviders(): ConnectProvider[] {
+  return CONNECT_PROVIDERS.filter(provider => provider.keyOnly !== true);
+}
 
 function unique(refs: readonly string[]): string[] {
   return [...new Set(refs)];
 }
 
-/** Every known reference, catalogued providers first. */
-export function allSuggestions(): string[] {
-  return unique([...OLLAMA_CLOUD_CATALOG.map(entry => entry.ref), ...OTHER_SUGGESTIONS]);
-}
-
-/** The catalogue in display order; recommendations are marked, never moved. */
-export function suggestionsFor(provider: string, current?: string | null): string[] {
-  const catalog = provider === 'ollama-cloud'
-    ? OLLAMA_CLOUD_CATALOG.map(entry => entry.ref)
-    : OTHER_SUGGESTIONS.filter(ref => ref.startsWith(`${provider}/`));
-  return unique([...catalog, ...(current ? [current] : [])]);
-}
-
-/** Marks a recommended entry for the picker without changing its position. */
-export function isRecommended(ref: string): boolean {
-  const provider = ref.split('/')[0] ?? '';
-  return (PROVIDER_DEFAULTS[provider] ?? []).includes(ref);
-}
-
-/** Notes are advisory labels for the picker, keyed by full reference. */
-export function noteFor(ref: string): string | undefined {
-  return OLLAMA_CLOUD_CATALOG.find(entry => entry.ref === ref)?.note;
+/**
+ * 与えられたIDを `<provider>/<model>` の形に整える。取得した一覧も、利用者が直接入力したIDも
+ * 同じ経路を通す。既に接頭辞が付いた値は二重に付けない。
+ */
+export function toRefs(provider: string, ids: readonly string[], current?: string | null): string[] {
+  const prefix = `${provider}/`;
+  const refs = ids
+    .filter(id => id.length > 0)
+    .map(id => (id.startsWith(prefix) ? id : `${prefix}${id}`));
+  return unique([...refs, ...(current ? [current] : [])]);
 }

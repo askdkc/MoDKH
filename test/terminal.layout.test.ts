@@ -317,3 +317,23 @@ test('compact tool output keeps the answer and detail action readable at narrow 
     } finally { t.ui.close(); }
   }
 });
+
+test('承認は上下キーで選び Enter で確定し、前の入力は流用しない', async () => {
+  const t = terminal();
+  try {
+    t.ui.unread('y');
+    const pending = t.ui.confirm('実行しますか？');
+    assert.match(t.text(), /› 拒否/);
+    t.key('down');
+    assert.match(t.text(), /› 承認/);
+    t.key('up');
+    assert.match(t.text(), /› 拒否/);
+    t.key('down');
+    t.key('return');
+    assert.equal(await pending, 'y');
+    assert.equal(await t.ui.next(), 'y');
+    const denied = t.ui.confirm('実行しますか？');
+    t.key('return');
+    assert.equal(await denied, 'n');
+  } finally { t.ui.close(); }
+});
