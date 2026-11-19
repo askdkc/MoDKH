@@ -127,4 +127,27 @@ test('PDF chat command attaches the selected page and its text to the coding tur
   ]);
   assert.doesNotMatch(output, /Build the red button/);
   assert.match(JSON.stringify(toResponsesInput(users)), /data:image\/png;base64,iVBOR/);
+
+  await t.test('one /pdf line sends the PDF and Japanese request together exactly once', async () => {
+    fs.writeFileSync(path.join(root, 'newkoku.pdf'), pdf);
+    const before = requests.length;
+    const chat = spawn(process.execPath, child.spawnargs.slice(1), {
+      env: { ...process.env, HOME: home, USERPROFILE: home, MODKH_HOME: home, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '0' }, timeout: 60000,
+    });
+    let log = '';
+    chat.stdout.on('data', chunk => { log += chunk; });
+    chat.stderr.on('data', chunk => { log += chunk; });
+    chat.stdin.end('/pdf @newkoku.pdf 日本語の依頼\n/exit\n');
+    assert.equal((await once(chat, 'close'))[0], 0, log);
+    const sent = requests.slice(before);
+    assert.equal(sent.length, 1, log);
+    const turns = sent[0].messages.filter(m => m.role === 'user');
+    assert.equal(turns.length, 1);
+    const parts = turns[0].content;
+    assert.ok(Array.isArray(parts));
+    assert.deepEqual(parts.map(p => p.type), ['text', 'image_url', 'image_url']);
+    assert.equal(parts[0].text.match(/日本語の依頼/g)?.length, 1);
+    assert.match(parts[0].text, /Build the red button/);
+    assert.equal(parts[2].image_url.url, 'data:image/png;base64,' + expected.stdout.toString('base64'));
+  });
 });

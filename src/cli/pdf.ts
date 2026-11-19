@@ -6,7 +6,7 @@ import path from 'node:path';
 import { MAX_IMAGES, MAX_IMAGE_BYTES, parseImage, type ImageAttachment } from '../agent/images.ts';
 
 const run = promisify(execFile);
-export const pdfUsage = '/pdf [--pages 2-4] @<PDFのパス> [| <依頼文>]';
+export const pdfUsage = '/pdf [--pages 2-4] @<PDFのパス> [依頼文]（| 区切りも可）';
 const pdfPrefix = /^\/pdf[ \t]+(?:--pages[ \t]+(\d+)(?:-(\d+))?[ \t]+)?/;
 
 export function isPdfPathPrefix(text: string): boolean {
@@ -18,12 +18,14 @@ function parsePdfRequest(line: string) {
   if (!prefix) throw new Error(pdfUsage);
   const args = line.slice(prefix[0].length);
   if (/^--pages(?:\s|$)/.test(args)) throw new Error(pdfUsage);
-  // Only the pipe separates the request from the path; spaces belong to the filename.
   const pathAndPrompt = args.startsWith('@') ? args.slice(1) : args;
   const quoted = pathAndPrompt.startsWith('"');
+  // A closing quote or .pdf suffix marks the end of the path for inline requests.
+  // Keep the legacy pipe syntax for paths without a .pdf extension as well.
   const match = quoted
-    ? /^("(?:[^"\\\r\n]|\\["\\])*")[ \t]*(?:\|(.*))?$/.exec(pathAndPrompt)
-    : /^([^|\r\n]+)(?:\|(.*))?$/.exec(pathAndPrompt);
+    ? /^("(?:[^"\\\r\n]|\\["\\])*")(?:(?:[ \t]*\||\s+)([\s\S]*))?$/.exec(pathAndPrompt)
+    : /^([^|\r\n]*?\.pdf)(?:[ \t]*\|\s*|\s+)([\s\S]*)$/i.exec(pathAndPrompt)
+      ?? /^([^|\r\n]+)(?:\|([\s\S]*))?$/.exec(pathAndPrompt);
   if (!match) throw new Error(pdfUsage);
   const filename = quoted ? JSON.parse(match[1]) as string : match[1].trim();
   const prompt = match[2]?.trim() ?? 'このPDFの内容を要約してください。';
