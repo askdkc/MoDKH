@@ -13,7 +13,7 @@ import { PassThrough } from 'node:stream';
 import type { ReadStream, WriteStream } from 'node:tty';
 import { TerminalUI } from '../src/cli/terminal.ts';
 import { readPdfRequest } from '../src/cli/pdf.ts';
-import { screenFrom } from './tui.screen.ts';
+import { createScreenReplay, screenFrom } from './tui.screen.ts';
 
 test('PDF chat command attaches the selected page and its text to the coding turn', async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-pdf-'));
@@ -139,11 +139,23 @@ test('PDF chat command attaches the selected page and its text to the coding tur
     const previous = process.env.MODKH_HOME;
     process.env.MODKH_HOME = home;
     const before = requests.length;
+    const replay = createScreenReplay(40);
+    const preparing: string[] = [];
+    const observe = (chunk: Buffer) => {
+      const frame = replay(chunk.toString()).join('\n');
+      if (frame.includes('PDFを読み込み中') || frame.includes('ページを変換中')) preparing.push(frame);
+    };
+    terminalOutput.on('data', observe);
     try {
       terminal.unread('/exit');
       terminal.unread('/pdf @large.pdf\nこの配色を確認して');
       await runChat({ args: { cwd: root, model: 'compatible/fixture', 'base-url': baseUrl }, terminal });
+      assert.ok(preparing[0]?.includes('PDFを読み込み中'), 'show preparation immediately');
+      assert.match(preparing[0], /この配色を確認して/);
+      assert.doesNotMatch(preparing[0], /Coding Harness/);
+      assert.ok(preparing.some(frame => frame.includes('2/2 ページを変換中')));
     } finally {
+      terminalOutput.off('data', observe);
       if (previous === undefined) delete process.env.MODKH_HOME;
       else process.env.MODKH_HOME = previous;
     }

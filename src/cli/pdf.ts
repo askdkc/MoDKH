@@ -51,7 +51,7 @@ async function poppler(command: string, args: string[], maxBuffer: number, signa
 }
 
 export async function readPdfRequest(root: string, line: string, signal: AbortSignal, availableImages: number,
-  confirmExternal?: (file: string) => Promise<boolean>) {
+  confirmExternal?: (file: string) => Promise<boolean>, onPage?: (current: number, total: number) => void) {
   const { filename, prompt, start, end } = parsePdfRequest(line);
   const requested = filename.startsWith('~/') ? path.join(os.homedir(), filename.slice(2)) : path.resolve(root, filename);
   const file = await fs.realpath(requested).catch((error: NodeJS.ErrnoException) => {
@@ -77,7 +77,7 @@ export async function readPdfRequest(root: string, line: string, signal: AbortSi
     await pipeline(handle.createReadStream({ end: opened.size - 1 }),
       createWriteStream(snapshot, { flags: 'wx', mode: 0o600 }), { signal });
     if ((await fs.stat(snapshot)).size !== opened.size) throw new Error('読み込み中にPDFのサイズが変わりました');
-    const pages = await renderPdf(snapshot, filename, start, end, availableImages, signal);
+    const pages = await renderPdf(snapshot, filename, start, end, availableImages, signal, onPage);
     return { prompt, ...pages };
   } finally {
     await handle.close();
@@ -86,7 +86,7 @@ export async function readPdfRequest(root: string, line: string, signal: AbortSi
 }
 
 async function renderPdf(snapshot: string, filename: string, start: string | undefined, end: string | undefined,
-  availableImages: number, signal: AbortSignal) {
+  availableImages: number, signal: AbortSignal, onPage?: (current: number, total: number) => void) {
   const info = await poppler('pdfinfo', [snapshot], 1024 * 1024, signal);
   const pages = Number(/^Pages:\s+(\d+)\s*$/m.exec(info.toString())?.[1]);
   if (!Number.isSafeInteger(pages) || pages < 1) throw new Error('PDFのページ数を取得できません');
@@ -97,6 +97,7 @@ async function renderPdf(snapshot: string, filename: string, start: string | und
   const images: ImageAttachment[] = [];
   const text = [`PDF資料: ${filename}（全${pages}ページ）`];
   for (let page = first; page <= last; page++) {
+    onPage?.(page - first + 1, last - first + 1);
     const range = ['-f', String(page), '-l', String(page)];
     const body = await poppler('pdftotext', [...range, '-layout', '-enc', 'UTF-8', snapshot, '-'], 32 * 1024, signal);
     const png = await poppler('pdftoppm', [...range, '-singlefile', '-scale-to', '1600', '-png', snapshot], MAX_IMAGE_BYTES, signal);
