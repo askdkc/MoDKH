@@ -9,7 +9,7 @@ import { EMPTY_USAGE, USAGE_HEADING, usageFooter, usageBadgeLine, usageBreakdown
 import { chars, clean, fitText, textWidth, wrap, wrapText, editorLayout, verticalCursor, lineEdge } from './editor.ts';
 export { textWidth, fitText } from './editor.ts';
 import { readClipboardImage, writeClipboardText, type ClipboardReader } from './clipboard.ts';
-import { MAX_IMAGES, parseImage, type ImageAttachment } from '../agent/images.ts';
+import { MAX_CLIPBOARD_IMAGES, parseImage, type ImageAttachment } from '../agent/images.ts';
 import type { ReadStream, WriteStream } from 'node:tty';
 import { LineSource } from './lines.ts';
 import { WHALE_FRAME_MS, whaleRow } from './waiting-whales.ts';
@@ -611,7 +611,7 @@ export class TerminalUI implements ChatTerminal {
   private async pasteImage(): Promise<void> {
     const pending = this.pending;
     if (!pending?.composer || pending.secret || this.clipboardTask) return;
-    if (this.images.length >= MAX_IMAGES) { this.inputNotice = `添付画像は最大${MAX_IMAGES}枚です`; this.render(); return; }
+    if (this.images.length >= MAX_CLIPBOARD_IMAGES) { this.inputNotice = `添付画像は最大${MAX_CLIPBOARD_IMAGES}枚です`; this.render(); return; }
     const controller = new AbortController();
     this.clipboardTask = controller; this.inputNotice = '画像を読込中…'; this.render();
     try {

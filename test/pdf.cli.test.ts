@@ -128,6 +128,34 @@ test('PDF chat command attaches the selected page and its text to the coding tur
   assert.doesNotMatch(output, /Build the red button/);
   assert.match(JSON.stringify(toResponsesInput(users)), /data:image\/png;base64,iVBOR/);
 
+  await t.test('multiline /pdf sends a PDF larger than 100 MiB in one turn', async () => {
+    // PDF permits NUL whitespace between objects and the cross-reference table.
+    const largeXref = 101 * 1024 * 1024;
+    const large = path.join(root, 'large.pdf');
+    fs.writeFileSync(large, pdf.slice(0, xref));
+    fs.truncateSync(large, largeXref);
+    fs.appendFileSync(large, pdf.slice(xref).replace('startxref\n' + xref, 'startxref\n' + largeXref));
+    const { runChat } = await import(process.env.MODKH_TEST_CHAT ?? new URL('../src/cli/chat.ts', import.meta.url).href);
+    const previous = process.env.MODKH_HOME;
+    process.env.MODKH_HOME = home;
+    const before = requests.length;
+    try {
+      terminal.unread('/exit');
+      terminal.unread('/pdf @large.pdf\nこの配色を確認して');
+      await runChat({ args: { cwd: root, model: 'compatible/fixture', 'base-url': baseUrl }, terminal });
+    } finally {
+      if (previous === undefined) delete process.env.MODKH_HOME;
+      else process.env.MODKH_HOME = previous;
+    }
+    const sent = requests.slice(before);
+    assert.equal(sent.length, 1);
+    const parts = sent[0].messages.find(m => m.role === 'user')?.content;
+    assert.ok(Array.isArray(parts));
+    assert.match(parts[0].text, /この配色を確認して/);
+    assert.match(parts[0].text, /Build the red button/);
+    assert.deepEqual(parts.map(p => p.type), ['text', 'image_url', 'image_url']);
+  });
+
   await t.test('one /pdf line sends the PDF and Japanese request together exactly once', async () => {
     fs.writeFileSync(path.join(root, 'newkoku.pdf'), pdf);
     const before = requests.length;

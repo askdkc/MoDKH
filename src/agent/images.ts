@@ -1,7 +1,8 @@
 export interface ImageAttachment { mediaType: 'image/png'; data: string }
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_IMAGE_PIXELS = 40_000_000;
-export const MAX_IMAGES = 4;
+export const MAX_CLIPBOARD_IMAGES = 4;
+export const MAX_IMAGES = 8;
 
 /** Clipboard and persisted JSON are data boundaries; never treat image text as a path or URL. */
 export function parseImage(value: unknown): ImageAttachment {

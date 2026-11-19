@@ -870,13 +870,13 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         else ui.write('(接続しなかったため送信しませんでした。もう一度送信してください)\n');
         continue;
       }
-      if (line === '/pdf' || line.startsWith('/pdf ')) {
+      if (/^\/pdf(?:[ \t]|$)/.test(input.trim())) {
         const ac = new AbortController();
         const cancel = () => ac.abort();
         process.on('SIGINT', cancel);
         let pdf;
         try {
-          pdf = await readPdfRequest(cwd, line, ac.signal, MAX_IMAGES - (ui.imageCount ?? 0), async file => {
+          pdf = await readPdfRequest(cwd, input.trim(), ac.signal, MAX_IMAGES - (ui.imageCount ?? 0), async file => {
             const answer = await ui.confirm(`作業ルート外のPDF ${JSON.stringify(file)} を今回だけ読み込み、選んだページの本文と画像をモデルに送信しますか？`, ac.signal);
             return /^(y|yes)$/i.test(answer?.trim() ?? '');
           });

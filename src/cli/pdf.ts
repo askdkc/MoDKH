@@ -1,5 +1,7 @@
 import fs from 'node:fs/promises';
 import { execFile } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import os from 'node:os';
 import path from 'node:path';
@@ -33,14 +35,11 @@ function parsePdfRequest(line: string) {
   return { filename, prompt, start: prefix[1], end: prefix[2] };
 }
 
-async function poppler(command: string, args: string[], maxBuffer: number, signal: AbortSignal, pdf: Buffer) {
+async function poppler(command: string, args: string[], maxBuffer: number, signal: AbortSignal) {
   try {
-    const task = run(command, args, {
-      encoding: 'buffer', env: { ...process.env, LC_ALL: 'C' }, maxBuffer, signal, timeout: 15000,
+    const { stdout } = await run(command, args, {
+      encoding: 'buffer', env: { ...process.env, LC_ALL: 'C' }, maxBuffer, signal, timeout: 60000,
     });
-    // Poppler may exit before consuming stdin (e.g. malformed input); task reports its exit.
-    task.child.stdin!.on('error', () => {}).end(pdf);
-    const { stdout } = await task;
     return stdout;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error(`Poppler の ${command} が必要です`);
@@ -62,25 +61,33 @@ export async function readPdfRequest(root: string, line: string, signal: AbortSi
   const relative = path.relative(await fs.realpath(root), file);
   const external = relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
   const stat = await fs.lstat(file);
-  if (!stat.isFile() || stat.size > 32 * 1024 * 1024) throw new Error('32 MiB以内のPDFファイルを指定してください');
+  if (!stat.isFile() || stat.size > 512 * 1024 * 1024) throw new Error('512 MiB以内のPDFファイルを指定してください');
   if (external && !await confirmExternal?.(file)) throw new Error('作業ルート外のPDFの読み込みは許可されませんでした');
   signal.throwIfAborted();
   const handle = await fs.open(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
-  let pdf: Buffer;
+  let directory: string | undefined;
   try {
     const opened = await handle.stat();
     if (opened.dev !== stat.dev || opened.ino !== stat.ino || opened.size !== stat.size || await fs.realpath(file) !== file) {
       throw new Error('PDFの参照先が変更されました。指定し直してください');
     }
-    pdf = Buffer.alloc(opened.size);
-    let offset = 0;
-    while (offset < pdf.length) {
-      const { bytesRead } = await handle.read(pdf, offset, pdf.length - offset, offset);
-      if (!bytesRead) throw new Error('読み込み中にPDFのサイズが変わりました');
-      offset += bytesRead;
-    }
-  } finally { await handle.close(); }
-  const info = await poppler('pdfinfo', ['-'], 1024 * 1024, signal, pdf);
+    directory = await fs.mkdtemp(path.join(os.tmpdir(), 'modkh-pdf-'));
+    const snapshot = path.join(directory, 'input.pdf');
+    if (!opened.size) throw new Error('PDFファイルが空です');
+    await pipeline(handle.createReadStream({ end: opened.size - 1 }),
+      createWriteStream(snapshot, { flags: 'wx', mode: 0o600 }), { signal });
+    if ((await fs.stat(snapshot)).size !== opened.size) throw new Error('読み込み中にPDFのサイズが変わりました');
+    const pages = await renderPdf(snapshot, filename, start, end, availableImages, signal);
+    return { prompt, ...pages };
+  } finally {
+    await handle.close();
+    if (directory) await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function renderPdf(snapshot: string, filename: string, start: string | undefined, end: string | undefined,
+  availableImages: number, signal: AbortSignal) {
+  const info = await poppler('pdfinfo', [snapshot], 1024 * 1024, signal);
   const pages = Number(/^Pages:\s+(\d+)\s*$/m.exec(info.toString())?.[1]);
   if (!Number.isSafeInteger(pages) || pages < 1) throw new Error('PDFのページ数を取得できません');
   const first = Number(start ?? 1), last = Number(end ?? start ?? pages);
@@ -91,10 +98,10 @@ export async function readPdfRequest(root: string, line: string, signal: AbortSi
   const text = [`PDF資料: ${filename}（全${pages}ページ）`];
   for (let page = first; page <= last; page++) {
     const range = ['-f', String(page), '-l', String(page)];
-    const body = await poppler('pdftotext', [...range, '-layout', '-enc', 'UTF-8', '-', '-'], 32 * 1024, signal, pdf);
-    const png = await poppler('pdftoppm', [...range, '-singlefile', '-scale-to', '1600', '-png', '-'], MAX_IMAGE_BYTES, signal, pdf);
+    const body = await poppler('pdftotext', [...range, '-layout', '-enc', 'UTF-8', snapshot, '-'], 32 * 1024, signal);
+    const png = await poppler('pdftoppm', [...range, '-singlefile', '-scale-to', '1600', '-png', snapshot], MAX_IMAGE_BYTES, signal);
     images.push(parseImage({ mediaType: 'image/png', data: png.toString('base64') }));
     text.push(`ページ ${page}\n${body.toString().trim() || '（テキスト層なし。添付画像を参照）'}`);
   }
-  return { prompt, text: text.join('\n\n'), images };
+  return { text: text.join('\n\n'), images };
 }
