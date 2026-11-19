@@ -41,6 +41,11 @@ test('PDF chat command attaches the selected page and its text to the coding tur
   pdf += `xref\n0 8\n0000000000 65535 f \n${offsets.map(n => String(n).padStart(10, '0') + ' 00000 n \n').join('')}trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   fs.writeFileSync(path.join(root, 'design spec.pdf'), pdf);
   fs.writeFileSync(path.join(root, 'design notes.txt'), 'not a PDF');
+  const external = path.join(home, 'Downloads', 'mobatike.pdf');
+  fs.mkdirSync(path.dirname(external));
+  fs.writeFileSync(external, pdf);
+  fs.symlinkSync(external, path.join(root, 'linked.pdf'));
+  await assert.rejects(readPdfRequest(root, '/pdf @linked.pdf', new AbortController().signal, 4), /許可/);
   const input = new PassThrough() as unknown as ReadStream;
   input.isRaw = false;
   input.setRawMode = value => { input.isRaw = value; return input; };
@@ -63,6 +68,13 @@ test('PDF chat command attaches the selected page and its text to the coding tur
   assert.equal(document.images.length, 2);
   assert.match(document.text, /Build the red button/);
   assert.match(document.prompt, /要約/);
+  for (const line of ['/pdf design spec.pdf', '/pdf --pages 2 @design spec.pdf | 確認']) {
+    const attachment = await readPdfRequest(root, line, new AbortController().signal, 4);
+    const selectedPage = line.includes('--pages');
+    assert.equal(attachment.images.length, selectedPage ? 1 : 2);
+    assert.equal(attachment.prompt, selectedPage ? '確認' : document.prompt);
+    assert.match(attachment.text, /Build the red button/);
+  }
   const selected = terminal.next();
   input.write('/pdf --pages 2 @des');
   assert.doesNotMatch(screenFrom(screen, 40).join('\n'), /design notes\.txt/);
@@ -88,13 +100,14 @@ test('PDF chat command attaches the selected page and its text to the coding tur
   const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
   const child = spawn(process.execPath, [process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname,
     'chat', '--cwd', root, '--model', 'compatible/fixture', '--base-url', baseUrl], {
-    env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '0' }, timeout: 60000,
+    env: { ...process.env, HOME: home, USERPROFILE: home, MODKH_HOME: home, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '0' }, timeout: 60000,
   });
   let output = '';
   child.stdout.on('data', chunk => { output += chunk; });
   child.stderr.on('data', chunk => { output += chunk; });
-  child.stdin.end(`/pdf --pages 3 design spec.pdf | invalid\n${selectedCommand}\n/exit\n`);
+  child.stdin.end(`/pdf @new\n/pdf --pages 3 design spec.pdf | invalid\n/pdf @linked.pdf\nn\n/pdf --pages 2 ~/Downloads/mobatike.pdf | Implement this layout\ny\n/exit\n`);
   assert.equal((await once(child, 'close'))[0], 0, output);
+  assert.match(output, /PDFが見つかりません: new[^\n]*Tab/);
   assert.equal(requests.length, 2, output);
   assert.equal(fs.readFileSync(path.join(root, 'button.html'), 'utf8'), '<button>Build</button>');
   const store = new SessionStore(path.join(home, 'sessions'));

@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { assertRealInRoot, resolveInRoot } from '../tools/guard.ts';
+import os from 'node:os';
+import path from 'node:path';
 import { MAX_IMAGES, MAX_IMAGE_BYTES, parseImage, type ImageAttachment } from '../agent/images.ts';
 
 const run = promisify(execFile);
@@ -16,22 +17,28 @@ function parsePdfRequest(line: string) {
   const prefix = pdfPrefix.exec(line);
   if (!prefix) throw new Error(pdfUsage);
   const args = line.slice(prefix[0].length);
-  const mention = /^@("(?:[^"\\\r\n]|\\["\\])*"|[^\s"|]+)\s*(?:\|(.+))?$/.exec(args);
-  if (mention) {
-    const filename = mention[1].startsWith('"') ? JSON.parse(mention[1]) as string : mention[1];
-    if (!filename.trim() || (mention[2] !== undefined && !mention[2].trim())) throw new Error(pdfUsage);
-    return { filename, prompt: mention[2]?.trim() ?? 'このPDFの内容を要約してください。', start: prefix[1], end: prefix[2] };
-  }
-  const legacy = /^([^|]+)\|(.+)$/.exec(args);
-  if (args.startsWith('@') || !legacy?.[1].trim() || !legacy[2].trim()) throw new Error(pdfUsage);
-  return { filename: legacy[1].trim(), prompt: legacy[2].trim(), start: prefix[1], end: prefix[2] };
+  if (/^--pages(?:\s|$)/.test(args)) throw new Error(pdfUsage);
+  // Only the pipe separates the request from the path; spaces belong to the filename.
+  const pathAndPrompt = args.startsWith('@') ? args.slice(1) : args;
+  const quoted = pathAndPrompt.startsWith('"');
+  const match = quoted
+    ? /^("(?:[^"\\\r\n]|\\["\\])*")[ \t]*(?:\|(.*))?$/.exec(pathAndPrompt)
+    : /^([^|\r\n]+)(?:\|(.*))?$/.exec(pathAndPrompt);
+  if (!match) throw new Error(pdfUsage);
+  const filename = quoted ? JSON.parse(match[1]) as string : match[1].trim();
+  const prompt = match[2]?.trim() ?? 'このPDFの内容を要約してください。';
+  if (!filename.trim() || !prompt) throw new Error(pdfUsage);
+  return { filename, prompt, start: prefix[1], end: prefix[2] };
 }
 
-async function poppler(command: string, args: string[], maxBuffer: number, signal: AbortSignal) {
+async function poppler(command: string, args: string[], maxBuffer: number, signal: AbortSignal, pdf: Buffer) {
   try {
-    const { stdout } = await run(command, args, {
+    const task = run(command, args, {
       encoding: 'buffer', env: { ...process.env, LC_ALL: 'C' }, maxBuffer, signal, timeout: 15000,
     });
+    // Poppler may exit before consuming stdin (e.g. malformed input); task reports its exit.
+    task.child.stdin!.on('error', () => {}).end(pdf);
+    const { stdout } = await task;
     return stdout;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error(`Poppler の ${command} が必要です`);
@@ -42,13 +49,36 @@ async function poppler(command: string, args: string[], maxBuffer: number, signa
   }
 }
 
-export async function readPdfRequest(root: string, line: string, signal: AbortSignal, availableImages: number) {
+export async function readPdfRequest(root: string, line: string, signal: AbortSignal, availableImages: number,
+  confirmExternal?: (file: string) => Promise<boolean>) {
   const { filename, prompt, start, end } = parsePdfRequest(line);
-  const file = resolveInRoot(root, filename);
-  assertRealInRoot(root, file);
-  const stat = await fs.stat(file);
+  const requested = filename.startsWith('~/') ? path.join(os.homedir(), filename.slice(2)) : path.resolve(root, filename);
+  const file = await fs.realpath(requested).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') throw new Error(`PDFが見つかりません: ${filename}。パスを確認してください。対話端末では /pdf @ の候補を Tab で補完できます`);
+    throw error;
+  });
+  const relative = path.relative(await fs.realpath(root), file);
+  const external = relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+  const stat = await fs.lstat(file);
   if (!stat.isFile() || stat.size > 32 * 1024 * 1024) throw new Error('32 MiB以内のPDFファイルを指定してください');
-  const info = await poppler('pdfinfo', [file], 1024 * 1024, signal);
+  if (external && !await confirmExternal?.(file)) throw new Error('作業ルート外のPDFの読み込みは許可されませんでした');
+  signal.throwIfAborted();
+  const handle = await fs.open(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  let pdf: Buffer;
+  try {
+    const opened = await handle.stat();
+    if (opened.dev !== stat.dev || opened.ino !== stat.ino || opened.size !== stat.size || await fs.realpath(file) !== file) {
+      throw new Error('PDFの参照先が変更されました。指定し直してください');
+    }
+    pdf = Buffer.alloc(opened.size);
+    let offset = 0;
+    while (offset < pdf.length) {
+      const { bytesRead } = await handle.read(pdf, offset, pdf.length - offset, offset);
+      if (!bytesRead) throw new Error('読み込み中にPDFのサイズが変わりました');
+      offset += bytesRead;
+    }
+  } finally { await handle.close(); }
+  const info = await poppler('pdfinfo', ['-'], 1024 * 1024, signal, pdf);
   const pages = Number(/^Pages:\s+(\d+)\s*$/m.exec(info.toString())?.[1]);
   if (!Number.isSafeInteger(pages) || pages < 1) throw new Error('PDFのページ数を取得できません');
   const first = Number(start ?? 1), last = Number(end ?? start ?? pages);
@@ -59,8 +89,8 @@ export async function readPdfRequest(root: string, line: string, signal: AbortSi
   const text = [`PDF資料: ${filename}（全${pages}ページ）`];
   for (let page = first; page <= last; page++) {
     const range = ['-f', String(page), '-l', String(page)];
-    const body = await poppler('pdftotext', [...range, '-layout', '-enc', 'UTF-8', file, '-'], 32 * 1024, signal);
-    const png = await poppler('pdftoppm', [...range, '-singlefile', '-scale-to', '1600', '-png', file], MAX_IMAGE_BYTES, signal);
+    const body = await poppler('pdftotext', [...range, '-layout', '-enc', 'UTF-8', '-', '-'], 32 * 1024, signal, pdf);
+    const png = await poppler('pdftoppm', [...range, '-singlefile', '-scale-to', '1600', '-png', '-'], MAX_IMAGE_BYTES, signal, pdf);
     images.push(parseImage({ mediaType: 'image/png', data: png.toString('base64') }));
     text.push(`ページ ${page}\n${body.toString().trim() || '（テキスト層なし。添付画像を参照）'}`);
   }

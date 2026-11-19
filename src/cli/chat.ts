@@ -876,9 +876,13 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         process.on('SIGINT', cancel);
         let pdf;
         try {
-          pdf = await readPdfRequest(cwd, line, ac.signal, MAX_IMAGES - (ui.imageCount ?? 0));
+          pdf = await readPdfRequest(cwd, line, ac.signal, MAX_IMAGES - (ui.imageCount ?? 0), async file => {
+            const answer = await ui.confirm(`作業ルート外のPDF ${JSON.stringify(file)} を今回だけ読み込み、選んだページの本文と画像をモデルに送信しますか？`, ac.signal);
+            return /^(y|yes)$/i.test(answer?.trim() ?? '');
+          });
         } catch (error) {
           ui.write(`(PDF読込失敗: ${ac.signal.aborted ? '中止しました' : (error as Error).message})\n`);
+          ui.restoreDraft?.(input);
           continue;
         } finally {
           process.off('SIGINT', cancel);
