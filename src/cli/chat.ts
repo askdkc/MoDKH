@@ -20,6 +20,7 @@ import type { DelegationRequest } from '../subagents/types.ts';
 import { runDirectAgent } from './agents.ts';
 import { DEFAULT_SUBAGENT_LIMIT, parseSubagentLimit } from '../subagents/limits.ts';
 import { parseAgentSettings } from '../subagents/settings.ts';
+import { projectMcpTools } from '../tools/project-mcp.ts';
 import { ToolRegistry, defaultToolsWithJobs } from '../tools/registry.ts';
 import { BrowseTabs, watchBrowseActivity } from '../tools/browse.ts';
 import { JobRegistry } from '../tools/jobs.ts';
@@ -238,6 +239,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     if (remaining.length) ui.write(`(browse: タブの終了を確認できません: ${remaining.join(', ')})\n`);
   };
   const tools = defaultToolsWithJobs(jobs, browseTabs);
+  if (!lisp) {
+    try { tools.push(...await projectMcpTools(cwd)); }
+    catch (e) { ui.write(`(プロジェクトMCPを無効にしました: ${JSON.stringify((e as Error).message)})\n`); }
+  }
   // Language analysis is optional: a missing server or grammar never blocks editing or conversation.
   const languageSettings = parseLanguageSettings((config as { language?: unknown }).language ?? DEFAULT_LANGUAGE_SETTINGS);
   const language = new LanguageService({

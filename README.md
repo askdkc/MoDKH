@@ -34,6 +34,23 @@ modkh
 /pdf --pages 5-7 docs/画面仕様.pdf | この3ページの入力項目と検証条件を実装して
 ```
 
+## プロジェクトの MCP サーバー
+
+プロジェクトのルートで `modkh` を起動すると、通常のチャットで次の stdio サーバーを使えます。検出しただけでは、インストールも起動もしません。
+
+| プロジェクト | 検出条件 | 利用時のコマンド |
+| --- | --- | --- |
+| Svelte / SvelteKit | `package.json` の依存関係に `svelte` または `@sveltejs/kit` があるか、`svelte.config.js` / `.ts` がある | `npx -y @sveltejs/mcp`（初回はダウンロードする場合があります） |
+| Laravel Boost | `artisan` があり、`composer.json` に `laravel/boost` があるか `boost.json` がある | `php artisan boost:mcp`（Boost の導入が必要です） |
+
+ほかの stdio サーバーも、ルートの `.mcp.json` に登録できます。たとえば次の設定は、自動検出した `laravel-boost` の起動方法を上書きします。
+
+```json
+{"mcpServers":{"laravel-boost":{"command":"php","args":["artisan","boost:mcp"]}}}
+```
+
+チャットで「Svelte の公式ドキュメントで確認して」「Boost でルートを調べて」のように依頼してください。モデルは `mcp_list_tools` で引数の形式を調べ、`mcp_call_tool` で呼び出します。どちらも起動前にコマンドの承認設定を適用し、操作ごとに接続を閉じます。設定を変えたら `modkh` を起動し直してください。HTTP / SSE 接続は対象外です。
+
 ## 前鬼の形式検証（任意）
 
 [Rust/Cargo](https://rust-lang.org/tools/install/)を導入してから実行します。Javaは不要です。

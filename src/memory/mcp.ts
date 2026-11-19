@@ -2,6 +2,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 
 export interface McpOptions {
   command: string;
+  cwd?: string;
+  /** Explicit environment for project servers; memory servers retain their existing environment. */
+  baseEnv?: NodeJS.ProcessEnv;
   args?: string[];
   /** 子プロセスへ渡す追加環境変数(検証用)。 */
   env?: Record<string, string>;
@@ -61,7 +64,8 @@ export class McpStdioClient {
     try {
       child = spawn(this.opts.command, this.opts.args ?? [], {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: this.opts.env ? { ...process.env, ...this.opts.env } : process.env,
+        cwd: this.opts.cwd,
+        env: { ...(this.opts.baseEnv ?? process.env), ...this.opts.env },
       });
     } catch (e) {
       this.lastError = `MCP起動に失敗した: ${(e as Error).message}`;
@@ -128,6 +132,17 @@ export class McpStdioClient {
       await this.stopChild(child);
       return false;
     }
+  }
+
+  /** Project tools retain schemas, pagination and structured content from the server. */
+  async projectRequest(method: 'tools/list' | 'tools/call', params: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const result = await this.request(method, params, undefined, signal);
+    if (!result || typeof result !== 'object' || !(method === 'tools/list'
+      ? 'tools' in result && Array.isArray(result.tools)
+      : 'content' in result && Array.isArray(result.content))) {
+      throw new McpRequestError('MCPツール応答が不正', true);
+    }
+    return result as Record<string, unknown>;
   }
 
   async listTools(signal?: AbortSignal): Promise<{ name: string; description?: string }[]> {
