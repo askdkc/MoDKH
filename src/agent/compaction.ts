@@ -172,6 +172,7 @@ export async function summarizeCompaction(
   model: Model,
   plan: CompactionPlan,
   signal: AbortSignal,
+  promptCacheKey?: string,
 ): Promise<SummarizeResult> {
   const { content } = buildSummaryRequest(plan.messages, plan.previousSummary);
   let text = '';
@@ -179,7 +180,9 @@ export async function summarizeCompaction(
   let errorMessage: string | undefined;
   let finished = false;
   try {
-    for await (const event of model.stream({ messages: [{ role: 'user', content }], tools: [] }, signal)) {
+    for await (const event of model.stream({ messages: [{ role: 'user', content }], tools: [],
+      ...(promptCacheKey ? { promptCacheKey } : {}),
+    }, signal)) {
       if (event.type === 'text-delta') text += event.text;
       else if (event.type === 'usage') usage = event;
       else if (event.type === 'finish') {

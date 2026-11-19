@@ -123,6 +123,8 @@ export type AgentMessage =
 export type ReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'max';
 
 export interface ModelRequest {
+  /** Stable session identity for providers supporting prompt-cache routing. */
+  promptCacheKey?: string;
   messages: AgentMessage[];
   tools: ToolSpec[];
   system?: string;

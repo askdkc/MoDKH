@@ -139,6 +139,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   if (args.routing && args.routing !== 'auto') throw new Error('--routing supports only explicit auto');
   if (args.routing && !lisp) throw new Error('--routing requires --lisp-config');
   const ui = opts.terminal ?? createTerminal(cwd);
+  let closeProjectMcp: (() => Promise<void>) | undefined;
   try {
   const config: LiteConfig = loadConfig();
   // 応答の無通信タイムアウトと推論レベルは前回の設定から復元する(不正値は既定に戻す)。
@@ -240,7 +241,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   };
   const tools = defaultToolsWithJobs(jobs, browseTabs);
   if (!lisp) {
-    try { tools.push(...await projectMcpTools(cwd, ids => ui.setMcpServers?.(ids))); }
+    try { tools.push(...await projectMcpTools(cwd, ids => ui.setMcpServers?.(ids), {
+      approve: command => approval.approve({ kind: 'command', title: 'プロジェクトMCPに自動接続', detail: command }),
+      onError: message => ui.write(`(プロジェクトMCP: ${JSON.stringify(message)})\n`),
+      onClose: close => { closeProjectMcp = close; },
+    })); }
     catch (e) { ui.write(`(プロジェクトMCPを無効にしました: ${JSON.stringify((e as Error).message)})\n`); }
   }
   // Language analysis is optional: a missing server or grammar never blocks editing or conversation.
@@ -491,6 +496,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       }) : undefined;
       const outcome = continueInChat ? await runAgentLoop(session.messages, {
         model: activeModel!,
+        promptCacheKey: session.id,
         registry,
         subagents,
         root: cwd,
@@ -524,7 +530,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           failedCompaction = { model: activeModel, from: session.compaction?.from ?? 0, eligibleBytes };
           ui.setActivity?.('会話履歴を自動圧縮中… Ctrl+Cで中止');
           const signal = AbortSignal.any([ac.signal, AbortSignal.timeout(60_000)]);
-          const result = await summarizeCompaction(activeModel, plan, signal);
+          const result = await summarizeCompaction(activeModel, plan, signal, session.id);
           if (result.usage) onUsage(result.usage);
           if (ac.signal.aborted) return;
           if (signal.aborted || !result.ok || !result.summary) {
@@ -930,5 +936,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   saveWorkspaceRecord();
   ui.close();
   process.stdout.write(`セッション ${session.id} を終了しました(状態: ${session.status})\n`);
-  } finally { ui.close(); }
+  } finally {
+    try { await closeProjectMcp?.(); }
+    finally { ui.close(); }
+  }
 }

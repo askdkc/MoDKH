@@ -44,6 +44,17 @@ test('compatible providers carry reasoning_effort on the wire', async () => {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
     const port = (server.address() as AddressInfo).port;
+    for (const provider of ['openai', 'ollama-cloud'] as const) {
+      const model = resolveModel({ provider, model: 'gpt-5', baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'k' });
+      for (const promptCacheKey of ['session-a', undefined]) {
+        const count = bodies.length;
+        for await (const _ of model.stream({ ...REQ(), promptCacheKey }, new AbortController().signal)) { /* capture request */ }
+        assert.equal(bodies.length, count + 1);
+        const body = bodies[count] as Record<string, unknown>;
+        assert.equal(body.prompt_cache_key, provider === 'openai' ? promptCacheKey : undefined);
+        assert.equal(body.promptCacheKey, undefined);
+      }
+    }
     for (const [id, level, expected, thinking] of [
       ['generic', 'low', 'low', undefined], ['generic', 'off', undefined, undefined],
       ['generic', 'max', 'high', undefined],
@@ -77,7 +88,9 @@ test('ChatGPT Responses forwards reasoning effort', async () => {
   });
   for (const level of ['high', 'off'] as const) {
     const out: ModelEvent[] = [];
-    for await (const ev of model.stream(REQ(level), new AbortController().signal)) out.push(ev);
+    const promptCacheKey = level === 'high' ? 'session-a' : undefined;
+    for await (const ev of model.stream({ ...REQ(level), promptCacheKey }, new AbortController().signal)) out.push(ev);
+    assert.equal(received?.prompt_cache_key, promptCacheKey);
     assert.equal((out.at(-1) as { stopReason: string }).stopReason, 'stop');
     const expected = level === 'off' ? undefined : level;
     const body = received as { reasoning?: { effort?: string } } | undefined;

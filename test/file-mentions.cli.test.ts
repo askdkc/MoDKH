@@ -25,13 +25,21 @@ test('the chat composer suggests workspace files, Tab fills the reference, and E
   let screen = '';
   output.on('data', data => { screen += data.toString(); });
   const visible = () => screenFrom(screen, 40).join('\n');
+  const waitForScreen = (...texts: string[]) => new Promise<void>((resolve, reject) => {
+    const done = () => {
+      const current = visible();
+      if (!texts.every(text => current.includes(text))) return;
+      clearTimeout(timer); output.off('data', done); resolve();
+    };
+    const timer = setTimeout(() => { output.off('data', done); reject(new Error(visible())); }, 3_000);
+    output.on('data', done); done();
+  });
   const ui = new TerminalUI(home, input, output);
   const model = new FixedModel([[{ type: 'text-delta', text: 'ANSWER' }, { type: 'finish', stopReason: 'stop' }]]);
   const chat = runChat({ args: { cwd: home, model: 'fixed/scripted' }, terminal: ui, modelFactory: () => model });
   const key = (name: string) => input.emit('keypress', '', { name });
   try {
-    await new Promise<void>(resolve => setImmediate(resolve));
-    assert.match(visible(), /何を調べますか/);
+    await waitForScreen('何を調べますか');
     input.emit('keypress', '比較して @sr', {});
     assert.match(visible(), /› src\//);
     input.write('\t');
@@ -44,14 +52,7 @@ test('the chat composer suggests workspace files, Tab fills the reference, and E
     assert.equal(model.requests.length, 0, 'Tab must not submit');
     input.emit('keypress', '@src/a.txt', {});
     key('return');
-    await new Promise<void>((resolve, reject) => {
-      const done = () => {
-        if (!visible().includes('ANSWER') || !visible().includes('何を調べますか')) return;
-        clearTimeout(timer); output.off('data', done); resolve();
-      };
-      const timer = setTimeout(() => { output.off('data', done); reject(new Error(visible())); }, 3_000);
-      output.on('data', done); done();
-    });
+    await waitForScreen('ANSWER', '何を調べますか');
     const sent = model.requests[0].messages.find(message => message.role === 'user')?.content;
     assert.match(sent ?? '', /比較して @"src\/notes 画面\.md" @src\/a\.txt/);
     assert.match(sent ?? '', /LOCAL_FILE_CONTENT/);

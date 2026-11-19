@@ -123,8 +123,12 @@ export class AiSdkModel implements Model {
     const defaults = harnessProfile(this.id) ? CODEX_62_DEFAULTS : undefined;
     const reasoning = reasoningProviderOptions(this.provider ?? '', req.reasoning ?? defaults?.reasoning, this.id);
     // Only native OpenAI Responses is known to support text.verbosity.
-    const providerOptions = defaults && this.provider === 'openai'
-      ? { openai: { ...reasoning?.openai as object, textVerbosity: defaults.verbosity } } : reasoning;
+    const providerOptions = this.provider === 'openai' && (defaults || req.promptCacheKey !== undefined)
+      ? { openai: {
+        ...reasoning?.openai as object,
+        ...(defaults ? { textVerbosity: defaults.verbosity } : {}),
+        ...(req.promptCacheKey !== undefined ? { promptCacheKey: req.promptCacheKey } : {}),
+      } } : reasoning;
     const thinking = this.provider === 'anthropic' && reasoning?.anthropic !== undefined;
     const thinkingBudget = thinking
       ? (reasoning!.anthropic as { thinking: { budgetTokens?: number } }).thinking.budgetTokens : undefined;

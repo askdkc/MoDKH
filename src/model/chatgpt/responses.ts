@@ -105,6 +105,7 @@ export class ResponsesApiModel implements Model {
       })),
       stream: true,
       store: false,
+      ...(req.promptCacheKey !== undefined ? { prompt_cache_key: req.promptCacheKey } : {}),
       ...(effort !== undefined ? { reasoning: { effort } } : {}),
     };
     let aborted = false;

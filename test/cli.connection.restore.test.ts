@@ -7,14 +7,14 @@ import { spawn } from 'node:child_process';
 import { SessionStore } from '../src/session/store.ts';
 
 const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
-async function launch(home: string, args: string[], input = '/exit\n') {
+async function launch(home: string, args: string[], input: string | null = '/exit\n') {
   const child = spawn(process.execPath, [...(fs.existsSync(path.join(home, 'transport.mjs')) ? ['--import', path.join(home, 'transport.mjs')] : []), entry, '--cwd', home, ...args], {
     env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' }, stdio: ['pipe', 'pipe', 'pipe'],
   });
   let output = '';
   child.stdout.on('data', d => { output += d; }); child.stderr.on('data', d => { output += d; });
   const timer = setTimeout(() => child.kill('SIGKILL'), 15000);
-  child.stdin.end(input);
+  if (input !== null) child.stdin.end(input);
   try {
     const code = await new Promise<number | null>((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
     assert.equal(code, 0, output); return output;
@@ -135,7 +135,7 @@ test('public interactive startup omits the redundant session instructions', asyn
       return result;
     };
   `);
-  const output = await launch(home, [], '');
+  const output = await launch(home, [], null); // The interactive fixture sends /exit after the prompt.
   assert.match(output, /何を調べますか/);
   assert.doesNotMatch(output, /を開始します|入力してください|\/connect で認証/);
 });

@@ -355,6 +355,7 @@ export class SubagentService {
           return { outcome: 'error', errorMessage: 'Host acceptance did not complete' } as const;
         };
         const outcome = await runAgentLoop(child.messages, {
+          promptCacheKey: child.id,
           model, registry: new ToolRegistry(effectiveTools), root: edit?.root ?? this.opts.root,
           skills: definition.skillPolicy !== 'none', maxTurns: definition.maxTurns,
           system, signal, approval, checkpoint: () => child!.persistFrom(0),

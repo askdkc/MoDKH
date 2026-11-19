@@ -27,6 +27,7 @@ export interface AgentLoopOptions {
   registry: ToolRegistry;
   root: string;
   system?: string;
+  promptCacheKey?: string;
   /** Embedders can disable automatic purpose-specific guidance. */
   skills?: boolean;
   /**
@@ -170,6 +171,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
       opts.hooks?.onModelRequest?.();
       for await (const ev of opts.model.stream({
         messages: requestMessages(),
+        ...(opts.promptCacheKey ? { promptCacheKey: opts.promptCacheKey } : {}),
         tools: scope ? toolSpecs.filter(tool => tool.name === scope.tool) : toolSpecs,
         system: scope?.system ?? system,
         ...(opts.reasoning ? { reasoning: opts.reasoning } : {}),
