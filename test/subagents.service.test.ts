@@ -53,7 +53,9 @@ test('child owns a fresh model and history; exact replay never executes again', 
   assert.equal(f.parent.messages.length, 1);
   assert.deepEqual(f.parent.delegations()[0].effectiveTools, ['list_files', 'search_files', 'read_file', 'list_skills', 'read_skill']);
   const child = f.store.load(result.agentId);
+  assert.notEqual(child.id, f.parent.id);
   assert.equal(child.parentSessionId, f.parent.id);
+  assert.equal(f.models[0].requests[0].promptCacheKey, f.parent.id);
   assert.equal(child.rootSessionId, f.parent.id);
   assert.deepEqual(await (await service.start(request, owner())).result, result);
   assert.equal(f.models.length, 1);
