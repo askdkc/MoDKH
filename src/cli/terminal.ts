@@ -52,6 +52,7 @@ export interface ChatTerminal {
   setUsage?(usage: UsageTotals): void;
   /** Running language servers; shown in the side pane next to usage and subagent status. */
   setServers?(servers: readonly RunningServer[]): void;
+  setMcpServers?(ids: readonly string[]): void;
   /** Whether a browse call is driving the browser right now; shown in the same pane. */
   setBrowse?(active: boolean): void;
   /** Live reasoning text; `null` flushes it into the transcript. Display only, never a message. */
@@ -245,6 +246,13 @@ export class TerminalUI implements ChatTerminal {
   private usage: UsageTotals | null = null;
   /** Running language servers, refreshed by the owner; null means nothing is running. */
   private servers: readonly RunningServer[] = [];
+  private mcpRow = '';
+  setMcpServers(ids: readonly string[]): void {
+    const row = ids.length ? `MCP ${ids.length}接続中 · ${ids.map(id => id.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '?')).join(', ')}` : '';
+    if (this.closed || row === this.mcpRow) return;
+    this.mcpRow = row;
+    this.render();
+  }
   /** True while a browse call is driving the browser. Display only. */
   private browse = false;
   private closed = false;
@@ -1203,7 +1211,7 @@ export class TerminalUI implements ChatTerminal {
 
   private sidebarSubagent(rows: number, usageHeight: number): SubagentActivity | null {
     // A browse row takes one line before the subagent block, so it must be reserved here too.
-    const browseHeight = this.browse ? 1 : 0;
+    const browseHeight = Number(this.browse) + Number(!!this.mcpRow);
     return this.started && !this.pending && rows - usageHeight - 3 - browseHeight >= 3 + Number(this.servers.length > 0)
       ? this.subagent : null;
   }
@@ -1211,15 +1219,15 @@ export class TerminalUI implements ChatTerminal {
   private sidebarLines(rows: number, usageRows: string[]): string[] {
     const pane = this.sidebarSubagent(rows, usageRows.length);
     const browseRow = this.browse ? BROWSE_ACTIVE_LABEL : null;
-    const serverRoom = rows - usageRows.length - 3 - (browseRow ? 1 : 0) - (pane ? 3 : 0);
-    const servers = this.servers.slice(0, Math.min(SIDEBAR_SERVER_ROWS, serverRoom));
+    const serverRoom = rows - usageRows.length - 3 - Number(!!browseRow) - Number(!!this.mcpRow) - (pane ? 3 : 0);
+    const servers = this.servers.slice(0, Math.max(0, Math.min(SIDEBAR_SERVER_ROWS, serverRoom)));
     const serverRows = servers.map(server => serverRow(server, this.cwd));
     const rest = this.servers.length - servers.length;
     if (rest > 0 && serverRoom > servers.length) serverRows.push(`ほか${rest}件`);
     const separatorRoom = serverRoom - serverRows.length;
     const rule = '─'.repeat(SIDEBAR_WIDTH - 4);
     const divider = separatorRoom >= 6 ? [' ', rule, ' '] : separatorRoom >= 2 ? [rule] : [];
-    const sidebar = ['', ...usageRows, ...(browseRow ? [browseRow] : []), ...divider,
+    const sidebar = ['', ...usageRows, ...(this.mcpRow ? [this.mcpRow] : []), ...(browseRow ? [browseRow] : []), ...divider,
       `${SUBAGENTS_HEADING} ${this.subagent?.runningCount ?? (this.subagent ? 1 : 0)}稼働 / 累計${this.delegationCount}`];
     if (pane) sidebar.push(`${pane.phase} · ${Math.floor((performance.now() - this.subagentStarted) / 1000)}秒`,
       pane.task.split(/\r?\n/, 1)[0], pane.pluginId);

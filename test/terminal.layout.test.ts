@@ -197,6 +197,17 @@ test('the active child uses a right-hand pane and remains visible after narrowin
   } finally { t.ui.close(); }
 });
 
+test('connected project MCP servers appear only while in use', () => {
+  const t = terminal(110, 30);
+  try {
+    t.ui.write('▶ You: 調査\n', 'user');
+    t.ui.setMcpServers(['svelte']);
+    assert.match(t.text(), /│ MCP 1接続中 · svelte +│/);
+    t.ui.setMcpServers([]);
+    assert.doesNotMatch(t.text(), /MCP/);
+  } finally { t.ui.close(); }
+});
+
 test('running language servers are listed in the right-hand pane', async () => {
   const t = terminal(110, 30);
   try {

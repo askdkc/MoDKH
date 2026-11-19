@@ -48,6 +48,13 @@ export class McpStdioClient {
     this.callTimeoutMs = opts.callTimeoutMs ?? 30_000;
   }
 
+  /** Local snapshot, not a health probe. Initialization and teardown do not count. */
+  get connected(): boolean {
+    const child = this.child;
+    return !this.closed && !this.connecting && !this.stopping && !!child?.stdin?.writable &&
+      child.exitCode === null && child.signalCode === null;
+  }
+
   async connect(signal?: AbortSignal): Promise<boolean> {
     if (this.closed || signal?.aborted) return false;
     if (this.connecting) return this.connecting;

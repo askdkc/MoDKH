@@ -240,7 +240,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   };
   const tools = defaultToolsWithJobs(jobs, browseTabs);
   if (!lisp) {
-    try { tools.push(...await projectMcpTools(cwd)); }
+    try { tools.push(...await projectMcpTools(cwd, ids => ui.setMcpServers?.(ids))); }
     catch (e) { ui.write(`(プロジェクトMCPを無効にしました: ${JSON.stringify((e as Error).message)})\n`); }
   }
   // Language analysis is optional: a missing server or grammar never blocks editing or conversation.
