@@ -20,7 +20,7 @@ export function parsePermissionPolicy(value: string): PermissionPolicy | null {
 
 export interface ApprovalDecisionInput {
   policy: PermissionPolicy;
-  kind: 'edit' | 'command';
+  kind: 'edit' | 'command' | 'public-get';
   /** True only when the resolved target is proven outside the working root. */
   outsideWorkspace: boolean;
 }
@@ -32,7 +32,7 @@ export interface ApprovalDecisionInput {
 export function shouldAsk(input: ApprovalDecisionInput): boolean {
   if (input.policy === 'all') return false;
   if (input.policy === 'none') return true;
-  return input.outsideWorkspace;
+  return input.outsideWorkspace && input.kind !== 'public-get';
 }
 
 export function describePolicy(policy: PermissionPolicy): string {

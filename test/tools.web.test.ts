@@ -95,6 +95,22 @@ test('fetch_url は毎回 outsideWorkspace で承認を求め、拒否された�
   }
 });
 
+test('既定では通常の GET と転送で質問せず、キー付きの転送先では通信前に確認する', async () => {
+  const { TerminalApprovalGate } = await import('../src/cli/approval.ts');
+  let prompts = 0;
+  const gate = new TerminalApprovalGate({ write() {}, async ask() { prompts++; return 'n'; } });
+  const server = await serve({ '/doc': { body: 'ok' }, '/old': { status: 302, headers: { location: '/doc' } },
+    '/login': { status: 302, headers: { location: '/private?api_key=test' } } });
+  try {
+    const get = (p: string) => call(createFetchUrlTool(), { url: server.origin + p }, ctx(gate));
+    assert.match(await get('/old'), /200/);
+    assert.equal(prompts, 0);
+    await rejectsWithCode(get('/login'), 'DENIED');
+    assert.equal(prompts, 1);
+    assert.deepEqual(server.hits, ['/old', '/doc', '/login']);
+  } finally { await server.close(); }
+});
+
 test('fetch_url はHTMLを本文テキストにして返す', async () => {
   const server = await serve({
     '/doc': { headers: { 'content-type': 'text/html; charset=utf-8' }, body: '<html><head><style>p{}</style></head><body><h1>見出し</h1><p>本文 &amp; 続き</p><script>bad()</script></body></html>' },

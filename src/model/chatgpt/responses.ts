@@ -1,5 +1,6 @@
 import type { AgentMessage, Model, ModelEvent, ModelRequest, TokenUsage } from '../../agent/types.ts';
 
+import { parsePdfs } from '../../agent/documents.ts';
 import { toolContext } from '../context.ts';
 import { harnessProfile, CODEX_62_DEFAULTS } from '../harness-profile.ts';
 import { responsesReasoningEffort } from '../reasoning.ts';
@@ -34,7 +35,8 @@ export function toResponsesInput(messages: AgentMessage[]): ResponsesInputItem[]
     if (m.role === 'user') {
       out.push({ role: 'user', content: [
         ...(m.content ? [{ type: 'input_text', text: m.content }] : []),
-        ...parseImages(m.images).map(image => ({ type: 'input_image', image_url: imageDataUrl(image), detail: 'auto' })),
+        ...parsePdfs(m.pdfs).map(pdf => ({ type: 'input_file', filename: pdf.filename, file_data: `data:application/pdf;base64,${pdf.data}` })),
+        ...parseImages(m.images).map(image => ({ type: 'input_image', image_url: `data:${image.mediaType};base64,${image.data}`, detail: 'auto' })),
       ] });
     } else if (m.role === 'assistant') {
       if (m.content.length > 0) {

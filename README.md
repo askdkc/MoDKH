@@ -21,7 +21,7 @@ modkh
 ```
 
 初回起動後、`/connect` で接続先とモデルを選びます。
-モデルやツールの応答を待っている間は、入力欄の空きにレインボー猫が走ります。`/annimation off` で非表示にし、`/annimation on` で戻せます。切り替えは起動中のみ有効です。最初から非表示にするには `MODKH_NO_ANIMATION=1 modkh` で起動してください。待機メッセージと経過時間は引き続き表示されます。
+モデルやツールの応答を待っている間は、入力欄の空きにアニメーションが走ります。`/annimation off` で非表示にし、`/annimation on` で戻せます。切り替えは起動中のみ有効です。最初から非表示にするには `MODKH_NO_ANIMATION=1 modkh` で起動してください。待機メッセージと経過時間は引き続き表示されます。
 
 `agenticreplay version` が成功する環境では、[AgenticReplay](https://github.com/askdkc/AgenticReplay) がモデル API の通信をワークスペースの `.agenticreplay/runs/` に記録します。Ollama や LM Studio などの HTTP モデル API も対象です。HTTPS は AgenticReplay の既定ホストと、起動時に `--base-url` で指定したホストを記録します。記録を止めて起動するには `MODKH_AGENTICREPLAY=0 modkh` を使います。
 
@@ -51,9 +51,14 @@ modkh
 
 チャットで「Svelte の公式ドキュメントで確認して」「Boost でルートを調べて」のように依頼してください。モデルは `mcp_list_tools` で引数の形式を調べ、`mcp_call_tool` で呼び出します。各操作にはコマンドの承認設定が適用され、自動接続済みなら同じ接続を再利用します。独自の起動コマンドを指定したサーバーは、従来どおり操作時にだけ接続します。設定を変えたら `modkh` を起動し直してください。HTTP / SSE 接続は対象外です。
 
-## 前鬼の形式検証（任意）
+## 前鬼・後鬼による形式検証（任意）
 
-[Rust/Cargo](https://rust-lang.org/tools/install/)を導入してから実行します。Javaは不要です。
+<img src="./enno-oduno.png" alt="役小角" width="150">
+
+- **前鬼（Stateright）** は、有限状態モデルを探索し、守るべき条件が破られる手順を探します。
+- **後鬼（Lean）** は、指定した定理の証明を検査し、その定理が期待した命題と一致するかを確かめます。
+
+[Rust/Cargo](https://rust-lang.org/tools/install/)を導入してから実行します。
 
 ```sh
 modkh stateright install

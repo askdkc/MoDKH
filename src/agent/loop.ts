@@ -51,7 +51,7 @@ export interface AgentLoopOptions {
   /** Persist newly appended messages synchronously; failure prevents further effects. */
   checkpoint?(): void;
   /** Follow-ups are consumed only between complete assistant/tool exchanges. */
-  takeFollowups?(): string[];
+  takeFollowups?(): (string | Extract<AgentMessage, { role: 'user' }>)[];
   /** Aborted when a follow-up is queued. Only interrupts an idle wait, never a child. */
   followupSignal?(): AbortSignal;
   /** Trusted host workflow may require more work before this response can close. */
@@ -144,7 +144,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
   };
   const appendFollowups = (): boolean => {
     const followups = opts.takeFollowups?.() ?? [];
-    for (const content of followups) append({ role: 'user', content });
+    for (const message of followups) append(typeof message === 'string' ? { role: 'user', content: message } : message);
     return followups.length > 0;
   };
   for (let turn = 0; turn < maxTurns; turn++) {

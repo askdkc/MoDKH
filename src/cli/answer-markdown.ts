@@ -25,6 +25,11 @@ function inline(tokens: Token[], palette: Palette, styles: string[]): string {
 /** Parse before soft wrapping so delimiters and graphemes use independent coordinates. */
 export function answerMarkdown(line: string, palette: Palette): string {
   if (/^( {4}|\t)/.test(line)) return line;
+  const quote = /^( {0,3})> ?(.*)$/.exec(line);
+  if (quote) return quote[1] + paint('│ ', palette.accent) + inline(Lexer.lexInline(quote[2]), palette, ['3']);
+  const task = /^( {0,3})[-+*] \[([ xX])\](?:\s+|$)(.*)$/.exec(line);
+  if (task) return task[1] + paint(task[2] === ' ' ? '☐ ' : '☑ ', palette.accent) + inline(Lexer.lexInline(task[3]), palette, []);
+  if (/^ {0,3}(?:(?:- *){3,}|(?:\* *){3,}|(?:_ *){3,})$/.test(line)) return paint('────────', palette.reasoning);
   const heading = /^ {0,3}#{1,6}(?:\s+|$)/.exec(line);
   const body = heading ? line.slice(heading[0].length).replace(/\s+#+\s*$/, '')
     : line.replace(/^(\s*)[-+*] (?=\S)/, '$1• ');

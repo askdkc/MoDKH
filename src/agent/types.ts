@@ -29,7 +29,7 @@ export interface ToolSpec {
 
 /** 承認要求。edit は diff、command は実行内容と作業場所を detail に載せる。 */
 export interface ApprovalRequest {
-  kind: 'edit' | 'command';
+  kind: 'edit' | 'command' | 'public-get';
   title: string;
   detail: string;
   /**
@@ -113,7 +113,7 @@ export type ModelEvent =
 
 /** 会話メッセージ。tool メッセージは1つのアシスタント応答に対する結果群を保持する。 */
 export type AgentMessage =
-  | { role: 'user'; content: string; images?: ImageAttachment[] }
+  | { role: 'user'; content: string; images?: ImageAttachment[]; pdfs?: import('./documents.ts').PdfAttachment[] }
   | { role: 'assistant'; content: string; toolCalls?: ToolCall[]; origin?: 'manual' }
   | { role: 'tool'; results: ToolResult[] };
 

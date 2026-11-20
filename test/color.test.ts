@@ -169,6 +169,9 @@ test('answer Markdown styles prose while keeping fenced examples literal', () =>
   assert.equal(answer('## 動作確認'), '\x1b[1m動作確認\x1b[0m');
   assert.equal(answer('**都度の許可なし**で `browse` を使う'),
     '\x1b[1m都度の許可なし\x1b[0mで \x1b[94mbrowse\x1b[0m を使う');
+  assert.equal(answer('> **重要**'), '\x1b[36m│ \x1b[0m\x1b[3;1m重要\x1b[0m');
+  assert.equal(answer('- [x] 完了'), '\x1b[36m☑ \x1b[0m完了');
+  assert.equal(answer('---'), '\x1b[90m────────\x1b[0m');
   assert.equal(answer('````md'), '');
   assert.equal(answer('**記号もコピー**'), '**記号もコピー**');
   assert.equal(answer('```').replace(/\x1b\[[;\d]+m/g, ''), '```');

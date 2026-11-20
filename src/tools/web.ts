@@ -173,10 +173,13 @@ function signalFor(ctx: ToolContext, timeoutMs: number): { signal: AbortSignal; 
 /** 1ホップごとに承認を取る。転送先は人間が承認したURLとは別の場所になり得るため。 */
 async function approveFetch(ctx: ToolContext, url: URL, step: string, extra: string): Promise<void> {
   if (ctx.signal?.aborted) throw new ToolError('NOT_EXECUTED', '中断済みのため取得しない');
+  // Only this tool's fixed, bodyless GET can use the public-read exception.
+  const sensitive = [...url.searchParams.keys()].some(key => /key|token|secret|passw|passwd|auth|credential|session|signature|^sig$|^code$/i.test(key));
+  const display = sensitive ? `${url.origin}${url.pathname}（クエリ非表示）` : url.href;
   const ok = await ctx.approval.approve({
-    kind: 'command',
+    kind: sensitive ? 'command' : 'public-get',
     title: `外部取得 (GET ${url.host})`,
-    detail: `${step}\nGET ${url.href}\n${extra}\n\n外部への通信であり、応答内容は検証されない。`,
+    detail: `${step}\nGET ${display}\n${extra}\n\n外部への通信であり、応答内容は検証されない。`,
     outsideWorkspace: true,
     ...(ctx.signal ? { signal: ctx.signal } : {}),
   });
@@ -202,7 +205,7 @@ export function createFetchUrlTool(options: WebOptions = {}): Tool {
     name: 'fetch_url',
     operationIdentity: (args) => ({ url: typeof args.url === 'string' ? args.url.trim() : '' }),
     description:
-      'http/https のURLを1件取得し、テキストとして返す。ワークスペース外への通信なので毎回承認を求める。'
+      'http/https のURLをGETし、テキストとして返す。既定では通常の取得に確認は不要。URLに秘密情報を含めない。'
       + 'HTMLはタグを落として本文だけにする。上限で打ち切った場合は明示する。'
       + '取得結果は事実の保証ではない(内容の検証はしない)。',
     parameters: {

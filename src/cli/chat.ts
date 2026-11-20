@@ -10,8 +10,10 @@ import path from 'node:path';
 
 import { pdfUsage, readPdfRequest } from './pdf.ts';
 import { readFileMentions } from './file-mentions.ts';
+import { StagedAttachments } from './staged-attachments.ts';
 import { MAX_IMAGES, type ImageAttachment } from '../agent/images.ts';
-import type { Model, ModelEvent, TokenUsage, ToolCall, ToolResult } from '../agent/types.ts';
+import type { PdfAttachment } from '../agent/documents.ts';
+import type { AgentMessage, Model, ModelEvent, TokenUsage, ToolCall, ToolResult } from '../agent/types.ts';
 import { buildModelFromRef } from '../model/connection.ts';
 export { buildModelFromRef } from '../model/connection.ts';
 import { PluginManager } from '../plugins/manager.ts';
@@ -338,8 +340,9 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   ].join('\n\n') : SYSTEM_PROMPT + (manager.discover().registry.get('modkh-micro-zenki')?.enabled
     ? '\n前鬼（modkh-micro-zenki）が利用可能。状態遷移・競合・不変条件の検証には、対象から有限状態JSONモデルを作成し、start_subagent に pluginId と formalInput:{path:モデルJSON} を渡して前鬼を使う。モデルの仮定・範囲を示し、実装全体の証明と混同しない。単純な変更に不要なモデル検証は追加しない。' : '');
   let turnToolCount = 0;
+  const staged = new StagedAttachments();
   const registry = new ToolRegistry(
-    [...subagents.parentTools([...headTools, ...languageTools(language)]), ...subagentTools(subagents)],
+    [...subagents.parentTools([...headTools, ...languageTools(language)]), staged.tool(), ...subagentTools(subagents)],
     () => ui.setTurnToolCount?.(++turnToolCount),
   );
 
@@ -375,13 +378,13 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   let contextWindow: number | undefined;
   let nextMetadataRead = 0;
   let failedCompaction: { model: Model; from: number; eligibleBytes: number } | undefined;
-  const runTurn = async (input: string, activeModel: Model | null, direct?: DelegationRequest, images: ImageAttachment[] = [], documentText?: string): Promise<void> => {
+  const runTurn = async (input: string, activeModel: Model | null, direct?: DelegationRequest, images: ImageAttachment[] = [], documentText?: string, pdfs: PdfAttachment[] = []): Promise<void> => {
     turnToolCount = 0;
     ui.setTurnToolCount?.(turnToolCount);
     // Interactive PDF submissions are already visible while their pages are prepared.
     if (!documentText || !ui.interactive) ui.write(`\n▶ You: ${input}${images.length ? ` [画像${images.length}枚]` : ''}\n`, 'user');
     session.setStatus('active');
-    session.append({ role: 'user', content: documentText ? input + '\n\n' + documentText : input, ...(images.length ? { images } : {}) });
+    session.append({ role: 'user', content: documentText ? input + '\n\n' + documentText : input, ...(images.length ? { images } : {}), ...(pdfs.length ? { pdfs } : {}) });
     activeUserRequest = direct ? undefined : input;
     const checkpoint = () => session.persistFrom(0);
     const ac = new AbortController();
@@ -392,15 +395,16 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     };
     // Stop処理の回収が終わるまで、重ねたSIGINTで所有子を置き去りにしない。
     process.on('SIGINT', onSigint);
-    const followups: { input: string; content: string }[] = [];
+    const followups: { input: string; content: Extract<AgentMessage, { role: 'user' }> }[] = [];
     let followupWake = new AbortController();
     const finishFollowups = activeModel && ui.beginFollowups?.(message => {
       if (ac.signal.aborted) return '中止処理中です';
       if (followups.length >= 8) return '追加の依頼は8件まで送信待ちにできます';
-      let files: string | undefined;
-      try { files = readFileMentions(cwd, message); }
+      let files: ReturnType<typeof readFileMentions>;
+      try { files = readFileMentions(cwd, message, staged); }
       catch (error) { return `ファイル添付失敗: ${(error as Error).message}`; }
-      followups.push({ input: message, content: files ? message + '\n\n' + files : message });
+      followups.push({ input: message, content: { role: 'user', content: files?.text ? message + '\n\n' + files.text : message,
+        ...(files?.images.length ? { images: files.images } : {}), ...(files?.pdfs.length ? { pdfs: files.pdfs } : {}) } });
       followupWake.abort();
       return null;
     });
@@ -905,8 +909,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         }
         await runTurn(pdf.prompt, model, undefined, [...pdf.images, ...(ui.takeImages?.() ?? [])], pdf.text);
       } else {
-        let files: string | undefined;
-        try { files = readFileMentions(cwd, input); }
+        let files: ReturnType<typeof readFileMentions>;
+        try {
+          files = readFileMentions(cwd, input, staged);
+          if ((files?.images.length ?? 0) + (ui.imageCount ?? 0) > MAX_IMAGES) throw new Error(`添付画像は最大${MAX_IMAGES}枚です`);
+        }
         catch (error) {
           ui.write(`(ファイル添付失敗: ${(error as Error).message})\n`);
           ui.restoreDraft?.(input);
@@ -914,7 +921,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         }
         // Attachments belong to the chat model, not an automatically chosen child.
         const direct = !files && lisp && !lisp.headInstruction && args.routing === 'auto' ? routeIntent(input, subagents.list()) : undefined;
-        await runTurn(input, model, direct, ui.takeImages?.() ?? [], files);
+        await runTurn(input, model, direct, [...(files?.images ?? []), ...(ui.takeImages?.() ?? [])], files?.text, files?.pdfs);
       }
       refreshServers();
       if (aborted) {
@@ -923,6 +930,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       }
     }
   } finally {
+    staged.close();
     clearInterval(serversTimer);
     stopBrowseWatch();
     // 主処理・永続化が失敗しても補助プロセスを回収する。

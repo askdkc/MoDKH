@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { parsePdfs } from '../agent/documents.ts';
 import { parseImages } from '../agent/images.ts';
 import type { AgentMessage, ToolCall, ToolResult } from '../agent/types.ts';
 import { safeBoundary, type CompactionState } from '../agent/compaction.ts';
@@ -190,6 +191,7 @@ export class Session {
       }
       else if (ev.type === 'message') {
         if (ev.message.role === 'user' && ev.message.images !== undefined) ev.message.images = parseImages(ev.message.images);
+        if (ev.message.role === 'user' && ev.message.pdfs !== undefined) ev.message.pdfs = parsePdfs(ev.message.pdfs);
         session.messages.push(ev.message);
       }
     });

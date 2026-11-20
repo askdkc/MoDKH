@@ -9,6 +9,7 @@ import {
   type ToolResultPart,
   type ToolSet,
 } from 'ai';
+import { parsePdfs } from '../agent/documents.ts';
 import { toolContext } from './context.ts';
 import { harnessProfile, CODEX_62_DEFAULTS } from './harness-profile.ts';
 import { reasoningProviderOptions } from './reasoning.ts';
@@ -36,7 +37,9 @@ function toCoreMessages(req: ModelRequest): ModelMessage[] {
   for (const [index, m] of req.messages.entries()) {
     if (m.role === 'user') {
       const images = parseImages(m.images);
-      out.push({ role: 'user', content: images.length ? [
+      const pdfs = parsePdfs(m.pdfs);
+      out.push({ role: 'user', content: images.length || pdfs.length ? [
+        ...pdfs.map(pdf => ({ type: 'file' as const, filename: pdf.filename, data: Buffer.from(pdf.data, 'base64'), mediaType: 'application/pdf' })),
         ...(m.content ? [{ type: 'text' as const, text: m.content }] : []),
         ...images.map(image => ({ type: 'file' as const, data: Buffer.from(image.data, 'base64'), mediaType: image.mediaType })),
       ] : m.content });
