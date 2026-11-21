@@ -142,7 +142,8 @@ export function prepareSkillContext(task: string, root: string): SkillContext {
   try { builtin = builtinCatalog(); }
   catch { warnings.push('同梱スキル一覧を読めないため注入を省略'); }
   const catalog = [...builtin, ...localCatalog(canonical, warnings, builtin)];
-  const optional = selectTaskSkills(task, catalog);
+  const uiSkill = 'kiokuko-ui-design-soul';
+  const optional = selectTaskSkills(task, catalog.filter(skill => skill.name !== uiSkill));
   const names = new Set(optional.map(skill => skill.name));
   const coding = CODING.some(word => matches(task, word));
   if (coding) for (const name of CODING_CORE) names.add(name);
@@ -150,7 +151,8 @@ export function prepareSkillContext(task: string, root: string): SkillContext {
   if (/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(task) || matches(task, 'Japanese')) names.add('natural-japanese-output');
   if (names.size) names.add('kiokuko-soul');
   // Host entry and mandatory code guidance precede optional specialists; no top-three cutoff on core contracts.
-  const order = ['kiokuko-soul', ...CODING_CORE, ...optional.map(skill => skill.name), 'natural-japanese-output'];
+  names.add(uiSkill);
+  const order = ['kiokuko-soul', uiSkill, ...CODING_CORE, ...optional.map(skill => skill.name), 'natural-japanese-output'];
   const selected = [...new Set(order)].filter(name => names.has(name)).map(name => catalog.find(skill => skill.name === name)).filter((skill): skill is TaskSkill => !!skill);
   const header = '\n\n' + MODKH_SKILL_BINDING;
   let text = '';
