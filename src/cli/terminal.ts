@@ -175,6 +175,33 @@ export interface TerminalOptions {
 }
 const MAX_INPUT_BYTES = 128 * 1024;
 const SIDEBAR_WIDTH = 36;
+/**
+ * 推論は表示専用。デルタごとに全画面を描き直すと、プロバイダーが速いほど端末への
+ * 書き込みが入力エコーを追い越し、追加の指示を打っても画面が反応しなくなる。
+ * フレームは最速でもこの間隔に1回だけ描く。
+ */
+const REASONING_FRAME_MS = 50;
+/** 端末がまだこの量を書き出せていない間は、次のライブフレームを足さない。 */
+const REASONING_OUTPUT_BUDGET = 64 * 1024;
+/** ライブ表示に保持する推論の末尾。古い部分は捨て、直近だけを描く。 */
+const REASONING_BUFFER = 20_000;
+/**
+ * 未確定の最終行も同じ理由で全長を描かない。改行が来たら全文を確定行として描く。
+ * 1行が極端に長い応答でも、1フレームのコストを一定に保つ。
+ */
+const PARTIAL_PREVIEW = 20_000;
+/** 1回の書き込みがこれ以上かかる端末では、本文のフレームをまとめて入力の反応を優先する。 */
+const SLOW_OUTPUT_MS = 8;
+
+/**
+ * 文字列の末尾 max 文字を返す。サロゲートペアの途中からは切り出さない。
+ * 表示幅ではなく文字数で切るのは、幅計算そのものを避けるため。
+ */
+function tailText(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const start = text.length - max;
+  return /[\uDC00-\uDFFF]/.test(text[start] ?? '') ? text.slice(start + 1) : text.slice(start);
+}
 
 function serverRow(server: RunningServer, workspace: string): string {
   const relative = path.relative(workspace, server.root);
@@ -271,7 +298,16 @@ export class TerminalUI implements ChatTerminal {
   private clipboardTask?: AbortController;
   private inputNotice = '';
   /** Current step's reasoning text, drawn above the composer while it streams. */
-  private reasoning = '';
+  private reasoningChunks: string[] = [];
+  private reasoningSize = 0;
+  private reasoningCache = '';
+  private reasoningDirty = false;
+  /** 次に推論フレームを描いてよい時刻と、待機中の1回だけのフレーム。 */
+  private reasoningFrameAt = 0;
+  private reasoningTimer?: NodeJS.Timeout;
+  /** 応答本文のデルタも同じ間隔でまとめる。 */
+  private streamFrameAt = 0;
+  private streamTimer?: NodeJS.Timeout;
   private readonly clipboardReader: ClipboardReader;
   private hiddenCompletion = false;
   private readonly previousRaw: boolean;
@@ -293,6 +329,10 @@ export class TerminalUI implements ChatTerminal {
   /** 返信の先頭(\x1b]11;)から返信完了まで、分割チャンクごとに抑制を続ける。 */
   private replyStarted = false;
   private replyDone = false;
+  /** 端末が消えた(書き込みが EPIPE/EIO になった)。以降の描画は行わない。 */
+  private outputGone = false;
+  /** 直近の書き込み所要時間(指数移動平均)。遅い端末では描画をまとめる。 */
+  private writeCostMs = 0;
 
   constructor(cwd: string, input: ReadStream = process.stdin, output: WriteStream = process.stdout, options: TerminalOptions = {}) {
     this.clipboardReader = options.readClipboardImage ?? readClipboardImage;
@@ -318,11 +358,14 @@ export class TerminalUI implements ChatTerminal {
     input.on('end', this.onEnd);
     output.on('resize', this.onResize);
     process.on('exit', this.close);
+    // 書き込み不能になった時点で描画を止める。セッションの保存と後始末は続ける。
+    output.on('error', this.onOutputError);
+    output.on('close', this.onOutputClose);
     input.resume();
-    output.write('\x1b[?2004h' + (this.mouseInput ? '\x1b[?1002h\x1b[?1006h' : ''));
+    this.writeOutput('\x1b[?2004h' + (this.mouseInput ? '\x1b[?1002h\x1b[?1006h' : ''));
     // 起動時は一度だけ画面を消す(前回実行の残りを見せない)。
     this.clearPending = true;
-    if (this.backgroundProbe) this.output.write('\x1b]11;?\x1b\\');
+    if (this.backgroundProbe) this.writeOutput('\x1b]11;?\x1b\\');
     this.render();
   }
 
@@ -388,6 +431,19 @@ export class TerminalUI implements ChatTerminal {
     else this.render();
   };
 
+  /** 端末への書き込みが EPIPE/EIO になった。表示だけを止め、作業と保存は続ける。 */
+  private onOutputError = (): void => { this.markOutputGone(); };
+
+  /**
+   * 流れが閉じたら購読を外す。破棄後に遅れて届く書き込みエラーも、閉じるまでは
+   * 拾っておかないと未処理例外になる。
+   */
+  private onOutputClose = (): void => {
+    this.markOutputGone();
+    this.output.removeListener('error', this.onOutputError);
+    this.output.removeListener('close', this.onOutputClose);
+  };
+
   private columns(): number { return Math.max(12, this.output.columns || 80); }
   private rows(): number { return Math.max(6, this.output.rows || 24); }
 
@@ -398,7 +454,47 @@ export class TerminalUI implements ChatTerminal {
     return this.hasUsagePane() ? columns - SIDEBAR_WIDTH - 2 : columns;
   }
 
-  write(text: string, kind: TranscriptKind = 'system'): void { this.appendTranscript(text, kind); this.render(); }
+  write(text: string, kind: TranscriptKind = 'system'): void {
+    this.appendTranscript(text, kind);
+    // 本文は書いた時点で表示する。ただし端末への書き込み自体が遅いときは
+    // 1フレームにまとめ、入力のエコーがその後ろで待たされないようにする。
+    if (kind === 'answer' && this.slowOutput()) { this.requestStreamFrame(); return; }
+    this.render();
+  }
+
+  /** 書き込みが遅い端末か。TTY への書き込みは同期なので、所要時間で判断する。 */
+  private slowOutput(): boolean {
+    return this.writeCostMs > SLOW_OUTPUT_MS;
+  }
+
+  /**
+   * 応答本文の1デルタごとの全画面描画をまとめる。入力のエコーが端末の書き込み待ちに
+   * 並ばされるのを避け、間隔が空いていればすぐ描く。
+   */
+  private requestStreamFrame(): void {
+    if (this.closed || this.streamTimer) return;
+    const wait = Math.max(0, this.streamFrameAt + REASONING_FRAME_MS - performance.now());
+    if (wait === 0 && !this.outputBackedUp()) { this.streamFrameAt = performance.now(); this.render(); return; }
+    this.scheduleStreamFrame(wait);
+  }
+
+  /** 端末が追いつくまで待ってから描く。描き漏らさず、待ち続けもしない。 */
+  private scheduleStreamFrame(wait: number): void {
+    this.streamTimer = setTimeout(() => {
+      this.streamTimer = undefined;
+      if (this.closed) return;
+      if (this.outputBackedUp()) { this.scheduleStreamFrame(REASONING_FRAME_MS); return; }
+      this.streamFrameAt = performance.now();
+      this.render();
+    }, wait);
+    this.streamTimer.unref();
+  }
+
+  private cancelStreamFrame(): void {
+    if (!this.streamTimer) return;
+    clearTimeout(this.streamTimer);
+    this.streamTimer = undefined;
+  }
   setModel(model: string | null): void { this.model = model; this.render(); }
   setActivity(activity: string | null, placement?: 'hint'): void {
     if (this.closed || (this.activity === activity && this.activityPlacement === placement)) return;
@@ -494,11 +590,89 @@ export class TerminalUI implements ChatTerminal {
   }
   /** Accumulate one reasoning delta, or flush the finished block into the transcript with `null`. */
   setReasoning(delta: string | null): void {
-    if (delta !== null) { this.reasoning = (this.reasoning + delta).slice(-20_000); this.render(); return; }
-    const text = this.reasoning.trimEnd();
-    this.reasoning = '';
-    if (text) this.appendTranscript(`\n(推論)\n${text}\n`, 'reasoning');
+    if (delta !== null) {
+      this.pushReasoning(delta);
+      this.requestReasoningFrame();
+      return;
+    }
+    this.cancelReasoningFrame();
+    const text = this.clearReasoning().trimEnd();
+    // 推論が無いときの null は表示を変えない。呼ぶたびに全画面を描き直さない。
+    if (!text) return;
+    this.appendTranscript(`\n(推論)\n${text}\n`, 'reasoning');
     this.render();
+  }
+
+  /**
+   * デルタを都度連結すると1回あたり O(バッファ長) になる。チャンクで持ち、描画時だけ連結する。
+   * 上限の2倍を超えたら末尾だけ残して詰め直すので、1デルタの償却コストは一定。
+   */
+  private pushReasoning(delta: string): void {
+    this.reasoningChunks.push(delta);
+    this.reasoningSize += delta.length;
+    this.reasoningDirty = true;
+    if (this.reasoningSize <= REASONING_BUFFER * 2) return;
+    const kept = tailText(this.reasoningChunks.join(''), REASONING_BUFFER);
+    this.reasoningChunks = kept ? [kept] : [];
+    this.reasoningSize = kept.length;
+    this.reasoningCache = kept;
+    this.reasoningDirty = false;
+  }
+
+  private currentReasoning(): string {
+    if (this.reasoningDirty) {
+      this.reasoningCache = this.reasoningChunks.join('');
+      this.reasoningDirty = false;
+    }
+    return this.reasoningCache;
+  }
+
+  private clearReasoning(): string {
+    const text = this.currentReasoning();
+    this.reasoningChunks = [];
+    this.reasoningSize = 0;
+    this.reasoningCache = '';
+    this.reasoningDirty = false;
+    return text;
+  }
+
+  /**
+   * 推論1デルタごとに全画面を描き直すと、書き込みが入力のエコーを追い越して
+   * 端末が無反応になる。間隔が空いていればすぐ描き、続くデルタは1フレームにまとめる。
+   */
+  private requestReasoningFrame(): void {
+    if (this.closed || this.reasoningTimer) return;
+    const wait = Math.max(0, this.reasoningFrameAt + REASONING_FRAME_MS - performance.now());
+    if (wait === 0 && !this.outputBackedUp()) { this.drawReasoningFrame(); return; }
+    this.scheduleReasoningFrame(wait);
+  }
+
+  /** 端末が追いつくまで待ってから描く。取りこぼしたフレームは捨てずに後で1回だけ描く。 */
+  private scheduleReasoningFrame(wait: number): void {
+    this.reasoningTimer = setTimeout(() => {
+      this.reasoningTimer = undefined;
+      if (this.closed) return;
+      if (this.outputBackedUp()) { this.scheduleReasoningFrame(REASONING_FRAME_MS); return; }
+      this.drawReasoningFrame();
+    }, wait);
+    this.reasoningTimer.unref();
+  }
+
+  private drawReasoningFrame(): void {
+    if (this.closed) return;
+    this.reasoningFrameAt = performance.now();
+    this.render();
+  }
+
+  private cancelReasoningFrame(): void {
+    if (!this.reasoningTimer) return;
+    clearTimeout(this.reasoningTimer);
+    this.reasoningTimer = undefined;
+  }
+
+  /** 端末側の書き出しが追いついていないか。書き出し中の量で判断する。 */
+  private outputBackedUp(): boolean {
+    return (this.output.writableLength ?? 0) > REASONING_OUTPUT_BUDGET;
   }
   unread(line: string): void { this.queued.unshift(line); }
   rememberInput(text: string): void { this.previousInput = text; }
@@ -520,7 +694,7 @@ export class TerminalUI implements ChatTerminal {
     this.cancelDrag();
     return new Promise(resolve => {
       this.page = { title, text, top: 0, width: 0, lines: [], pasting: false, resolve };
-      this.output.write('\x1b[?1049h\x1b[?25l');
+      this.writeOutput('\x1b[?1049h\x1b[?25l');
       this.renderPage();
     });
   }
@@ -645,7 +819,7 @@ export class TerminalUI implements ChatTerminal {
     if (!drag || (released ? button !== 0 : button !== 32)) return;
     drag.end = point;
     if (!released) {
-      this.output.write(this.clearDragHighlight() + this.drawDragHighlight());
+      this.writeOutput(this.clearDragHighlight() + this.drawDragHighlight());
       return;
     }
     const moved = drag.anchor.row !== point.row || drag.anchor.column !== point.column;
@@ -676,7 +850,7 @@ export class TerminalUI implements ChatTerminal {
 
   private cancelDrag(): void {
     const restore = this.clearDragHighlight();
-    if (restore) this.output.write(restore);
+    if (restore) this.writeOutput(restore);
     this.drag = undefined;
   }
 
@@ -714,7 +888,7 @@ export class TerminalUI implements ChatTerminal {
       const source = [...this.historyRows, ...this.visibleTranscript().values()];
       this.history = { source, width: 0, lines: [], offset: 0, rows: new Map() };
       this.inputNotice = '';
-      this.output.write('\x1b[?1049h\x1b[?25l');
+      this.writeOutput('\x1b[?1049h\x1b[?25l');
     }
     this.history.offset = Math.max(0, this.history.offset + delta);
     if (this.history.offset) this.renderHistory();
@@ -749,14 +923,14 @@ export class TerminalUI implements ChatTerminal {
       const usage = usageBreakdownLines(this.usage ?? EMPTY_USAGE, SIDEBAR_WIDTH - 4);
       out += this.drawSidebar(rows, this.columns(), this.sidebarLines(rows, usage));
     }
-    this.output.write(out + this.drawDragHighlight());
+    this.writeOutput(out + this.drawDragHighlight());
   }
 
   private leaveHistory(redraw = true): void {
     if (!this.history) return;
     this.cancelDrag();
     this.history = undefined;
-    this.output.write('\x1b[?1049l');
+    this.writeOutput('\x1b[?1049l');
     if (redraw) this.render();
   }
 
@@ -775,7 +949,7 @@ export class TerminalUI implements ChatTerminal {
     const heading = this.paint(fitText(page.title, width), '1');
     const hints = fitText('Esc/q 戻る  ↑↓ 行  PgUp/PgDn ページ', width);
     const position = fitText(`${page.top + 1}–${page.top + visible.length} / ${page.lines.length}`, width);
-    this.output.write(`\x1b[H\x1b[J${heading}` +
+    this.writeOutput(`\x1b[H\x1b[J${heading}` +
       visible.map((line, i) => `\x1b[${i + 2};1H${line}`).join('') +
       `\x1b[${rows - 1};1H${position}\x1b[${rows};1H${hints}`);
   }
@@ -784,7 +958,7 @@ export class TerminalUI implements ChatTerminal {
     const page = this.page;
     if (!page) return;
     this.page = undefined;
-    this.output.write('\x1b[?1049l\x1b[?25h');
+    this.writeOutput('\x1b[?1049l\x1b[?25h');
     page.resolve();
   }
 
@@ -930,6 +1104,14 @@ export class TerminalUI implements ChatTerminal {
     }
   }
 
+  /**
+   * ライブ表示用の最終行。改行前の長い行は末尾だけを描き、1フレームのコストを抑える。
+   * 改行が来た時点で全文が確定行として画面に残るので、内容は失われない。
+   */
+  private partialPreview(): string {
+    return this.partial.length <= PARTIAL_PREVIEW ? this.partial : tailText(this.partial, PARTIAL_PREVIEW);
+  }
+
   private renderTranscriptLine(raw: string, kind: TranscriptKind, width: number, newline: boolean,
     colorizer: TranscriptColorizer): TranscriptScreenLine[] {
     const source = clean(raw);
@@ -949,6 +1131,28 @@ export class TerminalUI implements ChatTerminal {
   private paint(text: string, code: string): string { return this.color ? `\x1b[${code}m${text}\x1b[0m` : text; }
 
   /**
+   * 端末が消えた(SSH切断・端末アプリ終了・パイプの読み手終了)あとの書き込みは EPIPE/EIO になる。
+   * そのまま投げると全画面描画のたびに未処理例外になるため、最初の1回で描画を止める。
+   * 表示先がないだけで、セッションの保存と後始末は続ける。
+   */
+  private writeOutput(text: string): void {
+    if (this.outputGone) return;
+    const started = performance.now();
+    try { this.output.write(text); }
+    catch { this.markOutputGone(); return; }
+    // TTY への書き込みは同期。所要時間を平滑化し、遅い端末では描画をまとめる。
+    this.writeCostMs = this.writeCostMs * 0.8 + (performance.now() - started) * 0.2;
+  }
+
+  private markOutputGone(): void {
+    if (this.outputGone) return;
+    this.outputGone = true;
+    this.cancelReasoningFrame();
+    this.cancelStreamFrame();
+    clearInterval(this.progressTimer);
+  }
+
+  /**
    * 1フレームの描画。
    * 1) 前回のライブブロック(最下部)を消去。伸びた分は先にスクロールして確定させる
    * 2) 確定したトランスクリプト行を出力(はみ出した行はスクロールバックへ確定)
@@ -957,7 +1161,7 @@ export class TerminalUI implements ChatTerminal {
    */
   private render = (): void => {
     // Keep mouse coordinates stable while a response is still streaming under the drag.
-    if (this.closed || this.page || this.history || this.drag) return;
+    if (this.closed || this.outputGone || this.page || this.history || this.drag) return;
     const rows = this.rows();
     const columns = this.columns();
     const width = this.started ? this.width() : Math.max(8, Math.min(columns - 4, 80));
@@ -995,16 +1199,17 @@ export class TerminalUI implements ChatTerminal {
     const controlMargin = this.controlMargin();
 
     const partialRows = this.partial
-      ? this.renderTranscriptLine(this.partial, this.partialKind, width, false, this.fork()) : [];
+      ? this.renderTranscriptLine(this.partialPreview(), this.partialKind, width, false, this.fork()) : [];
     const partialLines = partialRows.map(line => line.painted);
     const partialCount = partialLines.length;
     // ライブの推論は見出し含めて表示。はみ出すときは古い行(先頭)から落とす。
-    const reasoningText = this.reasoning.trimEnd() === '' ? [] :
-      transcriptLines(`(推論)\n${this.reasoning.trimEnd()}`, width);
     const reservedForBody = Number(composer && !!this.images.length) + 1 /* divider */ + inputRows + fileRows + 4 /* status/hints/cwd+footer */ + (options ? 2 : 0) + partialCount + stackedHeight;
     const maxReasoning = Math.max(0, Math.min(rows - reservedForBody - 1, 24));
-    const liveReasoning = reasoningText.length === 0 ? [] :
-      reasoningText.slice(Math.max(0, reasoningText.length - maxReasoning))
+    // 折り返しは表示する末尾の分だけで足りる。全バッファを毎フレーム折り返さない。
+    const reasoningTail = maxReasoning === 0 ? '' : tailText(this.currentReasoning(), maxReasoning * width * 2).trimEnd();
+    const reasoningText = reasoningTail === '' ? [] : transcriptLines(`(推論)\n${reasoningTail}`, width);
+    const liveReasoning = reasoningText.length === 0 ? []
+      : reasoningText.slice(Math.max(0, reasoningText.length - maxReasoning))
         .map(line => ({ ...line, painted: this.paint(fitText(line.text, width), this.palette.reasoning) }));
 
     const optionsLines: { text: string; style: string }[] = [];
@@ -1181,7 +1386,7 @@ export class TerminalUI implements ChatTerminal {
     const cursorCol = Math.min(columns, controlMargin + 3 + cursor.column);
     out += `\x1b[${cursorLiveRow};${cursorCol}H` + (this.pending || editingFollowup ? '\x1b[?25h' : '\x1b[?25l');
     this.cursorRow = cursorLiveRow;
-    this.output.write(out);
+    this.writeOutput(out);
   };
 
   private sidebarSubagent(rows: number, usageHeight: number): SubagentActivity | null {
@@ -1256,15 +1461,19 @@ export class TerminalUI implements ChatTerminal {
       this.input.off('data', this.mouseInput.write);
       this.mouseInput.close();
       this.keyInput?.destroy();
-      this.output.write('\x1b[?1006l\x1b[?1002l');
+      this.writeOutput('\x1b[?1006l\x1b[?1002l');
     }
     clearInterval(this.progressTimer);
+    this.cancelReasoningFrame();
+    this.cancelStreamFrame();
     this.clipboardTask?.abort(); this.clipboardTask = undefined;
     this.images = [];
     this.pending?.finish(null);
     this.input.removeListener('keypress', this.keypress);
     this.input.removeListener('end', this.onEnd);
     this.output.removeListener('resize', this.onResize);
+    this.output.removeListener('error', this.onOutputError);
+    this.output.removeListener('close', this.onOutputClose);
     process.removeListener('exit', this.close);
     this.input.setRawMode(this.previousRaw);
     this.input.pause();
@@ -1273,12 +1482,12 @@ export class TerminalUI implements ChatTerminal {
     const eraseRow = Math.min(rows, this.streamRow >= 1 ? this.streamRow : rows);
     const base = Math.max(1, Math.min(rows, this.cursorRow >= 1 ? this.cursorRow : rows));
     if (this.sidebarPainted) {
-      this.output.write(this.eraseSidebar(rows, this.columns() - SIDEBAR_WIDTH + 1) + `\x1b[${base};1H`);
+      this.writeOutput(this.eraseSidebar(rows, this.columns() - SIDEBAR_WIDTH + 1) + `\x1b[${base};1H`);
     }
     const up = base - eraseRow;
-    if (up > 0) this.output.write(`\x1b[${up}A`);
-    this.output.write('\r\x1b[J');
-    this.output.write('\x1b[0m\x1b[?25h\x1b[?2004l\r\n');
+    if (up > 0) this.writeOutput(`\x1b[${up}A`);
+    this.writeOutput('\r\x1b[J');
+    this.writeOutput('\x1b[0m\x1b[?25h\x1b[?2004l\r\n');
   };
 }
 export function createTerminal(cwd: string): ChatTerminal {

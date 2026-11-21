@@ -120,8 +120,11 @@ test('reasoning is displayed while it streams and then kept in the transcript', 
     assert.match(t.text(), /\(推論\)/, 'live reasoning is labelled');
     assert.match(t.text(), /まずファイルを読みます/, 'reasoning text is visible');
 
+    // Deltas arriving faster than the frame interval are coalesced; the next frame shows both.
     t.ui.setReasoning('続けて確認します。');
+    await new Promise(resolve => setTimeout(resolve, 80));
     assert.match(t.text(), /続けて確認します/, 'deltas accumulate');
+    assert.match(t.text(), /まずファイルを読みます/, 'the earlier delta stays visible');
 
     // Flushing prints the finished block once and clears the live area.
     t.ui.setReasoning(null);
@@ -134,6 +137,46 @@ test('reasoning is displayed while it streams and then kept in the transcript', 
     t.key('return');
     assert.equal(await input, '');
   } finally { t.ui.close(); }
+});
+
+test('a fast reasoning burst does not write a full frame per delta', async () => {
+  const t = terminal(160, 40);
+  try {
+    t.ui.write('▶ You: 調査\n', 'user');
+    const before = t.raw().length;
+    // A provider that emits thousands of deltas in one tick must not flood the terminal;
+    // the backlog would otherwise delay the echo of anything the human types.
+    for (let i = 0; i < 2000; i++) t.ui.setReasoning('推論の途中経過です。'.repeat(3));
+    const written = t.raw().length - before;
+    assert.ok(written < 512 * 1024, `frames are coalesced, not one per delta: ${written} bytes`);
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.match(t.text(), /推論の途中経過です/, 'the live area shows the newest reasoning');
+    // The finished block still reaches the transcript in full.
+    t.ui.setReasoning(null);
+    assert.match(t.text(), /推論の途中経過です/);
+  } finally { t.ui.close(); }
+});
+
+test('a terminal that disappears mid-stream stops drawing instead of throwing', async () => {
+  const input = new PassThrough() as unknown as ReadStream;
+  input.isRaw = false; input.setRawMode = raw => { input.isRaw = raw; return input; };
+  const output = new PassThrough() as unknown as WriteStream;
+  output.columns = 100; output.rows = 30;
+  const ui = new TerminalUI('/workspace', input, output);
+  try {
+    ui.write('▶ You: 作業\n', 'user');
+    // SSH 切断・端末アプリ終了では書き込みが EPIPE/EIO になる。描画のたびに
+    // 未処理例外を投げるとプロセスごと落ちるので、表示だけを止める。
+    output.destroy(Object.assign(new Error('EPIPE: broken pipe, write'), { code: 'EPIPE' }));
+    assert.doesNotThrow(() => {
+      ui.setReasoning('推論');
+      ui.write('本文\n', 'answer');
+      ui.setReasoning(null);
+    });
+    // 破棄後に遅れて届く書き込みも例外にしない。
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.doesNotThrow(() => ui.write('遅れて届いた本文\n', 'answer'));
+  } finally { ui.close(); }
 });
 
 test('reasoning never enters the request messages', async () => {
