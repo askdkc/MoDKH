@@ -6,6 +6,7 @@ import { configureHttpModelRecording } from '../model/record-fetch.ts';
 import { SessionStore } from '../session/store.ts';
 import { loadConfig } from './config.ts';
 import { loadResumedSession, selectInitialConnection } from './initial-connection.ts';
+import { ensureWorkspaceIgnores } from './workspace-ignore.ts';
 
 /**
  * 記録の状態は会話の成否とは別の軸。会話が正常に終わっても記録が欠けていることはあるし、
@@ -283,6 +284,11 @@ export async function recordChat(
     ? ['--tls-hosts', `+${target.hostname}`] : [];
   // 受け取りはこの子のためだけのパス。stderr も TUI と共有しているので読まずに転送する。
   // 作業ルートには書かない(記録対象でも会話の成果物でもない)。
+  // 記録器はワークスペースの .agenticreplay/ を先に作るので、その前に .gitignore を揃えておく。
+  // 失敗の報告は、直後に起動して同じ処理を行う会話側(runChat)に任せ、二重に出さない。
+  try {
+    ensureWorkspaceIgnores(cwd);
+  } catch { /* 会話側が改めて試し、失敗すればそこで報告する */ }
   const receipt = path.join(tmpdir(), `modkh-receipt-${process.pid}-${Date.now().toString(36)}.json`);
   try {
     const child = spawn('agenticreplay', [

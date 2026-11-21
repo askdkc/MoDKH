@@ -9,6 +9,8 @@
 | 行入力モード | MODKH_PLAIN |
 | ワークスペース記録 | .modkh/sessions |
 | ワークスペーススキル設定 | .modkh/skills.json |
+| 通信記録 | .agenticreplay/runs |
+| .gitignore への追加 | .modkh/ と .agenticreplay/(.git があるワークスペースのみ) |
 | Lisp設定package | :modkh |
 | 組込み担当ID | modkh-worker、modkh-explorer |
 | CLI・LSP/MCPクライアント識別名 | modkh |

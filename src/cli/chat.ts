@@ -52,6 +52,7 @@ import { loadResumedSession, selectInitialConnection } from './initial-connectio
 import { keysPath, loadSavedKeys, saveKey, removeKey, savedKeyProviders, resolveApiKey, canonicalKeyProvider } from './keys.ts';
 import { parseReasoningLevel, REASONING_LEVELS, type ReasoningLevel } from '../model/reasoning.ts';
 import { recordSessionRecord } from '../session/workspace.ts';
+import { ensureWorkspaceIgnores } from './workspace-ignore.ts';
 
 /** Shown before a secret is typed; the file itself is never printed. */
 const keysHint = (): string => keysPath();
@@ -142,6 +143,13 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   if (args.routing && args.routing !== 'auto') throw new Error('--routing supports only explicit auto');
   if (args.routing && !lisp) throw new Error('--routing requires --lisp-config');
   const ui = opts.terminal ?? createTerminal(cwd);
+  // ワークスペース記録(.modkh/)を書く前に、.git があるワークスペースでは .gitignore を揃える。
+  // 失敗しても会話は止めない。ここで一度だけ理由を表示する。
+  try {
+    ensureWorkspaceIgnores(cwd);
+  } catch (e) {
+    ui.write(`(ワークスペースの .gitignore を更新できません: ${path.join(cwd, '.gitignore')} — ${(e as Error).message})\n`);
+  }
   let closeProjectMcp: (() => Promise<void>) | undefined;
   try {
   const config: LiteConfig = loadConfig();

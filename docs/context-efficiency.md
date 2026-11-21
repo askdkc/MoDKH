@@ -52,6 +52,8 @@ DSH固有の `kioku_*`、`lisp_*`、Akinator、Goal、lease、`coding_workflow`�
 - `.modkh/` をgitignoreしている場合、一覧を共有するには明示的に管理対象にしてください。
 - 埋め込み利用では `runAgentLoop` の `skills: false` で注入を無効化できます。
 
+`.git` があるワークスペースでは、起動時に `.gitignore` の末尾へ `.modkh/` と `.agenticreplay/` が無ければ追加します。既存の行は書き換えず、揃っていれば何もしません。`.git` が無いディレクトリは変更しません。書けない場合は起動時に一度だけ理由を表示し、会話は続けます。
+
 ## ツール出力
 
 AI SDK経由とChatGPT Responses経由の両方で、モデルに渡す投影だけを変更します。保存済みの原文・call ID・status・承認・再実行防止は変更しません。

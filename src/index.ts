@@ -57,7 +57,7 @@ OPENCODE_API_KEY は OpenCode Zen と Go の両方で使う(片方の入力で�
 
 TTYではMODKHロゴ・コマンド補完・検索メニューを表示。↑↓/Enterで選択、Escで戻る。
 出力は通常のスクリーンバッファに流れるので、端末のスクロール(マウスホイール等)で履歴を辿れる。
-各セッションの記録はワークスペースの .modkh/sessions/<id>.md にも保存される(.gitignoreに .modkh/ を追加している)。
+各セッションの記録はワークスペースの .modkh/sessions/<id>.md にも保存される(.git があるワークスペースでは .gitignore に .modkh/ と .agenticreplay/ を追加する)。
 timeoutMs(既定600000=10分)は応答の無通信時間の上限。config.json で 5000〜1800000 ms に変更できる。
 MODKH_PLAIN=1 modkh で行入力モード(スクリーンリーダー向け)。NO_COLORで色を無効化。
 `;
