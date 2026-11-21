@@ -1198,13 +1198,14 @@ export class TerminalUI implements ChatTerminal {
     const separatorRoom = serverRoom - serverRows.length;
     const rule = '─'.repeat(SIDEBAR_WIDTH - 4);
     const divider = separatorRoom >= 6 ? [' ', rule, ' '] : separatorRoom >= 2 ? [rule] : [];
-    const sidebar = ['', ...usageRows, ...(this.mcpRow ? [this.mcpRow] : []), ...(browseRow ? [browseRow] : []), ...divider,
+    const sidebar = ['', ...usageRows, ...(browseRow ? [browseRow] : []), ...divider,
       `${SUBAGENTS_HEADING} ${this.subagent?.runningCount ?? (this.subagent ? 1 : 0)}稼働 / 累計${this.delegationCount}`];
     if (pane) sidebar.push(`${pane.phase} · ${Math.floor((performance.now() - this.subagentStarted) / 1000)}秒`,
       pane.task.split(/\r?\n/, 1)[0], pane.pluginId);
     sidebar.push(...divider, `${SERVERS_HEADING} ${this.servers.length}稼働`, ...serverRows);
-    if (this.activity && !this.pending && this.color && this.animationEnabled && sidebar.length < rows) {
-      sidebar.push(whaleRow(Math.floor((performance.now() - this.activityStarted) / WHALE_FRAME_MS), SIDEBAR_WIDTH - 4));
+    if (this.mcpRow) sidebar.push(this.mcpRow);
+    if (this.activity && !this.pending && this.color && this.animationEnabled && rows - sidebar.length >= 4) {
+      sidebar.push(' ', rule, ' ', whaleRow(Math.floor((performance.now() - this.activityStarted) / WHALE_FRAME_MS), SIDEBAR_WIDTH - 4));
     }
     return sidebar;
   }

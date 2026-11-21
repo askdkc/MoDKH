@@ -59,11 +59,10 @@ test('the chat composer suggests workspace files, Tab fills the reference, and E
     fs.writeFileSync(path.join(home, 'notes.pdf'), pdf);
     input.emit('keypress', '@src/a.txt @frame.png @photo.JPG @notess.pdf 読める？', {});
     key('return');
-    await waitForScreen('未送信', '何を調べますか', '↑');
-    key('return'); // Empty Enter must not accept a suggestion.
-    await waitForScreen('何を調べますか', '↑ 前回の入力');
+    await waitForScreen('どのファイルを添付しますか', 'notes.pdf');
     assert.equal(model.requests.length, 0);
-    key('up');
+    key('return');
+    await waitForScreen('@notes.pdf 読める？');
     assert.match(visible(), /@notes\.pdf 読める？/);
     assert.doesNotMatch(visible(), /Coding Harness/, 'first submission errors belong in the conversation');
     assert.equal(model.requests.length, 0, 'a corrected draft must not send');

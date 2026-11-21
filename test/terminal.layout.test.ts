@@ -216,6 +216,27 @@ test('the active child uses a right-hand pane and does not move into the editor 
   } finally { t.ui.close(); }
 });
 
+test('waiting decoration has a padded divider and yields to connected server status on resize', () => {
+  const t = terminal(110, 30);
+  try {
+    t.ui.write('▶ You: 調査\n', 'user');
+    t.ui.setMcpServers(['svelte']);
+    t.ui.setAnimation(true);
+    t.ui.setActivity('待機中');
+    const rows = screenFrom(t.raw(), 30);
+    const whale = rows.findIndex(row => /🐋|🐳|🫍/u.test(row));
+    const status = rows.findIndex(row => row.includes('MCP 1接続中 · svelte'));
+    assert.ok(status > 0 && whale >= status + 4);
+    assert.match(rows[whale - 3], /│ +│$/);
+    assert.match(rows[whale - 2], /│ ─+ +│$/);
+    assert.match(rows[whale - 1], /│ +│$/);
+    t.output.rows = 9; t.output.emit('resize');
+    const compact = screenFrom(t.raw(), 9).join('\n');
+    assert.match(compact, /MCP 1接続中 · svelte/);
+    assert.doesNotMatch(compact, /🐋|🐳|🫍/u);
+  } finally { t.ui.close(); }
+});
+
 test('connected project MCP servers appear only while in use', () => {
   const t = terminal(110, 30);
   try {

@@ -9,7 +9,7 @@ import { formalTools } from '../tools/formal.ts';
 import path from 'node:path';
 
 import { pdfUsage, readPdfRequest } from './pdf.ts';
-import { readFileMentions } from './file-mentions.ts';
+import { findAttachmentCandidates, MissingAttachment, readFileMentions } from './file-mentions.ts';
 import { StagedAttachments } from './staged-attachments.ts';
 import { MAX_IMAGES, type ImageAttachment } from '../agent/images.ts';
 import type { PdfAttachment } from '../agent/documents.ts';
@@ -927,6 +927,14 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         catch (error) {
           const draft = error instanceof Error && 'draft' in error && typeof error.draft === 'string' ? error.draft : undefined;
           ui.write(`(未送信 — ファイル添付失敗: ${(error as Error).message})\n`);
+          if (error instanceof MissingAttachment && ui.interactive && ui.restoreDraft) {
+            const candidates = await findAttachmentCandidates(error.raw, cwd);
+            if (candidates.length) {
+              const selected = await ui.choose('どのファイルを添付しますか？', candidates.map(file => ({ value: file, label: path.basename(file), detail: file })));
+              ui.restoreDraft(selected && candidates.includes(selected) ? error.corrected(input, selected, cwd) : input);
+              continue;
+            }
+          }
           if (ui.rememberInput) {
             ui.rememberInput(draft ?? input);
             ui.write(draft ? '↑ で修正案を呼び出せます。内容を確認してから送信してください。\n' : '↑ で元の入力を呼び出して修正できます。\n');

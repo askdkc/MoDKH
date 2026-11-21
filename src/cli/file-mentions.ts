@@ -50,6 +50,81 @@ function submittedPath(root: string, file: string): string {
   }
 }
 
+// A single insertion, deletion, substitution or adjacent transposition.
+function nearbyName(expected: string, actual: string): boolean {
+  const a = expected.toLowerCase(), b = actual.toLowerCase();
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && a[i] === b[i]) i++;
+  if (a.length !== b.length) return a.slice(i + Number(a.length > b.length)) === b.slice(i + Number(b.length > a.length));
+  return a.slice(i + 1) === b.slice(i + 1) ||
+    (a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2));
+}
+
+async function matchingEntries(dir: string, name: string, directories: boolean): Promise<string[]> {
+  const matches: string[] = [];
+  let inspected = 0;
+  for await (const entry of await fs.promises.opendir(dir)) {
+    if (++inspected > 4096) break;
+    if (!(directories ? entry.isDirectory() : entry.isFile()) || entry.name.startsWith('.') || /[\p{Cc}\p{Cf}]/u.test(entry.name)) continue;
+    if (nearbyName(name, entry.name)) matches.push(entry.name);
+  }
+  return matches.sort((a, b) => Number(b === name) - Number(a === name) || a.localeCompare(b)).slice(0, 5);
+}
+
+/** Suggest paths only; selecting and loading a candidate are separate steps. */
+export async function findAttachmentCandidates(raw: string, cwd: string): Promise<string[]> {
+  if (!raw || raw.endsWith(path.sep)) return [];
+  const root = path.resolve(cwd);
+  const file = path.resolve(root, raw.startsWith('~/') ? path.join(os.homedir(), raw.slice(2)) : raw);
+  if (file.split(path.sep).includes('.git')) return [];
+  const relative = path.relative(root, file);
+  const external = relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+  function checked(p: string): string {
+    const real = external ? fs.realpathSync(p) : workspacePath(root, path.relative(root, p) || '.');
+    if (real.split(path.sep).includes('.git')) throw new Error('.git は添付できません');
+    return real;
+  }
+  const parent = path.dirname(file);
+  const results = new Set<string>();
+  try {
+    let dirs: string[];
+    try { checked(parent); dirs = [parent]; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || parent === root) return [];
+      const grandparent = path.dirname(parent);
+      const names = await matchingEntries(checked(grandparent), path.basename(parent), true);
+      dirs = names.map(name => path.join(grandparent, name));
+    }
+    for (const dir of dirs) {
+      try {
+        const names = await matchingEntries(checked(dir), path.basename(file), false);
+        for (const name of names) {
+          const real = checked(path.join(dir, name));
+          if ((await fs.promises.stat(real)).isFile()) results.add(real);
+          if (results.size === 5) return [...results];
+        }
+      } catch { /* Directory unavailable or changed since enumeration. */ }
+    }
+  } catch { /* No readable parent to search. */ }
+  return [...results];
+}
+
+export class MissingAttachment extends Error {
+  readonly raw: string;
+  readonly start: number;
+  readonly end: number;
+  constructor(message: string, raw: string, start: number, end: number) {
+    super(message); this.raw = raw; this.start = start; this.end = end;
+  }
+
+  corrected(input: string, selected: string, root: string): string {
+    const local = path.relative(fs.realpathSync(root), selected);
+    const file = !path.isAbsolute(this.raw) && !this.raw.startsWith('~/') && local && !local.startsWith('..') ? local : selected;
+    return input.slice(0, this.start) + formatFileMention(file) + input.slice(this.end);
+  }
+}
+
 export type FileMention = { start: number; end: number; query: string };
 export type FileCandidate = { path: string; directory: boolean };
 
@@ -180,8 +255,9 @@ export function readFileMentions(root: string, input: string, store: import('./s
         : code === 'ENOENT' || code === 'ENOTDIR' ? 'ファイルが見つかりません'
         : code === 'OUT_OF_ROOT' ? '作業ルートの外は参照できません'
         : code ? 'ファイルを読み込めません' : (error as Error).message;
-      const failure = new Error(`${JSON.stringify(mention)}: ${reason}`);
       const nearby = error instanceof Error ? error.cause as ReturnType<typeof nearbyFiles> | undefined : undefined;
+      const message = `${JSON.stringify(mention)}: ${reason}`;
+      const failure = nearby && typeof nearby.hint === 'string' ? new MissingAttachment(message, file, match.index, match.index + mention.length) : new Error(message);
       if (nearby?.replacement && path.basename(file) === file.slice(file.lastIndexOf('/') + 1)) {
         const corrected = file.slice(0, file.lastIndexOf('/') + 1) + nearby.replacement;
         const token = mention.startsWith('@') ? formatFileMention(corrected)
