@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { nearbyFileNames } from './nearby-file-names.ts';
 import { resolveInRoot } from '../tools/guard.ts';
 
 import { MENTION_BYTE_LIMIT, parsePdfs, type PdfAttachment } from '../agent/documents.ts';
@@ -10,6 +12,30 @@ const OMIT_FROM_CANDIDATES = new Set(['node_modules', 'dist']);
 
 // A mention starts at a whitespace boundary. Quoting is required for spaces.
 const tokens = /(?<!\S)@(?:"(?:[^"\\\r\n]|\\["\\])*"?|[^\s"]*)/gu;
+
+// Unlike @ completion, explicit paths are recognized only on user submission.
+const submittedPaths = /(?<!\S)(?:@(?:"(?:[^"\\\r\n]|\\["\\])*"?|[^\s"]*)|"(?:~\/|\.{1,2}\/|\/(?!\/))[^"\r\n]+"|(?:~\/|\.{1,2}\/|\/(?!\/)(?=[^\s"]*[/.]))[^\s"]+)/gu;
+
+function submittedPath(root: string, file: string): string {
+  const absolute = path.resolve(root, file.startsWith('~/') ? path.join(os.homedir(), file.slice(2)) : file);
+  const relative = path.relative(root, absolute);
+  const external = relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+  try {
+    if (!external) return workspacePath(root, relative || '.');
+    const real = fs.realpathSync(absolute);
+    if (real.split(path.sep).includes('.git')) throw new Error('.git は添付できません');
+    return real;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    // Relative workspace references must not enumerate through an escaping symlink.
+    let suggestions = '';
+    try {
+      if (!external) workspacePath(root, path.dirname(relative));
+      suggestions = nearbyFileNames(absolute);
+    } catch { /* parent unavailable */ }
+    throw new Error(`ファイルが見つかりません${suggestions}`);
+  }
+}
 
 export type FileMention = { start: number; end: number; query: string };
 export type FileCandidate = { path: string; directory: boolean };
@@ -66,13 +92,13 @@ export function fileCandidates(root: string, query: string, acceptFile: (name: s
 }
 
 function readAttachment(root: string, file: string, remaining: number, inlineLimit: number, store: import('./staged-attachments.ts').StagedAttachments, kind: 'text' | 'png' | 'jpeg' | 'pdf') {
-  const real = workspacePath(root, file);
+  const real = submittedPath(root, file);
   const fd = fs.openSync(real, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW);
   try {
     const stat = fs.fstatSync(fd);
     if (!stat.isFile()) throw new Error('通常のファイルを指定してください');
     // Recheck containment and identity after opening, before reading from the descriptor.
-    const current = fs.statSync(workspacePath(root, file));
+    const current = fs.statSync(submittedPath(root, file));
     if (stat.dev !== current.dev || stat.ino !== current.ino) throw new Error('ファイルが変更されました。もう一度送信してください');
     const tooLarge = '添付ファイルは合計256 MiB以内にしてください';
     if (stat.size > remaining) throw new Error(tooLarge);
@@ -100,9 +126,9 @@ export function readFileMentions(root: string, input: string, store: import('./s
   const texts: { path: string; content: string }[] = [];
   const images: ImageAttachment[] = [], pdfs: PdfAttachment[] = [];
   let remaining = MENTION_BYTE_LIMIT;
-  for (const [mention] of input.matchAll(tokens)) {
+  for (const [mention] of input.matchAll(submittedPaths)) {
     if (mention === '@') continue;
-    const value = mention.slice(1);
+    const value = mention.startsWith('@') ? mention.slice(1) : mention;
     let file = value;
     try {
       if (value.startsWith('"')) file = JSON.parse(value);

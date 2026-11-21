@@ -895,7 +895,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           if (ui.interactive) ui.write(`\n▶ You: ${input.trim()}\n`, 'user');
           ui.setActivity?.('PDFを読み込み中… Ctrl+Cで中止');
           pdf = await readPdfRequest(cwd, input.trim(), ac.signal, MAX_IMAGES - (ui.imageCount ?? 0), async file => {
-            const answer = await ui.confirm(`作業ルート外のPDF ${JSON.stringify(file)} を今回だけ読み込み、選んだページの本文と画像をモデルに送信しますか？`, ac.signal);
+            const answer = await ui.confirm(`指定したパスは作業ルート外のPDF ${JSON.stringify(file)} を参照しています。今回だけ読み込み、選んだページの本文と画像をモデルに送信しますか？`, ac.signal);
             return /^(y|yes)$/i.test(answer?.trim() ?? '');
           }, (page, total) => ui.setActivity?.(`PDFの ${page}/${total} ページを変換中… Ctrl+Cで中止`));
           ac.signal.throwIfAborted();

@@ -4,6 +4,7 @@ import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import os from 'node:os';
+import { nearbyFileNames } from './nearby-file-names.ts';
 import path from 'node:path';
 import { MAX_IMAGES, MAX_IMAGE_BYTES, parseImage, type ImageAttachment } from '../agent/images.ts';
 
@@ -54,12 +55,15 @@ export async function readPdfRequest(root: string, line: string, signal: AbortSi
   confirmExternal?: (file: string) => Promise<boolean>, onPage?: (current: number, total: number) => void) {
   const { filename, prompt, start, end } = parsePdfRequest(line);
   const requested = filename.startsWith('~/') ? path.join(os.homedir(), filename.slice(2)) : path.resolve(root, filename);
-  const file = await fs.realpath(requested).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') throw new Error(`PDFが見つかりません: ${filename}。パスを確認してください。対話端末では /pdf @ の候補を Tab で補完できます`);
+  const file = await fs.realpath(requested).catch(async (error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') throw new Error(`PDFが見つかりません: ${filename}。パスを確認してください。対話端末では /pdf @ の候補を Tab で補完できます${await nearbyFileNames(requested)}`);
     throw error;
   });
-  const relative = path.relative(await fs.realpath(root), file);
-  const external = relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+  const outside = (base: string, target: string) => {
+    const relative = path.relative(base, target);
+    return relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+  };
+  const external = !outside(root, requested) && outside(await fs.realpath(root), file);
   const stat = await fs.lstat(file);
   if (!stat.isFile() || stat.size > 512 * 1024 * 1024) throw new Error('512 MiB以内のPDFファイルを指定してください');
   if (external && !await confirmExternal?.(file)) throw new Error('作業ルート外のPDFの読み込みは許可されませんでした');

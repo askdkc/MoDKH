@@ -46,6 +46,11 @@ test('PDF chat command attaches the selected page and its text to the coding tur
   fs.writeFileSync(external, pdf);
   fs.symlinkSync(external, path.join(root, 'linked.pdf'));
   await assert.rejects(readPdfRequest(root, '/pdf @linked.pdf', new AbortController().signal, 4), /許可/);
+  await assert.rejects(readPdfRequest(root, '/pdf @design spe.pdf', new AbortController().signal, 4), /design spec\.pdf/);
+  for (const filename of [external, path.relative(root, external)]) {
+    const result = await readPdfRequest(root, `/pdf --pages 2 @"${filename.split(path.sep).join('/')}"`, new AbortController().signal, 4);
+    assert.match(result.text, /Build the red button/);
+  }
   const input = new PassThrough() as unknown as ReadStream;
   input.isRaw = false;
   input.setRawMode = value => { input.isRaw = value; return input; };
@@ -105,7 +110,7 @@ test('PDF chat command attaches the selected page and its text to the coding tur
   let output = '';
   child.stdout.on('data', chunk => { output += chunk; });
   child.stderr.on('data', chunk => { output += chunk; });
-  child.stdin.end(`/pdf @new\n/pdf --pages 3 design spec.pdf | invalid\n/pdf @linked.pdf\nn\n/pdf --pages 2 ~/Downloads/mobatike.pdf | Implement this layout\ny\n/exit\n`);
+  child.stdin.end(`/pdf @new\n/pdf --pages 3 design spec.pdf | invalid\n/pdf @linked.pdf\nn\n/pdf --pages 2 ~/Downloads/mobatike.pdf | Implement this layout\n/exit\n`);
   assert.equal((await once(child, 'close'))[0], 0, output);
   assert.match(output, /PDFが見つかりません: new[^\n]*Tab/);
   assert.equal(requests.length, 2, output);
