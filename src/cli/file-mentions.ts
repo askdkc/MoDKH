@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { nearbyFileNames } from './nearby-file-names.ts';
+import { nearbyFiles } from './nearby-file-names.ts';
 import { resolveInRoot } from '../tools/guard.ts';
 
 import { MENTION_BYTE_LIMIT, parsePdfs, type PdfAttachment } from '../agent/documents.ts';
@@ -28,12 +28,12 @@ function submittedPath(root: string, file: string): string {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     // Relative workspace references must not enumerate through an escaping symlink.
-    let suggestions = '';
+    let nearby: ReturnType<typeof nearbyFiles> = { hint: '' };
     try {
       if (!external) workspacePath(root, path.dirname(relative));
-      suggestions = nearbyFileNames(absolute);
+      nearby = nearbyFiles(absolute);
     } catch { /* parent unavailable */ }
-    throw new Error(`ファイルが見つかりません${suggestions}`);
+    throw new Error(`ファイルが見つかりません${nearby.hint}`, { cause: nearby });
   }
 }
 
@@ -126,7 +126,8 @@ export function readFileMentions(root: string, input: string, store: import('./s
   const texts: { path: string; content: string }[] = [];
   const images: ImageAttachment[] = [], pdfs: PdfAttachment[] = [];
   let remaining = MENTION_BYTE_LIMIT;
-  for (const [mention] of input.matchAll(submittedPaths)) {
+  for (const match of input.matchAll(submittedPaths)) {
+    const mention = match[0];
     if (mention === '@') continue;
     const value = mention.startsWith('@') ? mention.slice(1) : mention;
     let file = value;
@@ -166,7 +167,17 @@ export function readFileMentions(root: string, input: string, store: import('./s
         : code === 'ENOENT' || code === 'ENOTDIR' ? 'ファイルが見つかりません'
         : code === 'OUT_OF_ROOT' ? '作業ルートの外は参照できません'
         : code ? 'ファイルを読み込めません' : (error as Error).message;
-      throw new Error(`${JSON.stringify(mention)}: ${reason}`);
+      const failure = new Error(`${JSON.stringify(mention)}: ${reason}`);
+      const nearby = error instanceof Error ? error.cause as ReturnType<typeof nearbyFiles> | undefined : undefined;
+      if (nearby?.replacement && path.basename(file) === file.slice(file.lastIndexOf('/') + 1)) {
+        const corrected = file.slice(0, file.lastIndexOf('/') + 1) + nearby.replacement;
+        const token = mention.startsWith('@') ? formatFileMention(corrected)
+          : value.startsWith('"') || /[\s"\\]/u.test(corrected) ? JSON.stringify(corrected) : corrected;
+        if (Array.from(token.matchAll(submittedPaths))[0]?.[0] === token) {
+          throw Object.assign(failure, { draft: input.slice(0, match.index) + token + input.slice(match.index + mention.length) });
+        }
+      }
+      throw failure;
     }
   }
   if (!attachments.size) return undefined;

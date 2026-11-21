@@ -57,7 +57,11 @@ test('the chat composer suggests workspace files, Tab fills the reference, and E
     fs.writeFileSync(path.join(home, 'photo.JPG'), jpg);
     const pdf = Buffer.from('%PDF-1.4\n%%EOF\n');
     fs.writeFileSync(path.join(home, 'notes.pdf'), pdf);
-    input.emit('keypress', '@src/a.txt @frame.png @photo.JPG @notes.pdf', {});
+    input.emit('keypress', '@src/a.txt @frame.png @photo.JPG @notess.pdf 読める？', {});
+    key('return');
+    await waitForScreen('Enter で再送', '@notes.pdf 読める？');
+    assert.doesNotMatch(visible(), /Coding Harness/, 'first submission errors belong in the conversation');
+    assert.equal(model.requests.length, 0, 'a corrected draft must not send');
     key('return');
     await waitForScreen('ANSWER', '何を調べますか');
     const user = model.requests[0].messages.find(message => message.role === 'user');

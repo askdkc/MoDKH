@@ -915,8 +915,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           if ((files?.images.length ?? 0) + (ui.imageCount ?? 0) > MAX_IMAGES) throw new Error(`添付画像は最大${MAX_IMAGES}枚です`);
         }
         catch (error) {
+          const draft = error instanceof Error && 'draft' in error && typeof error.draft === 'string' ? error.draft : undefined;
           ui.write(`(ファイル添付失敗: ${(error as Error).message})\n`);
-          ui.restoreDraft?.(input);
+          ui.restoreDraft?.(draft ?? input);
+          if (draft && ui.restoreDraft) ui.write('ファイル名を修正した下書きを確認し、Enter で再送してください。\n');
           continue;
         }
         // Attachments belong to the chat model, not an automatically chosen child.

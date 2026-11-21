@@ -21,6 +21,12 @@ test('a user-supplied external path attaches exactly that PDF, a typo only sugge
   const data = Buffer.from('%PDF-1.4\n%%EOF\n');
   fs.writeFileSync(path.join(downloads, 'newkoku.pdf'), data);
   assert.throws(() => readFileMentions(root, '~/Downloads/newkok.pdf 読める？', store), /候補: "newkoku.pdf"/);
+  const input = '質問: ~/Downloads/newkokusho.pdf 読める？';
+  assert.throws(() => readFileMentions(root, input, store), { draft: '質問: ~/Downloads/newkoku.pdf 読める？' });
+  fs.writeFileSync(path.join(downloads, 'newkokushi.pdf'), data);
+  for (const typo of [input, '~/Downloads/unrelated.pdf 読める？']) {
+    assert.throws(() => readFileMentions(root, typo, store), error => error instanceof Error && !('draft' in error));
+  }
   assert.deepEqual(readFileMentions(root, '~/Downloads/newkoku.pdf 読める？', store)?.pdfs,
     [{ filename: 'newkoku.pdf', data: data.toString('base64') }]);
 });

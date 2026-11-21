@@ -555,7 +555,10 @@ export class TerminalUI implements ChatTerminal {
         signal?.removeEventListener('abort', abort);
         this.clipboardTask?.abort(); this.clipboardTask = undefined;
         this.paste = false; this.pasteBuffer = ''; this.pasteBytes = 0;
-        if (composer && value?.trim() && !isChatCommand(value)) this.previousInput = value;
+        if (composer && (value?.trim() || (value !== null && this.images.length))) {
+          this.started = true; // Leave the welcome screen before submission validation writes feedback.
+          if (value?.trim() && !isChatCommand(value)) this.previousInput = value;
+        }
         if (value === null && composer) this.images = [];
         this.pending = undefined;
         this.text = draft?.text ?? ''; this.cursor = draft?.cursor ?? 0;
