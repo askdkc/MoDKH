@@ -20,6 +20,7 @@ import { PluginManager } from '../plugins/manager.ts';
 import { SubagentService, subagentTools } from '../subagents/service.ts';
 import type { DelegationRequest } from '../subagents/types.ts';
 import { runDirectAgent } from './agents.ts';
+import { formatHostCoverageNotice, readRecordingScope } from './agenticreplay.ts';
 import { providerSubagentLimit, parseSubagentLimit } from '../subagents/limits.ts';
 import { parseAgentSettings } from '../subagents/settings.ts';
 import { projectMcpTools } from '../tools/project-mcp.ts';
@@ -28,7 +29,7 @@ import { BrowseTabs, watchBrowseActivity } from '../tools/browse.ts';
 import { JobRegistry } from '../tools/jobs.ts';
 import { runAgentLoop } from '../agent/loop.ts';
 import { prepareSkillContext, mergeSkillContext, type SkillContext } from '../agent/skills.ts';
-import { parseModelRef, providerKeyEnv } from '../model/factory.ts';
+import { parseModelRef, providerKeyEnv, modelBaseUrl as modelBaseUrlFor } from '../model/factory.ts';
 import { selectModel } from './models.ts';
 import { loginChatGpt, type LoginOptions } from '../model/chatgpt/login.ts';
 import { loadChatGptTokens } from '../model/chatgpt/tokens.ts';
@@ -612,6 +613,20 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     }
   };
 
+  /**
+   * 接続先がこの実行の記録対象か照合し、対象外のときだけ一度知らせる。
+   * 記録器が動いていない・対象かどうか判定できない場合は何も言わない(未確認を警告にしない)。
+   */
+  const reportRecordingCoverage = (target: ChatTerminal, ref: string, baseUrl?: string): void => {
+    const provider = parseModelRef(ref).provider;
+    const url = URL.parse(modelBaseUrlFor(provider, baseUrl) ?? '');
+    if (url?.protocol !== 'https:') return;
+    const scope = readRecordingScope();
+    if (!scope?.active) return;
+    const notice = formatHostCoverageNotice(url.hostname, scope);
+    if (notice) target.write(notice);
+  };
+
   const connectModel = async (ref: string, baseUrl?: string): Promise<void> => {
     try {
       parseModelRef(ref);
@@ -636,6 +651,9 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       connectionBaseUrl = baseUrl;
       ui.setModel(ref);
       ui.write(`接続しました: ${ref} (API到達は送信時に確認)\n`);
+      // 記録は起動時の対象ホストに固定される。切り替え先が対象外なら、その区間が
+      // 記録に残らないことを一度だけ伝える。接続自体は止めない。
+      reportRecordingCoverage(ui, ref, baseUrl);
       // 次回起動時に同じ接続で開けるよう保存する(workspace外の設定ディレクトリに書く)。
       if (ref.startsWith('fixed/')) {
         ui.write('(検証専用: 依頼を解釈しない固定手順です。通常の接続設定には保存しません)\n');

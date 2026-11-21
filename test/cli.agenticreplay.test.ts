@@ -84,6 +84,277 @@ AGENTICREPLAY_TLS_CA=active exec "$@"
   assert.deepEqual(run('0', ['--resume', resume.id], '1', 1), ['version']);
 });
 
+test('a recording that falls short is reported without changing the conversation exit code', {
+  skip: process.platform === 'win32', timeout: 30_000,
+}, t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-replay-recording-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const project = path.join(root, 'project');
+  fs.mkdirSync(project);
+  // The fake recorder reports a run directory through the child's own CA path, exactly like the
+  // real one, and the manifest decides the recording status. Only the conversation exit code is
+  // the recorder's to report: capture completeness must stay a separate signal.
+  const scenario = path.join(root, 'scenario.json');
+  fs.writeFileSync(path.join(root, 'agenticreplay'), `#!/bin/sh
+if [ "$1" = version ]; then echo 0.1.25; exit 0; fi
+while [ "$1" != -- ]; do shift; done
+shift
+exec node "$REPLAY_DRIVER" "$@"
+`, { mode: 0o700 });
+  fs.writeFileSync(path.join(root, 'driver.cjs'), `
+const fs = require('node:fs');
+const path = require('node:path');
+const scenario = JSON.parse(fs.readFileSync(process.env.REPLAY_SCENARIO, 'utf8'));
+const runDir = path.join(process.env.REPLAY_ROOT, 'runs', '20260101000000-exec-session-' + scenario.runId);
+if (scenario.writeManifest !== false) {
+  fs.mkdirSync(path.join(runDir, 'tls'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ run_id: scenario.runId, capture: scenario.capture }));
+} else {
+  // A previous call reused the same directory; only an absent manifest is the case under test.
+  fs.rmSync(runDir, { recursive: true, force: true });
+}
+// Only the recorder's own child gets this path, which is how the run is correlated.
+if (scenario.reportCa !== false) process.env.AGENTICREPLAY_TLS_CA = path.join(runDir, 'tls', 'ca.crt');
+const child = require('node:child_process').spawn(process.argv[2], process.argv.slice(3), { stdio: 'inherit' });
+child.on('close', code => process.exit(scenario.recorderExit ?? code ?? 0));
+`);
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${root}${path.delimiter}${process.env.PATH ?? ''}`,
+    MODKH_HOME: root, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '1',
+    REPLAY_SCENARIO: scenario, REPLAY_ROOT: root, REPLAY_DRIVER: path.join(root, 'driver.cjs') };
+  delete env.AGENTICREPLAY_TLS_CA;
+  delete env.AGENTICREPLAY_PROXY_URL;
+
+  const run = (capture: object, extra: { runId?: string; recorderExit?: number; writeManifest?: boolean; reportCa?: boolean } = {}) => {
+    fs.writeFileSync(scenario, JSON.stringify({ runId: 'run_test0001', ...extra, capture }));
+    const result = spawnSync(process.execPath, [entry, '--cwd', project, '--model', 'fixed/scripted'], {
+      cwd: root, env, input: '/exit\n', encoding: 'utf8', timeout: 20_000,
+    });
+    assert.ifError(result.error);
+    return result;
+  };
+
+  // Conversation completed and the recording is whole: nothing to say.
+  const complete = run({ status: 'complete', issues: [], requests: 1, responses: 1 });
+  assert.equal(complete.status, 0, complete.stdout + complete.stderr);
+  assert.doesNotMatch(complete.stderr, /記録:/);
+
+  // Conversation completed but the recording has no model request (closed before the first one).
+  const empty = run({ status: 'incomplete', issues: ['no_requests_observed'], requests: 0, responses: 0 });
+  assert.equal(empty.status, 0, 'the conversation still succeeded');
+  assert.match(empty.stderr, /記録: モデル要求を観測していません/);
+  assert.match(empty.stderr, /run_test0001/, 'the report names this run, not the newest directory');
+  assert.match(empty.stderr, /終了コードは変えていません/);
+  assert.doesNotMatch(empty.stderr + empty.stdout, new RegExp(root), 'no absolute paths leak into the report');
+
+  // Conversation completed, recording truncated mid-stream: still its own axis.
+  const partial = run({ status: 'incomplete', issues: ['response_body_truncated'], requests: 2, responses: 1 });
+  assert.equal(partial.status, 0);
+  assert.match(partial.stderr, /記録: 不完全/);
+  assert.match(partial.stderr, /要求2\/応答1/);
+
+  // A completed conversation whose recorder reported an error status keeps that exit code.
+  const failed = run({ status: 'complete', issues: [] }, { recorderExit: 5 });
+  assert.equal(failed.status, 5, 'the recorder failure is not hidden');
+  assert.doesNotMatch(failed.stderr, /記録:/, 'a complete recording is quiet even then');
+
+  // No manifest at all: the run cannot be verified, and the report says so instead of guessing.
+  const unverified = run({ status: 'complete', issues: [] }, { writeManifest: false });
+  assert.equal(unverified.status, 0);
+  assert.match(unverified.stderr, /記録: 未検証/);
+  assert.doesNotMatch(unverified.stderr, /run_test0001/, 'nothing was correlated, so no run is claimed');
+});
+
+test('recording stays quiet when it is turned off explicitly', {
+  skip: process.platform === 'win32', timeout: 20_000,
+}, t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-replay-off-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  // An opt-out is not a recording failure. Nothing is launched and nothing is reported.
+  const result = spawnSync(process.execPath, [entry, '--model', 'fixed/scripted'], {
+    cwd: root, input: '/exit\n', encoding: 'utf8', timeout: 20_000,
+    env: { ...process.env, MODKH_HOME: root, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '0' },
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(result.stderr.trim(), '', 'explicitly disabled recording says nothing');
+  assert.equal(fs.existsSync(path.join(root, '.agenticreplay')), false, 'no recording was started');
+});
+
+test('parallel recorded runs each report their own run', {
+  skip: process.platform === 'win32', timeout: 40_000,
+}, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-replay-parallel-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const project = path.join(root, 'project');
+  fs.mkdirSync(project);
+  fs.writeFileSync(path.join(root, 'driver.cjs'), `
+const fs = require('node:fs');
+const path = require('node:path');
+const run = process.env.REPLAY_RUN;
+const dir = path.join(process.env.REPLAY_ROOT, 'runs', '20260101000000-exec-session-' + run);
+const child = require('node:child_process').spawn(process.argv[2], process.argv.slice(3), {
+  stdio: 'inherit',
+  // Only this recorder's own child sees the CA path, which is how the run is correlated.
+  env: { ...process.env, AGENTICREPLAY_TLS_CA: path.join(dir, 'tls', 'ca.crt') },
+});
+// The manifest only appears once the child has finished, exactly when the recorder seals the run.
+child.on('close', code => {
+  fs.mkdirSync(path.join(dir, 'tls'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
+    run_id: run, capture: { status: 'incomplete', issues: ['no_requests_observed'], requests: 0, responses: 0 },
+  }));
+  process.exit(code ?? 0);
+});
+`);
+  fs.writeFileSync(path.join(root, 'agenticreplay'), `#!/bin/sh
+if [ "$1" = version ]; then echo 0.1.25; exit 0; fi
+while [ "$1" != -- ]; do shift; done
+shift
+exec node "$REPLAY_DRIVER" "$@"
+`, { mode: 0o700 });
+  const runOne = (index: number) => new Promise<string>((resolve, reject) => {
+    const run = `run_par0000${index}`;
+    const env: NodeJS.ProcessEnv = {
+      ...process.env, PATH: `${root}${path.delimiter}${process.env.PATH ?? ''}`,
+      MODKH_HOME: path.join(root, `home${index}`), MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '1',
+      REPLAY_DRIVER: path.join(root, 'driver.cjs'), REPLAY_ROOT: root, REPLAY_RUN: run,
+    };
+    // The test runner itself may be inside another recorder; this run must start its own.
+    delete env.AGENTICREPLAY_TLS_CA;
+    delete env.AGENTICREPLAY_PROXY_URL;
+    const child = spawn(process.execPath, [entry, '--model', 'fixed/scripted'], { cwd: root, env });
+    let stderr = '';
+    child.stderr.on('data', data => { stderr += data; });
+    child.stdin.end('/exit\n');
+    child.once('error', reject);
+    child.once('close', code => { assert.equal(code, 0, stderr); resolve(stderr); });
+  });
+  // Two runs in the same workspace at once: the report must name the run each one produced,
+  // never whichever directory happens to be newest.
+  const [first, second] = await Promise.all([runOne(1), runOne(2)]);
+  assert.match(first, /run_par00001/);
+  assert.doesNotMatch(first, /run_par00002/);
+  assert.match(second, /run_par00002/);
+  assert.doesNotMatch(second, /run_par00001/);
+});
+
+test('an interrupted conversation still reports its recording and keeps the interrupt', {
+  skip: process.platform === 'win32', timeout: 30_000,
+}, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-replay-sigint-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, 'driver.cjs'), `
+const fs = require('node:fs');
+const path = require('node:path');
+const dir = path.join(process.env.REPLAY_ROOT, 'runs', '20260101000000-exec-session-run_sig000001');
+// The real recorder writes its run directory and manifest before the agent starts, so an
+// interrupt still leaves the run identifiable.
+fs.mkdirSync(path.join(dir, 'tls'), { recursive: true });
+fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
+  run_id: 'run_sig000001', capture: { status: 'incomplete', issues: ['no_requests_observed'], requests: 0, responses: 0 },
+}));
+const child = require('node:child_process').spawn(process.argv[2], process.argv.slice(3), {
+  stdio: 'inherit', env: { ...process.env, AGENTICREPLAY_TLS_CA: path.join(dir, 'tls', 'ca.crt') },
+});
+child.on('close', () => {
+  // The recorder collapses an incomplete recording to 2; the conversation was interrupted.
+  process.exit(2);
+});
+`);
+  fs.writeFileSync(path.join(root, 'agenticreplay'), `#!/bin/sh
+if [ "$1" = version ]; then echo 0.1.25; exit 0; fi
+while [ "$1" != -- ]; do shift; done
+shift
+exec node "$REPLAY_DRIVER" "$@"
+`, { mode: 0o700 });
+  const env: NodeJS.ProcessEnv = {
+    ...process.env, PATH: `${root}${path.delimiter}${process.env.PATH ?? ''}`,
+    MODKH_HOME: root, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '1',
+    REPLAY_DRIVER: path.join(root, 'driver.cjs'), REPLAY_ROOT: root,
+  };
+  delete env.AGENTICREPLAY_TLS_CA;
+  delete env.AGENTICREPLAY_PROXY_URL;
+  const child = spawn(process.execPath, [entry, '--model', 'fixed/scripted'], { cwd: root, env });
+  let stderr = '';
+  child.stderr.on('data', data => { stderr += data; });
+  // Interrupt only once the recorded conversation is actually up, the way a human would.
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`prompt did not appear: ${stderr}`)), 15_000);
+    child.stdout.on('data', data => {
+      if (!String(data).includes('入力してください')) return;
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+  child.kill('SIGINT');
+  const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (exitCode, exitSignal) => resolve([exitCode, exitSignal]));
+  });
+  // The conversation was interrupted, so the run does not look like a success.
+  assert.ok(code !== 0 || signal !== null, `an interrupted run must not report success: ${code}/${signal} ${stderr}`);
+  // The recording is still described on its own axis, with the run it actually produced.
+  assert.match(stderr, /記録: モデル要求を観測していません/);
+  assert.match(stderr, /run_sig000001/);
+});
+
+test('a host outside the recorded set is named once, and the connection still works', {
+  skip: process.platform === 'win32', timeout: 30_000,
+}, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-replay-scope-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const runId = 'run_scope00001';
+  const dir = path.join(root, 'runs', `20260101000000-exec-session-${runId}`);
+  fs.mkdirSync(path.join(dir, 'tls'), { recursive: true });
+  // The recorder announces the hosts it decrypts as the first event of this run, before the
+  // agent starts — that is what lets the child judge a later /connect without guessing.
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), `${JSON.stringify({
+    seq: 1, type: 'note', actor: 'agenticreplay',
+    attrs: { rule: 'tls_intercept', hosts: 'api.deepseek.com, *.chatgpt.com' },
+  })}\n`);
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
+    run_id: runId, capture: { status: 'incomplete', issues: ['unobserved_tunnel_body'], requests: 1, responses: 1 },
+  }));
+  fs.writeFileSync(path.join(root, 'driver.cjs'), `
+const fs = require('node:fs');
+const path = require('node:path');
+const runDir = ${JSON.stringify(dir)};
+const child = require('node:child_process').spawn(process.argv[2], process.argv.slice(3), {
+  stdio: 'inherit', env: { ...process.env, AGENTICREPLAY_TLS_CA: path.join(runDir, 'tls', 'ca.crt') },
+});
+child.on('close', () => process.exit(2));
+`);
+  fs.writeFileSync(path.join(root, 'agenticreplay'), `#!/bin/sh
+if [ "$1" = version ]; then echo 0.1.25; exit 0; fi
+while [ "$1" != -- ]; do shift; done
+shift
+exec node "$REPLAY_DRIVER" "$@"
+`, { mode: 0o700 });
+  const env: NodeJS.ProcessEnv = {
+    ...process.env, PATH: `${root}${path.delimiter}${process.env.PATH ?? ''}`,
+    MODKH_HOME: root, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '1', REPLAY_DRIVER: path.join(root, 'driver.cjs'),
+  };
+  delete env.AGENTICREPLAY_TLS_CA;
+  delete env.AGENTICREPLAY_PROXY_URL;
+  const child = spawn(process.execPath, [entry, '--model', 'fixed/scripted'], { cwd: root, env });
+  let output = '';
+  child.stdout.on('data', data => { output += data; });
+  child.stderr.on('data', data => { output += data; });
+  await new Promise<void>(resolve => setTimeout(resolve, 400));
+  // Two switches: one to a host the run decrypts, one outside it.
+  child.stdin.write('/connect compatible/inside --base-url https://api.deepseek.com/v1\n');
+  child.stdin.write('/connect compatible/outside --base-url https://models.other.test/v1\n');
+  child.stdin.end('/exit\n');
+  await new Promise<void>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', () => resolve());
+  });
+  assert.match(output, /接続しました: compatible\/outside/, 'a host outside the set still connects');
+  assert.equal((output.match(/記録対象外/g) ?? []).length, 1, `named once: ${output}`);
+  assert.match(output, /models\.other\.test は記録対象外/);
+  assert.doesNotMatch(output, /api\.deepseek\.com は記録対象外/, 'a decrypted host is not reported');
+});
+
 test('AgenticReplay records local HTTP model calls after switching providers', {
   skip: process.platform === 'win32', timeout: 30_000,
 }, async t => {

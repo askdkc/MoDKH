@@ -115,10 +115,14 @@ export function main(argv: readonly string[]): void {
 async function dispatch(cmd: string, args: Record<string, string | undefined>, argv: readonly string[]): Promise<void> {
   try {
     if (cmd === 'chat') {
-      const { recordChat } = await import('./cli/agenticreplay.ts');
-      const exitCode = await recordChat(fileURLToPath(import.meta.url), argv, args);
-      if (exitCode !== undefined) {
-        process.exitCode = exitCode;
+      const { recordChat, formatRecordingDiagnostic } = await import('./cli/agenticreplay.ts');
+      const recorded = await recordChat(fileURLToPath(import.meta.url), argv, args);
+      if (recorded !== undefined) {
+        process.exitCode = recorded.exitCode;
+        // The conversation's exit code says nothing about whether the recording is whole.
+        // Report that separately, once, and only when it actually fell short.
+        const diagnostic = recorded.recording ? formatRecordingDiagnostic(recorded.recording) : undefined;
+        if (diagnostic) process.stderr.write(diagnostic);
         return;
       }
       const { runChat } = await import('./cli/chat.ts');
