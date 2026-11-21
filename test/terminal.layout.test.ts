@@ -225,26 +225,28 @@ test('waiting decoration has a padded divider and yields to connected server sta
     t.ui.setActivity('待機中');
     const rows = screenFrom(t.raw(), 30);
     const whale = rows.findIndex(row => /🐋|🐳|🫍/u.test(row));
-    const status = rows.findIndex(row => row.includes('MCP 1接続中 · svelte'));
-    assert.ok(status > 0 && whale >= status + 4);
+    const status = rows.findIndex(row => /│ MCP 1接続中 +│$/.test(row));
+    assert.ok(status > 0);
+    assert.match(rows[status + 1], /│ +svelte +│$/);
+    assert.ok(whale >= status + 5);
     assert.match(rows[whale - 3], /│ +│$/);
     assert.match(rows[whale - 2], /│ ─+ +│$/);
     assert.match(rows[whale - 1], /│ +│$/);
     t.output.rows = 9; t.output.emit('resize');
     const compact = screenFrom(t.raw(), 9).join('\n');
-    assert.match(compact, /MCP 1接続中 · svelte/);
+    assert.match(compact, /│ MCP 1接続中 +│\n[^\n]*│ +svelte +│/);
     assert.doesNotMatch(compact, /🐋|🐳|🫍/u);
   } finally { t.ui.close(); }
 });
 
-test('connected project MCP servers appear only while in use', () => {
+test('connected project MCP servers appear one per row beneath the heading until disconnected', () => {
   const t = terminal(110, 30);
   try {
     t.ui.write('▶ You: 調査\n', 'user');
-    t.ui.setMcpServers(['svelte']);
-    assert.match(t.text(), /│ MCP 1接続中 · svelte +│/);
+    t.ui.setMcpServers(['svelte', 'vite']);
+    assert.match(t.text(), /│ MCP 2接続中 +│\n[^\n]*│ +svelte +│\n[^\n]*│ +vite +│/);
     t.ui.setMcpServers([]);
-    assert.doesNotMatch(t.text(), /MCP/);
+    assert.doesNotMatch(t.text(), /MCP|svelte|vite/);
   } finally { t.ui.close(); }
 });
 

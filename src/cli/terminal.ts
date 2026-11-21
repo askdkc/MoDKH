@@ -47,7 +47,7 @@ export interface ChatTerminal {
   /** Show a read-only page, returning when it is dismissed (or printed in line mode). */
   showPage(title: string, text: string): Promise<void>;
   setModel(model: string | null): void;
-  setActivity?(activity: string | null): void;
+  setActivity?(activity: string | null, placement?: 'hint'): void;
   setTurnToolCount?(count: number): void;
   setAnimation?(enabled: boolean): void;
   /** Return an error to keep the draft, or null to accept it. */
@@ -242,6 +242,7 @@ export class TerminalUI implements ChatTerminal {
   private clearPending = false;
   private model: string | null = null;
   private activity: string | null = null;
+  private activityPlacement?: 'hint';
   private followup?: FollowupSubmit;
   private subagent: SubagentActivity | null = null;
   private subagentStarted = 0;
@@ -250,11 +251,12 @@ export class TerminalUI implements ChatTerminal {
   private usage: UsageTotals | null = null;
   /** Running language servers, refreshed by the owner; null means nothing is running. */
   private servers: readonly RunningServer[] = [];
-  private mcpRow = '';
+  private mcpRows: string[] = [];
   setMcpServers(ids: readonly string[]): void {
-    const row = ids.length ? `MCP ${ids.length}接続中 · ${ids.map(id => id.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '?')).join(', ')}` : '';
-    if (this.closed || row === this.mcpRow) return;
-    this.mcpRow = row;
+    const rows = ids.length ? [`MCP ${ids.length}接続中`, ...ids.slice(0, SIDEBAR_SERVER_ROWS).map(id => id.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '?'))] : [];
+    if (ids.length > SIDEBAR_SERVER_ROWS) rows.push(`ほか${ids.length - SIDEBAR_SERVER_ROWS}件`);
+    if (this.closed || (rows.length === this.mcpRows.length && rows.every((row, i) => row === this.mcpRows[i]))) return;
+    this.mcpRows = rows;
     this.render();
   }
   /** True while a browse call is driving the browser. Display only. */
@@ -398,9 +400,10 @@ export class TerminalUI implements ChatTerminal {
 
   write(text: string, kind: TranscriptKind = 'system'): void { this.appendTranscript(text, kind); this.render(); }
   setModel(model: string | null): void { this.model = model; this.render(); }
-  setActivity(activity: string | null): void {
-    if (this.closed || this.activity === activity) return;
+  setActivity(activity: string | null, placement?: 'hint'): void {
+    if (this.closed || (this.activity === activity && this.activityPlacement === placement)) return;
     this.activity = activity;
+    this.activityPlacement = placement;
     this.activityStarted = performance.now();
     this.updateProgressTimer();
     this.render();
@@ -1048,8 +1051,9 @@ export class TerminalUI implements ChatTerminal {
     const modelStatus = `│ ${status}`;
     // A notice is transient feedback, so it is emphasized beyond the standing status line.
     lines.push({ text: modelStatus, style: this.inputNotice && !this.pending?.secret ? `${this.panelAccent};1` : this.panelAccent });
+    const busyHint = (this.activityPlacement === 'hint' && this.activityLabel()) || 'Ctrl+C 中止（入力は応答完了後）';
     const hints = editingFollowup ? 'Enter 追加の依頼を送信  Ctrl+V 画像  Ctrl+C 中止'
-      : !this.pending ? 'Ctrl+C 中止（入力は応答完了後）' : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
+      : !this.pending ? busyHint : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
       : composer ? 'Enter 送信  Ctrl+J 改行  Ctrl+V 画像  Cmd+V テキスト' + (this.mouseInput ? '  ドラッグでコピー' : '') : 'Enter 決定  Ctrl+C 中止';
     const recallHint = (this.pending?.composer || editingFollowup) && !this.text && this.previousInput ? '↑ 前回の入力  ' : '';
     const fileHint = files ? '↑↓ ファイル選択  Tab 補完  Esc 閉じる' : '';
@@ -1181,16 +1185,15 @@ export class TerminalUI implements ChatTerminal {
   };
 
   private sidebarSubagent(rows: number, usageHeight: number): SubagentActivity | null {
-    // A browse row takes one line before the subagent block, so it must be reserved here too.
-    const browseHeight = Number(this.browse) + Number(!!this.mcpRow);
-    return this.started && !this.pending && rows - usageHeight - 3 - browseHeight >= 3 + Number(this.servers.length > 0)
+    const reserved = Number(this.browse) + this.mcpRows.length;
+    return this.started && !this.pending && rows - usageHeight - 3 - reserved >= 3 + Number(this.servers.length > 0)
       ? this.subagent : null;
   }
 
   private sidebarLines(rows: number, usageRows: string[]): string[] {
     const pane = this.sidebarSubagent(rows, usageRows.length);
     const browseRow = this.browse ? BROWSE_ACTIVE_LABEL : null;
-    const serverRoom = rows - usageRows.length - 3 - Number(!!browseRow) - Number(!!this.mcpRow) - (pane ? 3 : 0);
+    const serverRoom = rows - usageRows.length - 3 - Number(!!browseRow) - this.mcpRows.length - (pane ? 3 : 0);
     const servers = this.servers.slice(0, Math.max(0, Math.min(SIDEBAR_SERVER_ROWS, serverRoom)));
     const serverRows = servers.map(server => serverRow(server, this.cwd));
     const rest = this.servers.length - servers.length;
@@ -1198,12 +1201,12 @@ export class TerminalUI implements ChatTerminal {
     const separatorRoom = serverRoom - serverRows.length;
     const rule = '─'.repeat(SIDEBAR_WIDTH - 4);
     const divider = separatorRoom >= 6 ? [' ', rule, ' '] : separatorRoom >= 2 ? [rule] : [];
-    const sidebar = ['', ...usageRows, ...(browseRow ? [browseRow] : []), ...divider,
+    const topPadding = separatorRoom < 0 ? [] : [''];
+    const sidebar = [...topPadding, ...usageRows, ...(browseRow ? [browseRow] : []), ...divider,
       `${SUBAGENTS_HEADING} ${this.subagent?.runningCount ?? (this.subagent ? 1 : 0)}稼働 / 累計${this.delegationCount}`];
     if (pane) sidebar.push(`${pane.phase} · ${Math.floor((performance.now() - this.subagentStarted) / 1000)}秒`,
       pane.task.split(/\r?\n/, 1)[0], pane.pluginId);
-    sidebar.push(...divider, `${SERVERS_HEADING} ${this.servers.length}稼働`, ...serverRows);
-    if (this.mcpRow) sidebar.push(this.mcpRow);
+    sidebar.push(...divider, `${SERVERS_HEADING} ${this.servers.length}稼働`, ...serverRows, ...this.mcpRows);
     if (this.activity && !this.pending && this.color && this.animationEnabled && rows - sidebar.length >= 4) {
       sidebar.push(' ', rule, ' ', whaleRow(Math.floor((performance.now() - this.activityStarted) / WHALE_FRAME_MS), SIDEBAR_WIDTH - 4));
     }
