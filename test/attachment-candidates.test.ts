@@ -17,6 +17,15 @@ test('corrects both parent and filename without offering unrelated files', async
   assert.deepEqual(await findAttachmentCandidates('escape/candidates.txt', root), []);
 });
 
+test('finds the observed PDF name even when both components are mistyped', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'candidates-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'Downloads'));
+  for (const name of ['newkoku.pdf', 'receipt.pdf', 'newkoku.txt']) fs.writeFileSync(path.join(root, 'Downloads', name), '');
+  assert.deepEqual(await findAttachmentCandidates('Downlad/kokush.pdf', root),
+    [fs.realpathSync(path.join(root, 'Downloads/newkoku.pdf'))]);
+});
+
 test('caps results from a crowded directory', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'candidates-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

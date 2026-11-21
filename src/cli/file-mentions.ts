@@ -62,14 +62,28 @@ function nearbyName(expected: string, actual: string): boolean {
 }
 
 async function matchingEntries(dir: string, name: string, directories: boolean): Promise<string[]> {
-  const matches: string[] = [];
+  const parts = (value: string) => path.parse(value.normalize('NFC').toLowerCase());
+  const wanted = parts(name);
+  const grams = (stem: string) => new Set(Array.from(stem.matchAll(/(?=(...))/gu), m => m[1]));
+  const wantedGrams = grams(wanted.name);
+  const matches: { name: string; score: number }[] = [];
   let inspected = 0;
   for await (const entry of await fs.promises.opendir(dir)) {
     if (++inspected > 4096) break;
     if (!(directories ? entry.isDirectory() : entry.isFile()) || entry.name.startsWith('.') || /[\p{Cc}\p{Cf}]/u.test(entry.name)) continue;
-    if (nearbyName(name, entry.name)) matches.push(entry.name);
+    const actual = parts(entry.name);
+    let score = entry.name === name ? 3 : nearbyName(name, entry.name) ? 2 : 0;
+    if (!score && wanted.ext === actual.ext) {
+      // Compare the stem, not the extension: e.g. kokush and newkoku share kok/oku.
+      const other = grams(actual.name);
+      let common = 0;
+      for (const gram of other) if (wantedGrams.has(gram)) common++;
+      const overlap = 2 * common / (wantedGrams.size + other.size);
+      if (common >= 2 && overlap >= 0.4) score = overlap;
+    }
+    if (score) matches.push({ name: entry.name, score });
   }
-  return matches.sort((a, b) => Number(b === name) - Number(a === name) || a.localeCompare(b)).slice(0, 5);
+  return matches.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, 5).map(item => item.name);
 }
 
 /** Suggest paths only; selecting and loading a candidate are separate steps. */
