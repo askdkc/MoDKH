@@ -20,16 +20,19 @@ function fixture(t: { after(fn: () => void): void }) {
 test('/agents shows parent1+child2, validates limits and restores the saved limit', t => {
   const f = fixture(t);
   const run = (input: string) => {
-    const result = spawnSync(process.execPath, [entry, '--cwd', f.root], { env: f.env, encoding: 'utf8', input, timeout: 15000 });
+    const result = spawnSync(process.execPath, [entry, '--cwd', f.root], { env: { ...f.env, OPENAI_API_KEY: 'offline-test' }, encoding: 'utf8', input, timeout: 15000 });
     assert.equal(result.status, 0, result.stderr + result.stdout);
     return result.stdout;
   };
-  const first = run('/agents\n/agents limit 4\n/agents limit 0\n/agents limit 17\n/agents limit 2.5\n/exit\n');
+  const first = run('/agents\n/agents limit 17\n/agents limit 4\n/agents limit 0\n/agents limit -1\n/agents limit 2.5\n/exit\n');
+  assert.match(first, /親1 \+ 子17 = 最大18/);
   assert.match(first, /親1 \+ 子2 = 最大3/);
   assert.match(first, /親1 \+ 子4 = 最大5/);
   assert.equal((first.match(/使い方: \/agents limit/g) ?? []).length, 3);
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.home, 'config.json'), 'utf8')).subagentLimit, 4);
   assert.match(run('/agents\n/exit\n'), /親1 \+ 子4 = 最大5/);
+  const switched = run('/connect openai/demo\n/agents\n/agents limit auto\n/agents\n/connect fixed/scripted\n/agents\n/exit\n');
+  assert.match(switched, /子4 = 最大5[\s\S]*子12 = 最大13[\s\S]*子2 = 最大3/);
 });
 
 test('CLI parent reads independently while two child API requests are live and integrates both durable results', async t => {

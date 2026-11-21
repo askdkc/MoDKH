@@ -6,7 +6,7 @@ export function nearbyFileNames(missing: string): string {
   return nearbyFiles(missing).hint;
 }
 
-export function nearbyFiles(missing: string): { hint: string; replacement?: string } {
+export function nearbyFiles(missing: string, directories = false): { hint: string; replacement?: string } {
   let complete = false;
   const close: string[] = [];
   const stem = path.parse(missing).name.toLowerCase();
@@ -18,7 +18,7 @@ export function nearbyFiles(missing: string): { hint: string; replacement?: stri
       for (let i = 0; i < 4096; i++) {
         const entry = dir.readSync();
         if (!entry) { complete = true; break; }
-        if (!entry.isFile() || entry.name.startsWith('.') || /[\p{Cc}\p{Cf}]/u.test(entry.name)) continue;
+        if (!(directories ? entry.isDirectory() : entry.isFile()) || entry.name.startsWith('.') || /[\p{Cc}\p{Cf}]/u.test(entry.name)) continue;
         const other = path.parse(entry.name).name.toLowerCase();
         let prefix = 0;
         while (prefix < stem.length && stem[prefix] === other[prefix]) prefix++;

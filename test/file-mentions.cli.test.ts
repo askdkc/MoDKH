@@ -59,7 +59,12 @@ test('the chat composer suggests workspace files, Tab fills the reference, and E
     fs.writeFileSync(path.join(home, 'notes.pdf'), pdf);
     input.emit('keypress', '@src/a.txt @frame.png @photo.JPG @notess.pdf 読める？', {});
     key('return');
-    await waitForScreen('Enter で再送', '@notes.pdf 読める？');
+    await waitForScreen('未送信', '何を調べますか', '↑');
+    key('return'); // Empty Enter must not accept a suggestion.
+    await waitForScreen('何を調べますか', '↑ 前回の入力');
+    assert.equal(model.requests.length, 0);
+    key('up');
+    assert.match(visible(), /@notes\.pdf 読める？/);
     assert.doesNotMatch(visible(), /Coding Harness/, 'first submission errors belong in the conversation');
     assert.equal(model.requests.length, 0, 'a corrected draft must not send');
     key('return');
@@ -76,6 +81,8 @@ test('the chat composer suggests workspace files, Tab fills the reference, and E
     key('return');
     await new Promise<void>(resolve => setImmediate(resolve));
     assert.match(visible(), /ファイル添付失敗.*作業ルートの外/);
+    assert.doesNotMatch(visible(), /│ @outside/);
+    key('up');
     assert.match(visible(), /│ @outside/);
     assert.equal(model.requests.length, 1, 'invalid references must not send the prompt');
     input.emit('keypress', '', { name: 'u', ctrl: true });

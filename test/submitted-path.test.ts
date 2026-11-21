@@ -21,6 +21,11 @@ test('a user-supplied external path attaches exactly that PDF, a typo only sugge
   const data = Buffer.from('%PDF-1.4\n%%EOF\n');
   fs.writeFileSync(path.join(downloads, 'newkoku.pdf'), data);
   assert.throws(() => readFileMentions(root, '~/Downloads/newkok.pdf 読める？', store), /候補: "newkoku.pdf"/);
+  assert.throws(() => readFileMentions(root, '~/Downlods/newkoku.pdf', store), error =>
+    error instanceof Error && error.message.endsWith('親ディレクトリ候補: "Downloads"') && !('draft' in error));
+  fs.symlinkSync(home, path.join(root, 'escape'), 'dir');
+  assert.throws(() => readFileMentions(root, './escape/Downlods/newkoku.pdf', store), error =>
+    error instanceof Error && !error.message.includes('Downloads') && !('draft' in error));
   const input = '質問: ~/Downloads/newkokusho.pdf 読める？';
   assert.throws(() => readFileMentions(root, input, store), { draft: '質問: ~/Downloads/newkoku.pdf 読める？' });
   fs.writeFileSync(path.join(downloads, 'newkokushi.pdf'), data);

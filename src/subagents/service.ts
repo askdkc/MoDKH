@@ -94,7 +94,7 @@ export class SubagentService {
   }
   setMaxConcurrent(value: number): void {
     const limit = parseSubagentLimit(value);
-    if (limit === null) throw new ToolError('INVALID_ARGS', '子の同時実行数は1〜16の整数です');
+    if (limit === null) throw new ToolError('INVALID_ARGS', '子の同時実行数には正の安全な整数を指定してください');
     this.limit = limit;
   }
   takeNotices(): string[] { const notices = [...this.notices.values()]; this.notices.clear(); return notices; }

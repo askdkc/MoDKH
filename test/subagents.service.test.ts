@@ -11,6 +11,7 @@ import { JobRegistry } from '../src/tools/jobs.ts';
 import { FixedModel, type FixedStep } from '../src/model/fixed.ts';
 import { defaultTools, ToolRegistry } from '../src/tools/registry.ts';
 import { TerminalApprovalGate } from '../src/cli/approval.ts';
+import { providerSubagentLimit } from '../src/subagents/limits.ts';
 import { parseAgentSettings } from '../src/subagents/settings.ts';
 
 const done: FixedStep = [{ type: 'text-delta', text: 'Observed result' }, { type: 'finish', stopReason: 'stop' }];
@@ -486,7 +487,20 @@ test('lowering the limit preserves live children; raising it admits another and 
   service.setMaxConcurrent(3);
   const three = await service.start(request, owner('three'));
   assert.notEqual(two.runId, three.runId);
-  assert.throws(() => service.setMaxConcurrent(0), /1〜16/);
+  service.setMaxConcurrent(Number.MAX_SAFE_INTEGER);
+  for (const invalid of [0, -1, 1.5, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => service.setMaxConcurrent(invalid), /正の安全な整数/);
+    assert.equal(service.maxConcurrent, Number.MAX_SAFE_INTEGER);
+  }
+});
+
+test('provider defaults require an explicit cloud provider and a model', () => {
+  for (const id of [null, 'fixed/scripted', 'ollama/gpt', 'compatible/gpt', 'unknown/gpt', 'hermes/local', 'lmstudio/local', 'openai', 'openai/']) {
+    assert.equal(providerSubagentLimit(id), 2, String(id));
+  }
+  for (const provider of ['openai', 'anthropic', 'google', 'deepseek', 'openrouter', 'opencode', 'opencode-go', 'infron', 'groq', 'xai', 'ollama-cloud']) {
+    assert.equal(providerSubagentLimit(`${provider}/team/model`), 12, provider);
+  }
 });
 
 test('async result persistence failure produces an unknown receipt and prevents replay', async t => {

@@ -20,7 +20,7 @@ import { PluginManager } from '../plugins/manager.ts';
 import { SubagentService, subagentTools } from '../subagents/service.ts';
 import type { DelegationRequest } from '../subagents/types.ts';
 import { runDirectAgent } from './agents.ts';
-import { DEFAULT_SUBAGENT_LIMIT, parseSubagentLimit } from '../subagents/limits.ts';
+import { providerSubagentLimit, parseSubagentLimit } from '../subagents/limits.ts';
 import { parseAgentSettings } from '../subagents/settings.ts';
 import { projectMcpTools } from '../tools/project-mcp.ts';
 import { ToolRegistry, defaultToolsWithJobs } from '../tools/registry.ts';
@@ -281,13 +281,15 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     ...(boundInputs.editor && editorPath ? { editor: { id: boundInputs.editor, path: editorPath } } : {}),
   };
   let activeUserRequest: string | undefined;
+  let manualLimit = parseSubagentLimit(config.subagentLimit);
+  const childLimit = () => manualLimit ?? providerSubagentLimit(modelId);
   const subagents = new SubagentService({
     manager, store, parent: session, root: cwd, tools: [...tools, ...languageTools(language), ...formalTools({
       lean: args.lean, leanContract: args['lean-contract'], leanTheorem: args['lean-theorem'],
       stateright: args.stateright,
     })], approval,
     hasBackgroundJobs: () => jobs.list().some(job => job.status === 'running' || job.status === 'stopping'),
-    maxConcurrent: parseSubagentLimit(config.subagentLimit) ?? DEFAULT_SUBAGENT_LIMIT,
+    maxConcurrent: childLimit(),
     settings: agentSettings.settings, unavailable: agentSettings.unavailable, verificationIsolation, headInputs,
     headUserRequest: () => activeUserRequest,
     connection: (configured) => {
@@ -395,27 +397,32 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     };
     // Stop処理の回収が終わるまで、重ねたSIGINTで所有子を置き去りにしない。
     process.on('SIGINT', onSigint);
-    const followups: { input: string; content: Extract<AgentMessage, { role: 'user' }> }[] = [];
+    const followups: { input: string; pasted: ImageAttachment[]; content: Extract<AgentMessage, { role: 'user' }> }[] = [];
     let followupWake = new AbortController();
-    const finishFollowups = activeModel && ui.beginFollowups?.(message => {
+    const finishFollowups = activeModel && ui.beginFollowups?.((message, pasted) => {
       if (ac.signal.aborted) return '中止処理中です';
       if (followups.length >= 8) return '追加の依頼は8件まで送信待ちにできます';
       let files: ReturnType<typeof readFileMentions>;
       try { files = readFileMentions(cwd, message, staged); }
       catch (error) { return `ファイル添付失敗: ${(error as Error).message}`; }
-      followups.push({ input: message, content: { role: 'user', content: files?.text ? message + '\n\n' + files.text : message,
-        ...(files?.images.length ? { images: files.images } : {}), ...(files?.pdfs.length ? { pdfs: files.pdfs } : {}) } });
+      const images = [...(files?.images ?? []), ...pasted];
+      if (images.length > MAX_IMAGES) return `添付画像は最大${MAX_IMAGES}枚です`;
+      followups.push({ input: message, pasted, content: { role: 'user', content: files?.text ? message + '\n\n' + files.text : message,
+        ...(images.length ? { images } : {}), ...(files?.pdfs.length ? { pdfs: files.pdfs } : {}) } });
       followupWake.abort();
       return null;
     });
-    const restoreFollowups = () => finishFollowups?.(followups.splice(0).map(message => message.input));
+    const restoreFollowups = () => finishFollowups?.(followups.splice(0).map(({ input: text, pasted: images }) => ({ text, images })));
     const takeFollowups = () => {
       const messages = followups.splice(0);
       if (messages.length) {
         followupWake = new AbortController();
         ui.setReasoning?.(null);
       }
-      for (const message of messages) ui.write(`\n▶ You: ${message.input}\n`, 'user');
+      for (const message of messages) {
+        const images = message.content.images?.length ?? 0;
+        ui.write(`\n▶ You: ${message.input}${images ? ` [画像${images}枚]` : ''}\n`, 'user');
+      }
       return messages.map(message => message.content);
     };
     try {
@@ -625,6 +632,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       nextMetadataRead = 0;
       failedCompaction = undefined;
       modelId = ref;
+      subagents.setMaxConcurrent(childLimit());
       connectionBaseUrl = baseUrl;
       ui.setModel(ref);
       ui.write(`接続しました: ${ref} (API到達は送信時に確認)\n`);
@@ -781,7 +789,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ui.write('/tools: ツール履歴  /tools <番号>: 引数と結果の全文\n');
         ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /usage: トークン使用量  /allow: 承認ポリシー  /agents: 子の一覧・同時実行数  /agents limit <数>: 子の上限変更  /agents run [ID]: 子に依頼  /exit: 終了\n'
           + 'macOS: 会話のテキストをドラッグして選択するとコピーします。\n'
-          + '/reasoning off|minimal|low|medium|high|max [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信（実行中の追加依頼はテキストのみ） / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');
+          + '/reasoning off|minimal|low|medium|high|max [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信（実行中の追加依頼にも画像を添付できます） / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');
         continue;
       }
       if (line.startsWith('/head ')) { if (!model) { ui.write('/connect でモデルを接続してください\n'); continue; } await runTurn(line.slice(6), model); continue; }
@@ -795,11 +803,13 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         const available = subagents.list();
         if (line.startsWith('/agents limit')) {
           const match = /^\/agents limit ([1-9]\d*)$/.exec(line);
-          const limit = match ? parseSubagentLimit(Number(match[1])) : null;
-          if (limit === null) { ui.write('使い方: /agents limit <1〜16>（子の同時実行数。親1は別枠）\n'); continue; }
+          const requested = match ? parseSubagentLimit(Number(match[1])) : null;
+          if (requested === null && line !== '/agents limit auto') { ui.write('使い方: /agents limit <正の整数|auto>（親1は別枠）\n'); continue; }
+          manualLimit = requested;
+          const limit = childLimit();
           subagents.setMaxConcurrent(limit);
           ui.write(`子の同時実行数: ${limit}（親1 + 子${limit} = 最大${limit + 1}）。実行中の子は停止しません。\n`);
-          try { updateConfig(current => { current.subagentLimit = limit; }); ui.write('(同時実行数を設定に保存しました)\n'); }
+          try { updateConfig(current => { if (requested === null) delete current.subagentLimit; else current.subagentLimit = requested; }); ui.write('(同時実行数を設定に保存しました)\n'); }
           catch (e) { ui.write(`(設定を保存できません: ${String(e)} — このセッションでは有効です)\n`); }
           continue;
         }
@@ -808,8 +818,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           await ui.showPage('/agents — 子エージェント', [
             '使い方',
             '  /agents run [ID] [依頼]  子エージェントに依頼',
-            '  /agents limit <1〜16>   子の同時実行数を変更・保存',
-            `子の同時実行数: ${limit}（親1 + 子${limit} = 最大${limit + 1}）`,
+            '  /agents limit <正の整数|auto>   子の同時実行数を変更・保存',
+            `子の同時実行数: ${limit}（親1 + 子${limit} = 最大${limit + 1}） — ${manualLimit === null ? '接続先別の既定値' : '手動指定'}`,
             '会話中は子を並行起動できます。再起動後の自動再開はありません。',
             '',
             `利用可能な子エージェント (${available.length}件)`,
@@ -916,9 +926,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         }
         catch (error) {
           const draft = error instanceof Error && 'draft' in error && typeof error.draft === 'string' ? error.draft : undefined;
-          ui.write(`(ファイル添付失敗: ${(error as Error).message})\n`);
-          ui.restoreDraft?.(draft ?? input);
-          if (draft && ui.restoreDraft) ui.write('ファイル名を修正した下書きを確認し、Enter で再送してください。\n');
+          ui.write(`(未送信 — ファイル添付失敗: ${(error as Error).message})\n`);
+          if (ui.rememberInput) {
+            ui.rememberInput(draft ?? input);
+            ui.write(draft ? '↑ で修正案を呼び出せます。内容を確認してから送信してください。\n' : '↑ で元の入力を呼び出して修正できます。\n');
+          }
           continue;
         }
         // Attachments belong to the chat model, not an automatically chosen child.

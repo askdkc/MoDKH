@@ -248,14 +248,33 @@ test('the command menu renders once, never duplicated', async () => {
   } finally { t.ui.close(); }
 });
 
-test('busy terminal distinguishes model reasoning from completion without showing private reasoning', () => {
+test('followup image-only drafts survive rejection, deletion and unsent recovery', async () => {
+  const image = { mediaType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jlhkAAAAASUVORK5CYII=' };
+  const t = terminal(100, 30, { readClipboardImage: async () => image });
+  const paste = async () => { t.key('v', '', true); await new Promise(resolve => setImmediate(resolve)); };
+  try {
+    let reject = true;
+    const finish = t.ui.beginFollowups((text, images) => {
+      assert.equal(text, ''); assert.deepEqual(images, [image]);
+      return reject ? '受付失敗' : null;
+    });
+    await paste(); await paste(); t.key('x', '', true); t.key('return');
+    assert.match(t.text(), /受付失敗/); assert.match(t.text(), /画像1枚/);
+    reject = false; t.key('return'); assert.equal(t.ui.imageCount, 0);
+    await paste(); finish([{ text: '', images: [image] }]);
+    const next = t.ui.next(); t.key('return'); assert.equal(await next, '');
+    assert.deepEqual(t.ui.takeImages(), [image, image]);
+  } finally { t.ui.close(); }
+});
+
+test('busy terminal does not put execution status beside the editor', () => {
   const t = terminal();
   try {
     t.ui.setActivity('モデルが推論中… Ctrl+Cで中止');
-    assert.match(t.text(), /モデルが推論中/);
+    assert.doesNotMatch(t.text(), /モデルが推論中/);
     assert.doesNotMatch(t.text(), /Enter 送信/);
     t.ui.setActivity(null);
-    assert.match(t.text(), /処理中/);
+    assert.doesNotMatch(t.text(), /処理中/);
   } finally { t.ui.close(); }
 });
 

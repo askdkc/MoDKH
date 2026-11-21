@@ -30,8 +30,21 @@ function submittedPath(root: string, file: string): string {
     // Relative workspace references must not enumerate through an escaping symlink.
     let nearby: ReturnType<typeof nearbyFiles> = { hint: '' };
     try {
-      if (!external) workspacePath(root, path.dirname(relative));
-      nearby = nearbyFiles(absolute);
+      const parent = path.dirname(absolute);
+      const checkedDir = (dir: string) => external ? fs.realpathSync(dir) : workspacePath(root, path.relative(root, dir) || '.');
+      if (absolute.split(path.sep).includes('.git')) throw new Error();
+      let dir: string;
+      try { dir = checkedDir(parent); }
+      catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT' || parent === root) throw e;
+        const grandparent = checkedDir(path.dirname(parent));
+        if (!grandparent.split(path.sep).includes('.git')) {
+          const { hint } = nearbyFiles(path.join(grandparent, path.basename(parent)), true);
+          if (hint) nearby = { hint: `。親ディレクトリ${hint.slice(1)}` };
+        }
+        throw e; // Do not enumerate or attach files inside a guessed directory.
+      }
+      if (!dir.split(path.sep).includes('.git')) nearby = nearbyFiles(path.join(dir, path.basename(absolute)));
     } catch { /* parent unavailable */ }
     throw new Error(`ファイルが見つかりません${nearby.hint}`, { cause: nearby });
   }

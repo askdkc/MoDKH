@@ -188,14 +188,14 @@ test('public CLI terminal path: logo → completion → model providers → conn
     await wait('何を調べますか');
     assert.doesNotMatch(visible(), /const value = 1/, 'source bodies stay out of the default transcript');
     assert.match(visible(), /\/tools 1/, 'the compact result offers a concrete details command');
-    assert.match(visible(), /今回のツール実行: 1件/);
+    assert.doesNotMatch(visible(), /今回のツール実行:/);
     send('/tools 1\r');
     await wait('const value = 1');
     await wait('何を調べますか');
     send('inspect-test\r');
     await wait('TEST_INSPECTED');
     await wait('詳細: /tools 2');
-    assert.match(visible(), /今回のツール実行: 1件/);
+    assert.doesNotMatch(visible(), /今回のツール実行:/);
     await wait(/│ 言語サーバー 1稼働 +│\n.*│ typescript · .*tui-entry-[^ │]+ +│/);
     await wait('何を調べますか');
     send('browse-check\r');
@@ -210,8 +210,8 @@ test('public CLI terminal path: logo → completion → model providers → conn
     send('\t off\r'); await wait('待機アニメーション: off');
     send('/annimation invalid\r'); await wait('使い方: /annimation on|off');
     assert.equal(requests.length, beforeAnimationCommands, 'animation commands stay local');
-    send('slow\r'); await wait(/モデル応答を受信中… Ctrl\+Cで中止 · [1-9]\d*秒/);
-    assert.match(visible(), /今回のツール実行: 0件/);
+    send('slow\r'); await wait('WAITING_FOR_STOP');
+    assert.doesNotMatch(visible(), /今回のツール実行:/);
     assert.equal(whaleRow(visible()), '');
     send('\x03'); await wait('何を調べますか');
     send('/annimation on\r'); await wait('待機アニメーション: on');
@@ -220,20 +220,17 @@ test('public CLI terminal path: logo → completion → model providers → conn
     const firstFrame = whaleRow(visible());
     const firstColumn = firstFrame.search(/[🐋🐳]/u);
     assert.match(firstFrame, /[~∿]/u, 'waves share the whale row');
-    const screenRows = visible().split('\n');
-    assert.match(screenRows[screenRows.indexOf(firstFrame) + 1] ?? '', /^│ モデル応答を(?:待機|受信)中/,
-      'the animation is directly above, not inside, the composer');
+    assert.ok(firstColumn > 40, 'animation stays in the right sidebar, away from the composer');
     assert.doesNotMatch(visible(), /│.*[▀▄]/);
     await wait(screen => {
       const column = whaleRow(screen).search(/[🐋🐳]/u);
       return column >= 0 && column !== firstColumn;
     });
-    await wait(/モデル応答を受信中… Ctrl\+Cで中止 · [1-9]\d*秒/);
+    assert.doesNotMatch(visible(), /│ モデル応答を受信中… Ctrl\+Cで中止/);
     send('\x03'); await wait('中断しました');
     await wait('何を調べますか');
     assert.equal(whaleRow(visible()), '');
     send('delegate\r');
-    await wait('子エージェントの結果を待機中');
     await wait('│ サブエージェント 1稼働 / 累計1');
     await wait(/│ モデル応答を待機中 · [1-9]\d*秒 +│/);
     assert.doesNotMatch(visible(), /ツール要求を受信中/);

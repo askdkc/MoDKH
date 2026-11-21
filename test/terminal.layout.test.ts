@@ -167,27 +167,46 @@ test('reasoning and transcript stream into the scrollback instead of being erase
   } finally { t.ui.close(); }
 });
 
-test('the active child uses a right-hand pane and remains visible after narrowing', async () => {
+for (const draft of ['', '続けて確認']) {
+  test(`activity stays off the composer divider with ${draft ? 'a followup draft' : 'an empty followup'}`, () => {
+    const t = terminal(72, 30);
+    try {
+      t.ui.write('▶ You: 調査\n', 'user');
+      const activity = 'モデルが推論中';
+      t.ui.setActivity(activity);
+      t.ui.beginFollowups(() => null);
+      if (draft) t.key('', draft);
+      const rows = screenFrom(t.raw(), 30);
+      const divider = rows.findIndex(line => /^\s*─+\s*$/.test(line));
+      const activityRows = rows.flatMap((line, index) => line.includes(activity) ? [index] : []);
+      assert.equal(activityRows.length, 0);
+      assert.ok(divider >= 0);
+      assert.ok(rows[divider + 1].trimStart().startsWith(`│ ${draft}`.trimEnd()), 'the editor remains below the divider');
+    } finally { t.ui.close(); }
+  });
+}
+
+test('the active child uses a right-hand pane and does not move into the editor after narrowing', async () => {
   const t = terminal(110, 30);
   try {
     t.ui.write('▶ You: 調査\n', 'user');
     t.ui.setActivity('子エージェントの結果を待機中');
     t.ui.setSubagent({ pluginId: 'modkh-explorer', task: '設定ファイルを調査', phase: 'モデル応答を待機中' }, 1);
-    assert.match(t.text(), /子エージェントの結果を待機中/);
+    assert.doesNotMatch(t.text(), /子エージェントの結果を待機中/);
     assert.match(t.text(), /│ サブエージェント 1稼働 \/ 累計1 +│/);
     assert.match(t.text(), /│ モデル応答を待機中 · 0秒/);
     assert.match(t.text(), /│ 設定ファイルを調査 +│/);
     t.output.columns = 40;
     t.output.emit('resize');
-    assert.match(t.text(), /│ モデル応答を待機中 · 0秒/);
-    assert.match(t.text(), /│ modkh-explorer/);
-    assert.match(t.text(), /│ 設定ファイルを調査/);
+    assert.doesNotMatch(t.text(), /^モデル応答を待機中 · 0秒/m);
+    assert.doesNotMatch(t.text(), /^modkh-explorer/m);
+    assert.doesNotMatch(t.text(), /^設定ファイルを調査/m);
     assert.ok(t.text().split('\n').every(line => textWidth(line) <= 40));
 
     const approved = t.ui.ask('承認: y で実行');
     t.ui.setSubagent({ pluginId: 'modkh-explorer', task: '設定ファイルを調査', phase: '承認待ち' }, 1);
     assert.match(t.text(), /承認: y で実行/);
-    assert.match(t.text(), /承認待ち/);
+    assert.doesNotMatch(t.text(), /承認待ち/);
     t.key('y', 'y');
     t.key('return');
     assert.equal(await approved, 'y');
@@ -292,11 +311,11 @@ test('browse activity is shown in the right-hand pane only while browse runs', a
     t.ui.setBrowse?.(false);
     assert.doesNotMatch(t.text(), /browse in use/);
     assert.match(t.text(), /│ 言語サーバー 0稼働 +│/, 'the rest of the pane stays');
-    // 右欄を置けない高さでは状態行に同じ表示を残す(黙って消さない)。
+    // 右欄を置けなくても実行状況は入力欄へ移さない。
     t.output.rows = 8;
     t.output.emit('resize');
     t.ui.setBrowse?.(true);
-    assert.match(t.text(), /MoDKH +·.*· browse in use/);
+    assert.doesNotMatch(t.text(), /browse in use/);
     t.ui.setBrowse?.(false);
     assert.doesNotMatch(t.text(), /browse in use/);
   } finally { t.ui.close(); }
