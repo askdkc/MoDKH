@@ -35,7 +35,7 @@ The compatibility default is `--verification-isolation integrity-only`. It retai
 
 The eight presets contain 30 observation roles and 8 editors. Editors remain disabled until BOTH a fixed check and an owner-controlled source/verifier manifest are present. `formal.lisp` adds 前鬼 (`micro-zenki`) and 後鬼 (`micro-goki`).
 
-Every role receives the full manifest-verified `kiokuko-single-purpose-functions/SKILL.md` and `one-shot-software-completion/SKILL.md`. The bundled upstream revision and per-file SHA256 are in `skills/kiokuko-dsh/manifest.json`. Other generic automatic skill injection is disabled for these children. Referenced documents are not implicitly read. Roles cannot add tools beyond host/user permissions; missing tools prevent model execution.
+Every role receives the full manifest-verified `kiokuko-single-purpose-functions/SKILL.md` and `one-shot-software-completion/SKILL.md`. The bundled upstream revision and per-file SHA256 are in `skills/kiokuko-dsh/manifest.json`. A second bundle, `skills/pstack/`, carries the pstack workflow; its `manifest.json` records the upstream revision, version and per-file SHA256 the same way. Other generic automatic skill injection is disabled for these children. Referenced documents are not implicitly read. Roles cannot add tools beyond host/user permissions; missing tools prevent model execution.
 
 ## One-file edit and independent acceptance
 

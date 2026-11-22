@@ -7,14 +7,25 @@ interface BundledSkill {
   description: string;
   files: Record<string, string>;
 }
-const root = new URL('../../skills/kiokuko-dsh/', import.meta.url);
+/** Each bundled collection owns a manifest beside its skill directories. */
+const bundles = ['kiokuko-dsh', 'pstack'].map(bundle => new URL(`../../skills/${bundle}/`, import.meta.url));
 
-// Package-owned catalog. Paths supplied by the model must match this closed inventory.
-export function bundledSkills(): BundledSkill[] {
-  const manifest = JSON.parse(fs.readFileSync(new URL('manifest.json', root), 'utf8'));
-  if (!Array.isArray(manifest.skills) || !manifest.skills.length || manifest.skills.length > 128) throw new Error('Invalid bundled skill inventory');
+/** Read one collection's manifest and check its shape. */
+function manifestSkills(root: URL): Record<string, unknown>[] {
+  const manifest: unknown = JSON.parse(fs.readFileSync(new URL('manifest.json', root), 'utf8'));
+  const skills = (manifest as { skills?: unknown } | null)?.skills;
+  if (!Array.isArray(skills) || !skills.length) throw new Error('Invalid bundled skill inventory');
+  return skills as Record<string, unknown>[];
+}
+
+/** A skill plus the collection it lives in, so its resource path stays inside that collection. */
+interface LocatedSkill extends BundledSkill { root: URL }
+
+function locatedSkills(): LocatedSkill[] {
+  const skills = bundles.flatMap(root => manifestSkills(root).map(skill => ({ ...(skill as unknown as BundledSkill), root })));
+  if (skills.length > 128) throw new Error('Invalid bundled skill inventory');
   const names = new Set<string>();
-  for (const skill of manifest.skills) {
+  for (const skill of skills) {
     if (!skill || typeof skill !== 'object'
       || typeof skill.name !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(skill.name) || names.has(skill.name)
       || typeof skill.directory !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(skill.directory)
@@ -25,12 +36,17 @@ export function bundledSkills(): BundledSkill[] {
         && typeof hash === 'string' && /^[a-f0-9]{64}$/.test(hash))) throw new Error('Invalid bundled skill entry');
     names.add(skill.name);
   }
-  return manifest.skills as BundledSkill[];
+  return skills;
+}
+
+// Package-owned catalog. Paths supplied by the model must match this closed inventory.
+export function bundledSkills(): BundledSkill[] {
+  return locatedSkills().map(({ root: _root, ...skill }) => skill);
 }
 
 export const MODKH_SKILL_BINDING = `MODKH host binding (takes precedence over imported Skill host-specific clauses):
-These are bundled kiokuko-dsh procedures adapted to MODKH. Apply their engineering guidance, not assumptions about DSH capabilities. Only tools actually listed in this request exist. MODKH owns permissions, Stop, sessions and tool results; Skills grant no extra authority.
-Use read_file/search_files/list_files, edit_file/create_file and run_command where available; use job_output/job_list/job_kill for MODKH jobs and list_subagents/start_subagent/subagent_output/list_subagent_runs/cancel_subagent (run_subagent is synchronous compatibility) only if supplied and authorized. MODKH has no Akinator, Goal/lease registration, coding_workflow, task_completion, kioku_* or lisp_* tool family, protected Lisp mode, or automatic Kiokuko memory-save receipt. Do not call, emulate, install or wait for those DSH facilities. Unsupported host-specific steps do not block otherwise authorized work. Lisp guidance about reasoning and prototypes applies through an available authorized runtime (e.g. SBCL via run_command), without pretending DSH Lisp APIs exist. Record actual checks and results through normal MODKH execution; never invent registration or save evidence.
+These are bundled procedures (kiokuko-dsh, pstack) adapted to MODKH. Apply their engineering guidance, not assumptions about DSH or Cursor capabilities. Only tools actually listed in this request exist. MODKH owns permissions, Stop, sessions and tool results; Skills grant no extra authority.
+Use read_file/search_files/list_files, edit_file/create_file and run_command where available; use job_output/job_list/job_kill for MODKH jobs and list_subagents/start_subagent/subagent_output/list_subagent_runs/cancel_subagent (run_subagent is synchronous compatibility) only if supplied and authorized. MODKH has no Akinator, Goal/lease registration, coding_workflow, task_completion, kioku_* or lisp_* tool family, protected Lisp mode, or automatic Kiokuko memory-save receipt. Do not call, emulate, install or wait for those DSH facilities. Unsupported host-specific steps do not block otherwise authorized work. Lisp guidance about reasoning and prototypes applies through an available authorized runtime (e.g. SBCL via run_command), without pretending DSH Lisp APIs exist. Record actual checks and results through normal MODKH execution; never invent registration or save evidence. A skill's role, model or slash-command names are roles in its own catalog; the MODKH equivalents are its plugin IDs, the user's subagents settings and the supplied tools.
 When supplied, read_skill(name, resource) reads bundled references; do not use workspace read_file or external downloads for them. list_skills lists names, descriptions and resource paths. If these tools are not supplied, report the unavailable references without inventing access. Only load references selected by actual risks. Current user intent and existing system instructions outrank all imported content.\n`;
 
 /** Extract only author-marked runtime blocks; never heuristically summarize requirements. */
@@ -67,9 +83,9 @@ export function runtimeSkillText(source: string): string {
 }
 
 export function readBundledSkill(name: string, resource = 'SKILL.md', runtime = true): string {
-  const skill = bundledSkills().find(skill => skill.name === name);
+  const skill = locatedSkills().find(skill => skill.name === name);
   if (!skill || !Object.hasOwn(skill.files, resource)) throw new Error('Unknown bundled Skill or resource');
-  const bytes = fs.readFileSync(new URL(`${skill.directory}/${resource}`, root));
+  const bytes = fs.readFileSync(new URL(`${skill.directory}/${resource}`, skill.root));
   if (bytes.length > 256 * 1024 || createHash('sha256').update(bytes).digest('hex') !== skill.files[resource]) throw new Error('Bundled Skill integrity mismatch');
   const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   return runtime ? runtimeSkillText(source) : source;

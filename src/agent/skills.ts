@@ -34,6 +34,7 @@ const ROUTES: Record<string, string[]> = {
   'kiokuko-simple-work': ['minimal', 'simple', 'yagni', '最小', '簡単'],
   'kiokuko-ui-design-soul': ['ui', 'ux', 'frontend', '画面', 'レイアウト', 'フォーム'],
   'veteran-programmer-skill': ['install', 'deploy', 'migration', 'state', '配布', '導入', '状態', '移行'],
+  'pstack': ['pstack', 'poteto-mode', 'poteto'],
   'memory-reasoning': ['memory', '記憶'],
   'kiokuko-lisp': ['lisp', 'sbcl', 'common-lisp'],
 };

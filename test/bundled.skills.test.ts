@@ -22,12 +22,13 @@ const expectedNames = [
   'kiokuko-benchmark', 'kiokuko-investigate', 'kiokuko-lisp', 'kiokuko-review',
   'kiokuko-simple-work', 'kiokuko-single-purpose-functions', 'kiokuko-skill-authoring',
   'kiokuko-soul', 'kiokuko-technical-writing', 'kiokuko-ui-design-soul',
-  'kiokuko-verification', 'memory-reasoning', 'one-shot-software-completion', 'veteran-programmer-skill',
+  'kiokuko-verification', 'memory-reasoning', 'one-shot-software-completion', 'pstack',
+  'veteran-programmer-skill',
 ];
-test('all 17 source skills and 43 resources are present and digest-verified', () => {
+test('all 18 source skills and 112 resources are present and digest-verified', () => {
   verifyBundledSkills();
   assert.deepEqual(bundledSkills().map(s => s.name).sort(), expectedNames.sort());
-  assert.equal(bundledSkills().reduce((n, s) => n + Object.keys(s.files).length, 0), 43);
+  assert.equal(bundledSkills().reduce((n, s) => n + Object.keys(s.files).length, 0), 112);
   for (const name of expectedNames) {
     const context = prepareSkillContext(`$${name}`, process.cwd());
     assert.ok(context.selected.includes(name), `explicit ${name} omitted`);
@@ -53,7 +54,7 @@ test('public tool reads every packaged reference, supports paging and rejects un
   const ctx = { root: process.cwd(), approval: { approve: async () => false } };
   const listing = await registry.executeOne({ id: 'list', name: 'list_skills', args: {} }, ctx);
   assert.equal(listing.status, 'ok');
-  assert.equal(JSON.parse(listing.output).length, 17);
+  assert.equal(JSON.parse(listing.output).length, 18);
   for (const skill of bundledSkills()) {
     for (const resource of Object.keys(skill.files)) {
       let startLine = 1;
@@ -97,4 +98,22 @@ test('bundled child roles expose read-only skill resource tools', async () => {
     assert.ok(plugin.define().tools.includes('list_skills'));
     assert.ok(plugin.define().tools.includes('read_skill'));
   }
+});
+
+test('pstack routes on its own name and every reference resolves inside its own bundle', () => {
+  for (const task of ['pstack で進めて', '$pstack で実装して']) {
+    const context = prepareSkillContext(task, process.cwd());
+    assert.ok(context.selected.includes('pstack'), `pstack omitted for ${task}`);
+    assert.match(context.text, /read_skill\('pstack'/);
+  }
+  assert.ok(!prepareSkillContext('バグを修正', process.cwd()).selected.includes('pstack'));
+  const resources = bundledSkills().find(skill => skill.name === 'pstack')!.files;
+  assert.ok(Object.keys(resources).length > 60);
+  for (const resource of Object.keys(resources)) {
+    // subagents.md exists to name the Cursor-only options this port replaces, so it is the one allowed mention.
+    if (resource === 'references/subagents.md') continue;
+    const body = readBundledSkill('pstack', resource);
+    assert.doesNotMatch(body, /~\/\.cursor|subagent_type|claude-opus-5-5|gemini-4-neon|agent-transcripts/, resource);
+  }
+  assert.throws(() => readBundledSkill('pstack', 'references/playbook-feature.md/x'), /Unknown bundled Skill or resource/);
 });

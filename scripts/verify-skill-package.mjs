@@ -13,7 +13,7 @@ try {
   const load = file => import(pathToFileURL(path.join(base, 'dist', file)).href);
   const { verifyBundledSkills, bundledSkills, readBundledSkill } = await load('agent/bundled-skills.js');
   verifyBundledSkills();
-  assert.equal(bundledSkills().length, 17);
+  assert.equal(bundledSkills().length, 18);
   const { ToolRegistry, defaultTools } = await load('tools/registry.js');
   const { runAgentLoop } = await load('agent/loop.js');
   const { FixedModel } = await load('model/fixed.js');
@@ -28,9 +28,13 @@ try {
   assert.ok(model.requests[0].system.includes('[kiokuko-ui-design-soul]'));
   assert.equal(messages.find(m => m.role === 'tool').results[0].status, 'ok');
   assert.ok(!model.requests[0].system.includes('/Users/'));
+  // The second bundle root resolves its own references and keeps them out of the first bundle's namespace.
+  assert.match(readBundledSkill('pstack', 'references/playbook-feature.md'), /throughput checkpoint/);
   // Fault only the disposable package to prove integrity checks reject damaged resources.
   fs.appendFileSync(path.join(base, 'skills/kiokuko-dsh/kiokuko-soul/SKILL.md'), '\nCORRUPTED');
   assert.throws(() => readBundledSkill('kiokuko-soul'), /integrity mismatch/);
-  console.log('Packaged skill acceptance: 17 skills, 43 resources, routed core/UI, reference tool, corruption rejection passed');
+  fs.appendFileSync(path.join(base, 'skills/pstack/pstack/SKILL.md'), '\nCORRUPTED');
+  assert.throws(() => readBundledSkill('pstack'), /integrity mismatch/);
+  console.log('Packaged skill acceptance: 18 skills, 112 resources, routed core/UI/pstack, reference tool, corruption rejection in both bundles passed');
   console.log(`Package integrity: ${packed[0].integrity}`);
 } finally { fs.rmSync(directory, { recursive: true, force: true }); }
