@@ -71,6 +71,7 @@ export const COMMANDS: readonly Choice[] = [
   { value: '/reasoning', label: '/reasoning', detail: '推論レベル (off/minimal/low/medium/high/max)' },
   { value: '/annimation', label: '/annimation', detail: '待機アニメーション (on/off)' },
   { value: '/agents', label: '/agents', detail: '子の一覧・委譲・同時実行数' },
+  { value: '/pstack', label: '/pstack', detail: 'pstack手順の常時注入 (on/off/--save)' },
   { value: '/usage', label: '/usage', detail: 'トークン使用量の内訳' },
   { value: '/pdf', label: '/pdf', detail: 'PDFの本文と画像を送る · /pdf パス | 依頼文' },
   { value: '/tools', label: '/tools', detail: 'ツール履歴 · /tools <番号> で全文' },

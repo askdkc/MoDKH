@@ -24,6 +24,8 @@ export interface LiteConfig {
   modelBaseUrl?: unknown;
   /** 前回の /reasoning レベル。起動時に復元する。 */
   reasoning?: unknown;
+  /** /pstack on --save で保存した常時注入の指定。true のときだけ開始時に有効。 */
+  pstack?: unknown;
   /** モデル応答の無通信タイムアウト(ms)。1〜上限で検証し、不正値は使わない。 */
   timeoutMs?: unknown;
   /** 圧縮で生のまま残す直近ターン数。parseKeepTurns で検証する。 */
@@ -71,7 +73,7 @@ export function defaultConfig(): LiteConfig {
 }
 
 /** 書き込み時に意味を持つ既知のキー。これ以外は利用者の手書き設定として保持する。 */
-const KNOWN_KEYS = new Set(['memory', 'subagents', 'subagentLimit', 'language', 'permissions', 'maxTurns', 'model', 'modelBaseUrl', 'reasoning', 'timeoutMs']);
+const KNOWN_KEYS = new Set(['memory', 'subagents', 'subagentLimit', 'language', 'permissions', 'maxTurns', 'model', 'modelBaseUrl', 'reasoning', 'pstack', 'timeoutMs']);
 
 function readRawConfig(): string | undefined {
   try { return fs.readFileSync(configPath(), 'utf8'); } catch { return undefined; }
@@ -99,6 +101,7 @@ function toLiteConfig(parsed: Record<string, unknown>): LiteConfig {
     model: parsed.model,
     modelBaseUrl: parsed.modelBaseUrl,
     reasoning: parsed.reasoning,
+    pstack: parsed.pstack,
     timeoutMs: parsed.timeoutMs,
     compactionKeepTurns: parsed.compactionKeepTurns,
     compactionAutoBytes: parsed.compactionAutoBytes,

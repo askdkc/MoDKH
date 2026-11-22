@@ -133,8 +133,23 @@ export function mergeSkillContext(previous: SkillContext | undefined, next: Skil
   return { text, bytes, sections, selected: sections.map(section => section.name), warnings };
 }
 
+/**
+ * Drop one delivered section so an opt-in can be switched off mid-session.
+ * The header and every remaining section stay byte-identical; only the removed bytes leave the budget.
+ */
+export function removeSkillSection(previous: SkillContext | undefined, name: string): SkillContext | undefined {
+  const index = previous?.sections.findIndex(section => section.name === name) ?? -1;
+  if (!previous || index < 0) return previous;
+  const removed = previous.sections[index]!;
+  const at = previous.text.indexOf(removed.text);
+  const text = at < 0 ? previous.text : previous.text.slice(0, at) + previous.text.slice(at + removed.text.length);
+  const sections = previous.sections.filter((_, position) => position !== index);
+  if (!sections.length) return undefined;
+  return { text, bytes: Buffer.byteLength(text), sections, selected: sections.map(section => section.name), warnings: previous.warnings };
+}
+
 /** Select guidance for a user turn without changing the conversation journal. */
-export function prepareSkillContext(task: string, root: string): SkillContext {
+export function prepareSkillContext(task: string, root: string, options: { include?: readonly string[] } = {}): SkillContext {
   const warnings: string[] = [];
   let canonical: string;
   try { canonical = fs.realpathSync(root); }
@@ -143,9 +158,16 @@ export function prepareSkillContext(task: string, root: string): SkillContext {
   try { builtin = builtinCatalog(); }
   catch { warnings.push('同梱スキル一覧を読めないため注入を省略'); }
   const catalog = [...builtin, ...localCatalog(canonical, warnings, builtin)];
+  // An explicit opt-in (/pstack on) beats keyword matching and keeps its slot ahead of the optional three.
+  const forced: string[] = [];
+  for (const name of new Set(options.include ?? [])) {
+    if (catalog.some(skill => skill.name === name)) forced.push(name);
+    else warnings.push(`${name}: 指定されたスキルが見つからないため省略`);
+  }
   const uiSkill = 'kiokuko-ui-design-soul';
   const optional = selectTaskSkills(task, catalog.filter(skill => skill.name !== uiSkill));
   const names = new Set(optional.map(skill => skill.name));
+  for (const name of forced) names.add(name);
   const coding = CODING.some(word => matches(task, word));
   if (coding) for (const name of CODING_CORE) names.add(name);
   if (matches(task, 'review') || matches(task, 'レビュー')) names.add('kiokuko-single-purpose-functions');
@@ -153,7 +175,7 @@ export function prepareSkillContext(task: string, root: string): SkillContext {
   if (names.size) names.add('kiokuko-soul');
   // Host entry and mandatory code guidance precede optional specialists; no top-three cutoff on core contracts.
   names.add(uiSkill);
-  const order = ['kiokuko-soul', uiSkill, ...CODING_CORE, ...optional.map(skill => skill.name), 'natural-japanese-output'];
+  const order = ['kiokuko-soul', uiSkill, ...forced, ...CODING_CORE, ...optional.map(skill => skill.name), 'natural-japanese-output'];
   const selected = [...new Set(order)].filter(name => names.has(name)).map(name => catalog.find(skill => skill.name === name)).filter((skill): skill is TaskSkill => !!skill);
   const header = '\n\n' + MODKH_SKILL_BINDING;
   let text = '';

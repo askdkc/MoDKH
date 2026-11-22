@@ -28,7 +28,7 @@ import { ToolRegistry, defaultToolsWithJobs } from '../tools/registry.ts';
 import { BrowseTabs, watchBrowseActivity } from '../tools/browse.ts';
 import { JobRegistry } from '../tools/jobs.ts';
 import { runAgentLoop } from '../agent/loop.ts';
-import { prepareSkillContext, mergeSkillContext, type SkillContext } from '../agent/skills.ts';
+import { prepareSkillContext, mergeSkillContext, removeSkillSection, type SkillContext } from '../agent/skills.ts';
 import { parseModelRef, providerKeyEnv, modelBaseUrl as modelBaseUrlFor } from '../model/factory.ts';
 import { selectModel } from './models.ts';
 import { loginChatGpt, type LoginOptions } from '../model/chatgpt/login.ts';
@@ -385,6 +385,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   };
   saveWorkspaceRecord();
   let sessionSkills: SkillContext | undefined;
+  /** /pstack on keeps the pstack workflow in every turn, regardless of keywords. */
+  let pstackEnabled = config.pstack === true;
   let lastInputTokens: number | undefined;
   let contextWindow: number | undefined;
   let nextMetadataRead = 0;
@@ -498,7 +500,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       };
       const directOutcome = direct && await runDirectAgent(direct, session, registry, cwd, ac.signal, approval, ui);
       const continueInChat = !directOutcome || (directOutcome.outcome === 'complete' && followups.length > 0 && !ac.signal.aborted);
-      const turnSkills = continueInChat && !lisp?.headInstruction ? prepareSkillContext(input, cwd) : undefined;
+      const turnSkills = continueInChat && !lisp?.headInstruction ? prepareSkillContext(input, cwd, pstackEnabled ? { include: ['pstack'] } : {}) : undefined;
       if (turnSkills && !lisp) sessionSkills = mergeSkillContext(sessionSkills, turnSkills);
       const guidance = lisp ? turnSkills : sessionSkills;
       const system = headSystem + (guidance?.text ?? '');
@@ -808,12 +810,42 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         }
         continue;
       }
+      if (line === '/pstack' || line.startsWith('/pstack ')) {
+        const [mode, flag] = line.slice('/pstack'.length).trim().split(/\s+/);
+        if (mode && mode !== 'on' && mode !== 'off') {
+          ui.write('使い方: /pstack on|off [--save]（引数なしは現在の状態）\n');
+          continue;
+        }
+        if (flag !== undefined && flag !== '--save') {
+          ui.write('使い方: /pstack on|off [--save]\n');
+          continue;
+        }
+        if (mode) pstackEnabled = mode === 'on';
+        if (!mode) {
+          ui.write(`pstack: ${pstackEnabled ? 'on（毎ターン注入）' : 'off（依頼文の pstack・poteto-mode で選択）'}\n`
+            + '切り替え: /pstack on | /pstack off   末尾 --save で次回以降も維持\n'
+            + '本文は索引だけで、原則・プレイブックはモデルが read_skill(\'pstack\', \'references/<name>.md\') で読む。\n');
+          continue;
+        }
+        // Drop guidance already merged so a stale pstack section cannot outlive an /pstack off.
+        if (!pstackEnabled) sessionSkills = removeSkillSection(sessionSkills, 'pstack');
+        ui.write(mode === 'on'
+          ? '(pstack: on。以後のターンで索引を必ず注入します)\n'
+          : '(pstack: off。以後は依頼文の pstack・poteto-mode に一致したときだけ選びます)\n');
+        if (flag === '--save') {
+          try {
+            updateConfig((c) => { c.pstack = pstackEnabled; });
+            ui.write('(設定に保存しました: 次回起動時も反映)\n');
+          } catch (e) { ui.write(`(設定を保存できません: ${(e as Error).message} — このセッションでは有効です)\n`); }
+        }
+        continue;
+      }
       if (line === '/help') {
         ui.write('/annimation on|off: 待機アニメーションの切り替え（起動中のみ）\n');
         ui.write('ローカルファイルを添付: @パス（↑↓ で候補を選択し、Tab で補完）\n');
         ui.write(`PDFの本文とページ画像を送信: ${pdfUsage}\n`);
         ui.write('/tools: ツール履歴  /tools <番号>: 引数と結果の全文\n');
-        ui.write('\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /usage: トークン使用量  /allow: 承認ポリシー  /agents: 子の一覧・同時実行数  /agents limit <数>: 子の上限変更  /agents run [ID]: 子に依頼  /exit: 終了\n'
+        ui.write(`\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /usage: トークン使用量  /allow: 承認ポリシー  /agents: 子の一覧・同時実行数  /agents limit <数>: 子の上限変更  /agents run [ID]: 子に依頼  /pstack on|off [--save]: pstack手順の常時注入  /exit: 終了\n`
           + 'macOS: 会話のテキストをドラッグして選択するとコピーします。\n'
           + '/reasoning off|minimal|low|medium|high|max [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信（実行中の追加依頼にも画像を添付できます） / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');
         continue;

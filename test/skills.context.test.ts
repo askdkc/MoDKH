@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { prepareSkillContext, mergeSkillContext, selectTaskSkills, SKILL_CONTEXT_BYTES } from '../src/agent/skills.ts';
+import { prepareSkillContext, mergeSkillContext, removeSkillSection, selectTaskSkills, SKILL_CONTEXT_BYTES } from '../src/agent/skills.ts';
 import { runAgentLoop } from '../src/agent/loop.ts';
 import { FixedModel } from '../src/model/fixed.ts';
 import { ToolRegistry } from '../src/tools/registry.ts';
@@ -129,4 +129,33 @@ test('real loop injects once per request, keeps stable tool-step prefix and neve
   const disabled = new FixedModel([[{ type: 'finish', stopReason: 'stop' }]]);
   await runAgentLoop(messages, { ...opts, model: disabled, skills: false });
   assert.equal(disabled.requests[0].system, 'BASE_POLICY');
+});
+
+test('an opt-in skill keeps its slot without keywords and can be removed again', t => {
+  const root = fixture(t);
+  const plain = prepareSkillContext('hello', root);
+  assert.ok(!plain.selected.includes('pstack'));
+  const forced = prepareSkillContext('hello', root, { include: ['pstack'] });
+  assert.ok(forced.selected.includes('pstack'), 'opt-in beats keyword matching');
+  // A forced skill takes its slot ahead of the optional three but never duplicates a section.
+  assert.equal(forced.selected.filter(name => name === 'pstack').length, 1);
+  assert.ok(forced.bytes > plain.bytes);
+  // Coding stays selected alongside the opt-in, and the budget still holds.
+  const coding = prepareSkillContext('バグを修正', root, { include: ['pstack'] });
+  assert.ok(coding.selected.includes('pstack') && coding.selected.includes('coding-ideal-routine-skill'));
+  assert.ok(coding.bytes <= SKILL_CONTEXT_BYTES);
+  // Switching off drops exactly that section; the header and every other section stay byte-identical.
+  const section = forced.sections.find(entry => entry.name === 'pstack')!;
+  const removed = removeSkillSection(forced, 'pstack');
+  assert.ok(removed && !removed.selected.includes('pstack'));
+  assert.equal(removed!.text, forced.text.replace(section.text, ''));
+  assert.ok(removed!.sections.every(entry => forced.text.includes(entry.text)));
+  assert.equal(removed!.selected.length, forced.sections.length - 1);
+  // Removing an absent name is a no-op, and removing the last section yields undefined.
+  assert.equal(removeSkillSection(forced, 'absent'), forced);
+  assert.equal(removeSkillSection({ ...forced, sections: [section], text: section.text, selected: ['pstack'] }, 'pstack'), undefined);
+  // An unknown name is reported, not injected.
+  const unknown = prepareSkillContext('hello', root, { include: ['not-installed'] });
+  assert.ok(!unknown.selected.includes('not-installed'));
+  assert.match(unknown.warnings.join('\n'), /not-installed/);
 });

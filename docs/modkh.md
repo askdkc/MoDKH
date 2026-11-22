@@ -64,7 +64,11 @@ Examples inside the chat:
 /agents
 /agents run micro-js-edit --target src/addition.mjs Fix addition.
 /agents route ts outline Inspect src/example.ts.
+/pstack on
+/pstack on --save
 ```
+
+`/pstack on` keeps the bundled pstack workflow in every turn, whether or not the request mentions it. `/pstack off` returns to keyword selection, and `/pstack` alone reports the current state. `/pstack on --save` also writes `pstack: true` to the config so the next start begins switched on. Because the pstack body is a 7 KB index, the on state costs about 7 KB of system input per turn; the principles, playbooks and helper procedures stay unread until the model calls `read_skill('pstack', 'references/<name>.md')`.
 
 `--routing auto` is an optional conservative deterministic router, not LLM judgment. Unsupported/ambiguous requests go back to the head. Mixed intents, negation, conditionals, multiple files, URLs and outside paths do not directly dispatch a role. If the trusted configuration uses `set-head-instruction`, normal chat input always goes to the head so its workflow can coordinate multiple roles. Explicit `/agents` commands still dispatch directly.
 
