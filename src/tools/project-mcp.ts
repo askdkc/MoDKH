@@ -13,8 +13,17 @@ export function connectedProjectMcpServers(root: string): string[] {
   return [...names].sort();
 }
 
+/** 起動時接続の承認要求。組み込み起動だけがここへ来るので、対象は常に作業ルート内。 */
+export interface StartupConnectionRequest {
+  title: string;
+  detail: string;
+  /** 常に false。builtinLaunch が確認した固定コマンドを cwd = root で実行する。 */
+  outsideWorkspace: boolean;
+}
+
 export interface ProjectMcpOptions {
-  approve: (command: string) => Promise<boolean>;
+  /** 起動時接続。要求の組み立てはここで行い、呼び出し元ごとに範囲がぶれないようにする。 */
+  approve: (request: StartupConnectionRequest) => Promise<boolean>;
   onError: (message: string) => void;
   onClose: (close: () => Promise<void>) => void;
 }
@@ -57,7 +66,14 @@ export async function projectMcpTools(root: string, onConnections?: (ids: string
       if (closed || !builtinLaunch(id, command, args)) continue;
       let client: McpStdioClient | undefined;
       try {
-        if (!await options.approve([command, ...args].join(' ')) || closed) continue;
+        // builtinLaunch に一致する固定コマンドだけを cwd = root で起動する。プロジェクトが
+        // 指定したコマンドはここへ来ないため、要求はルート内として扱える。
+        const approved = await options.approve({
+          title: `プロジェクトMCPに接続 (${id})`,
+          detail: [command, ...args].join(' '),
+          outsideWorkspace: false,
+        });
+        if (!approved || closed) continue;
         client = makeClient(root, command, args);
         owned.add(client);
         if (!await client.connect() || closed) throw new Error(client.lastError ?? 'MCP接続を中断しました');

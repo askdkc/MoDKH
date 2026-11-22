@@ -253,7 +253,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   const tools = defaultToolsWithJobs(jobs, browseTabs);
   if (!lisp) {
     try { tools.push(...await projectMcpTools(cwd, ids => ui.setMcpServers?.(ids), {
-      approve: command => approval.approve({ kind: 'command', title: 'プロジェクトMCPに自動接続', detail: command }),
+      approve: request => approval.approve({ kind: 'command', ...request }),
       onError: message => ui.write(`(プロジェクトMCP: ${JSON.stringify(message)})\n`),
       onClose: close => { closeProjectMcp = close; },
     })); }
