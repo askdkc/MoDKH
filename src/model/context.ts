@@ -64,3 +64,36 @@ function project(output: string, allowed: number): string {
     + utf8Suffix(output, Math.floor(budget / 2)) : '';
   return note + body;
 }
+
+/** Keep the newest observation batch intact. Older tool batches share a 4 MiB
+ * base64 budget with it. User attachments and the session journal stay intact. */
+export function projectToolImages(messages: AgentMessage[]): AgentMessage[] {
+  let remaining = 4 * 1024 * 1024;
+  let seenImages = false;
+  for (let end = messages.length; end > 0;) {
+    let start = end;
+    let bytes = 0;
+    while (start > 0) {
+      const message = messages[start - 1];
+      if (message.role !== 'tool') break;
+      start--;
+      for (const result of message.results) bytes += result.image?.data.length ?? 0;
+    }
+    if (bytes > 0) {
+      if (seenImages && bytes > remaining) {
+        return messages.map((message, index) => {
+          if (index >= end || message.role !== 'tool' || !message.results.some(result => result.image)) return message;
+          return { ...message, results: message.results.map(result => {
+            if (!result.image) return result;
+            const { image, ...receipt } = result;
+            return { ...receipt, output: receipt.output + '\n[過去の画像は送信を省略しました。原本はセッションに保存されています。]' };
+          }) };
+        });
+      }
+      remaining -= bytes;
+      seenImages = true;
+    }
+    end = start - 1;
+  }
+  return messages;
+}

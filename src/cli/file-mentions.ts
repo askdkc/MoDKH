@@ -193,7 +193,7 @@ export function fileCandidates(root: string, query: string, acceptFile: (name: s
   return matches.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-function readAttachment(root: string, file: string, remaining: number, inlineLimit: number, store: import('./staged-attachments.ts').StagedAttachments, kind: 'text' | 'png' | 'jpeg' | 'pdf') {
+function readAttachment(root: string, file: string, remaining: number, textBudget: number, store: import('./staged-attachments.ts').StagedAttachments, isText: boolean) {
   const real = submittedPath(root, file);
   const fd = fs.openSync(real, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW);
   try {
@@ -204,7 +204,7 @@ function readAttachment(root: string, file: string, remaining: number, inlineLim
     if (stat.dev !== current.dev || stat.ino !== current.ino) throw new Error('ファイルが変更されました。もう一度送信してください');
     const tooLarge = '添付ファイルは合計256 MiB以内にしてください';
     if (stat.size > remaining) throw new Error(tooLarge);
-    if (kind !== 'pdf' && stat.size > inlineLimit) return { id: store.stage(fd, stat.size, kind), size: stat.size };
+    if (isText && stat.size > textBudget) return { id: store.stage(fd, stat.size), size: stat.size };
     const buffer = Buffer.alloc(stat.size + 1);
     let bytes = 0;
     while (bytes < buffer.length) {
@@ -223,7 +223,7 @@ function readAttachment(root: string, file: string, remaining: number, inlineLim
 /** Return model context only; never echo attachment contents into the terminal. */
 export function readFileMentions(root: string, input: string, store: import('./staged-attachments.ts').StagedAttachments) {
   const refs: { path: string; id: string; size: number }[] = [];
-  let textBudget = 8192, imageBudget = 128 * 1024;
+  let textBudget = 8192;
   const attachments = new Set<string>();
   const texts: { path: string; content: string }[] = [];
   const images: ImageAttachment[] = [], pdfs: PdfAttachment[] = [];
@@ -240,8 +240,8 @@ export function readFileMentions(root: string, input: string, store: import('./s
       if (attachments.size === MAX_ATTACHMENTS) throw new Error('添付ファイルは8件までです');
       const ext = path.extname(file).toLowerCase();
       const image = ['.png', '.jpg', '.jpeg'].includes(ext);
-      const kind = image ? (ext === '.png' ? 'png' : 'jpeg') : ext === '.pdf' ? 'pdf' : 'text';
-      const body = readAttachment(root, file, remaining, image ? imageBudget : textBudget, store, kind);
+      const isText = !image && ext !== '.pdf';
+      const body = readAttachment(root, file, remaining, textBudget, store, isText);
       if (!Buffer.isBuffer(body)) {
         refs.push({ path: file, ...body });
         remaining -= body.size;
@@ -249,8 +249,7 @@ export function readFileMentions(root: string, input: string, store: import('./s
         continue;
       }
       remaining -= body.length;
-      if (image) imageBudget -= body.length;
-      if (kind === 'text') textBudget -= body.length;
+      if (isText) textBudget -= body.length;
       if (image) {
         images.push(parseImage({ mediaType: ext === '.png' ? 'image/png' : 'image/jpeg', data: body.toString('base64') }, MENTION_BYTE_LIMIT));
       } else {

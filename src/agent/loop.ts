@@ -1,3 +1,4 @@
+import { projectToolImages } from '../model/context.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { modelInstructions } from '../model/harness-profile.ts';
 import type { AgentMessage, Model, ModelEvent, TokenUsage, ToolCall, ToolResult, ToolSpec } from './types.ts';
@@ -140,7 +141,8 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
   const transient = opts.transientContext?.trim() ? opts.transientContext : undefined;
   const requestMessages = (): AgentMessage[] => {
     const projection = truncatedResponse ? outgoing().filter(message => message !== truncatedResponse) : outgoing();
-    return transient === undefined ? projection : [...projection, { role: 'user', content: transient }];
+    const visible = projectToolImages(projection);
+    return transient === undefined ? visible : [...visible, { role: 'user', content: transient }];
   };
   const appendFollowups = (): boolean => {
     const followups = opts.takeFollowups?.() ?? [];

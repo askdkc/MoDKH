@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import sharp from 'sharp';
+import { randomBytes } from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import type { ReadStream, WriteStream } from 'node:tty';
 import type { AddressInfo } from 'node:net';
@@ -16,8 +18,10 @@ const terminalEntry = process.env.MODKH_TEST_TERMINAL ? pathToFileURL(process.en
 const { TerminalUI } = await import(terminalEntry);
 const image = { mediaType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==' };
 
-for (const rejected of [false, false] as const) {
-  test(`clipboard image and multiline text reach the real chat API and journal (${rejected ? 'provider rejects images' : 'success'})`, async () => {
+for (const scenario of ['clipboard only', 'with file mentions', 'provider rejects images']) {
+  const withFiles = scenario === 'with file mentions';
+  const rejected = scenario === 'provider rejects images';
+  test(`clipboard image and multiline text reach the real chat API and journal (${scenario})`, async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-composer-flow-'));
     const previousHome = process.env.MODKH_HOME;
     process.env.MODKH_HOME = home;
@@ -65,7 +69,18 @@ for (const rejected of [false, false] as const) {
       await waitFor('接続しました: compatible/vision');
       await waitFor('何を調べますか');
       assert.equal(ui.imageCount, 1);
-      const prompt = rejected ? '' : 'この画像を説明して\n/exit はコード例です';
+      const fileImages = [];
+      if (withFiles) {
+        const pixels = randomBytes(1024 * 512 * 3);
+        const input = sharp(pixels, { raw: { width: 1024, height: 512, channels: 3 } });
+        for (const format of ['png', 'jpeg'] as const) {
+          const bytes = await input.clone().toFormat(format).toBuffer();
+          assert.ok(bytes.length > 128 * 1024);
+          fs.writeFileSync(path.join(home, 'screen.' + format), bytes);
+          fileImages.push({ mediaType: 'image/' + format, data: bytes.toString('base64') });
+        }
+      }
+      const prompt = withFiles ? '@screen.png ./screen.jpeg を比較して' : rejected ? '' : 'この画像を説明して\n/exit はコード例です';
       if (prompt) input.write(`\x1b[200~${prompt}\x1b[201~`);
       input.emit('keypress', '', { name: 'return' });
       await waitFor(rejected ? 'IMAGE_UNSUPPORTED' : 'IMAGE_ACCEPTED');
@@ -74,15 +89,16 @@ for (const rejected of [false, false] as const) {
       input.emit('keypress', '/exit', {}); input.emit('keypress', '', { name: 'return' });
       await chat;
       assert.equal(requests.length, 1, 'never silently retry without the image');
+      if (withFiles) assert.equal((requests[0].messages.find(m => m.role === 'user')?.content as unknown[]).length, 4);
       assert.deepEqual(requests[0].messages.find(m => m.role === 'user')?.content, [
         ...(prompt ? [{ type: 'text', text: prompt }] : []),
-        { type: 'image_url', image_url: { url: `data:image/png;base64,${image.data}` } },
+        ...[...fileImages, image].map(part => ({ type: 'image_url', image_url: { url: `data:${part.mediaType};base64,${part.data}` } })),
       ]);
       const files = fs.readdirSync(path.join(home, 'sessions'));
       const events = fs.readFileSync(path.join(home, 'sessions', files[0]), 'utf8').trim().split('\n').map(line => JSON.parse(line));
       const users = events.filter(e => e.message?.role === 'user');
       assert.equal(users.length, 1);
-      assert.deepEqual(users[0].message.images, [image]);
+      assert.deepEqual(users[0].message.images, [...fileImages, image]);
       assert.equal(users[0].message.content, prompt);
       assert.ok(events.some(e => e.type === 'status' && e.status === (rejected ? 'error' : 'complete')));
       assert.equal(screen.includes(image.data), false, 'never print image bytes into terminal history');

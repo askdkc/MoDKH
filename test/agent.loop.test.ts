@@ -424,3 +424,23 @@ test('a definitive rejection stops remaining calls in the same model response', 
   const receipts = messages.flatMap(message => message.role === 'tool' ? message.results : []);
   assert.deepEqual(receipts.map(receipt => [receipt.callId, receipt.status]), [['verify', 'error'], ['edit', 'not-executed']]);
 });
+
+test('long histories resend recent tool images and keep the complete tool journal', async () => {
+  const image = { mediaType: 'image/png' as const, data: 'A'.repeat(1024 * 1024) };
+  const messages: AgentMessage[] = [{ role: 'user', content: 'Compare the screenshots', images: [image] }];
+  for (let i = 0; i < 510; i++) {
+    const id = String(i);
+    messages.push({ role: 'assistant', content: '', toolCalls: [{ id, name: 'view_image', args: {} }] },
+      { role: 'tool', results: [{ callId: id, name: 'view_image', status: 'ok', output: id, ...(i % 50 === 0 ? { image } : {}) }] });
+  }
+  const model = new FixedModel([delta('done')]);
+  await runAgentLoop(messages, { root: '.', skills: false, model, registry: new ToolRegistry([]),
+    signal: new AbortController().signal, approval: new RecordingGate([]) });
+  const receipts = (history: AgentMessage[]) => history.flatMap(message => message.role === 'tool' ? message.results : []);
+  const sent = receipts(model.requests[0].messages);
+  assert.equal(sent.length, 510);
+  assert.deepEqual(sent.filter(result => result.image).map(result => result.callId), ['350', '400', '450', '500']);
+  assert.match(sent[0].output, /画像/);
+  assert.deepEqual(model.requests[0].messages[0], messages[0]);
+  assert.equal(receipts(messages).filter(result => result.image).length, 11);
+});

@@ -77,3 +77,11 @@ test('a workspace render reaches the next Responses request as pixels tied to th
     assert.equal((await registry.executeOne({ ...call, args: { path: file } }, ctx)).status, 'error');
   }
 });
+
+test('compaction byte threshold accounts for base64 attachments and tool observations', async () => {
+  const { estimateRequestBytes } = await import('../src/agent/compaction.ts');
+  const pdf = { filename: 'doc.pdf', data: 'JVBERg==' };
+  assert.equal(estimateRequestBytes([{ role: 'user', content: '', images: [image], pdfs: [pdf] },
+    { role: 'tool', results: [{ callId: 'frame', name: 'view_image', status: 'ok', output: '', image }] }]),
+  image.data.length * 2 + pdf.data.length);
+});

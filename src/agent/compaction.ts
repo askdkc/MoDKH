@@ -5,7 +5,7 @@
  * 「これからモデルへ送る内容」だけを [要約 + 直近ターン] へ置き換える。この置き換えは
  * プロバイダーのキャッシュprefixが変わるため、設定したしきい値に達したときだけ行う。
  */
-import { toolContext, utf8Prefix, utf8Suffix } from '../model/context.ts';
+import { projectToolImages, toolContext, utf8Prefix, utf8Suffix } from '../model/context.ts';
 import type { AgentMessage, Model, TokenUsage } from './types.ts';
 
 /** 要約メッセージの見出し。要約が新しい指示として解釈されないよう明示する。 */
@@ -206,13 +206,19 @@ export async function summarizeCompaction(
 /** 送信内容のおおよその大きさ(UTF-8バイト)。トークン数でも料金でもない。 */
 export function estimateRequestBytes(messages: AgentMessage[]): number {
   let total = 0;
-  for (const message of messages) {
-    if (message.role === 'user') total += Buffer.byteLength(message.content);
-    else if (message.role === 'assistant') {
+  const projected = projectToolImages(messages);
+  for (const message of projected) {
+    if (message.role === 'user') {
+      total += Buffer.byteLength(message.content);
+      for (const image of message.images ?? []) total += image.data.length;
+      for (const pdf of message.pdfs ?? []) total += pdf.data.length;
+    } else if (message.role === 'tool') {
+      for (const result of message.results) total += result.image?.data.length ?? 0;
+    } else if (message.role === 'assistant') {
       total += Buffer.byteLength(message.content);
       for (const call of message.toolCalls ?? []) total += Buffer.byteLength(JSON.stringify(call.args ?? {}));
     }
   }
-  for (const body of toolContext(messages).values()) total += Buffer.byteLength(body);
+  for (const body of toolContext(projected).values()) total += Buffer.byteLength(body);
   return total;
 }
