@@ -11,6 +11,6 @@ test('each round displays ten distinct celebrations without repeating at the bou
   assert.notEqual(second[0], first[9]);
   for (const art of first) {
     assert.ok(art.split('\n').length >= 3);
-    assert.match(art, /作業が終わったよ！/);
+    assert.match(art, /応答終了/);
   }
 });

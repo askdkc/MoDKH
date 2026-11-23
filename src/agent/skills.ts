@@ -24,7 +24,7 @@ const MAX_SKILLS = 3;
 const MAX_CATALOG_BYTES = 64 * 1024;
 
 const ROUTES: Record<string, string[]> = {
-  'kiokuko-investigate': ['investigate', 'research', 'explain', '調査', '原因', '説明'],
+  'kiokuko-investigate': ['investigate', 'research', 'explain', 'diagnose', 'fails', 'failing', 'failed', 'failure', '失敗', '調査', '原因', '説明'],
   'kiokuko-architecture': ['architecture', 'design', '設計', 'アーキテクチャ'],
   'kiokuko-review': ['review', 'audit', 'レビュー', '監査'],
   'kiokuko-benchmark': ['benchmark', 'performance', 'speed', 'ベンチマーク', '性能', '高速化'],
@@ -172,9 +172,9 @@ export function prepareSkillContext(task: string, root: string, options: { inclu
   if (coding) for (const name of CODING_CORE) names.add(name);
   if (matches(task, 'review') || matches(task, 'レビュー')) names.add('kiokuko-single-purpose-functions');
   if (/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(task) || matches(task, 'Japanese')) names.add('natural-japanese-output');
+  if (selectTaskSkills(task, catalog.filter(skill => skill.name === uiSkill)).length) names.add(uiSkill);
   if (names.size) names.add('kiokuko-soul');
   // Host entry and mandatory code guidance precede optional specialists; no top-three cutoff on core contracts.
-  names.add(uiSkill);
   const order = ['kiokuko-soul', uiSkill, ...forced, ...CODING_CORE, ...optional.map(skill => skill.name), 'natural-japanese-output'];
   const selected = [...new Set(order)].filter(name => names.has(name)).map(name => catalog.find(skill => skill.name === name)).filter((skill): skill is TaskSkill => !!skill);
   const header = '\n\n' + MODKH_SKILL_BINDING;

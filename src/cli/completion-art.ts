@@ -59,6 +59,6 @@ export function completionArtPicker(): () => string {
       }
     }
     previous = deck.pop()!;
-    return `${previous}  ＜ 作業が終わったよ！`;
+    return `${previous}  ＜ 応答終了`;
   };
 }

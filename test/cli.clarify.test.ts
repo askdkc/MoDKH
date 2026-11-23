@@ -9,18 +9,20 @@ import type { AddressInfo } from 'node:net';
 
 const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
-interface Run { output: string; systems: string[]; code: number | null }
+interface Run { output: string; systems: string[]; inputs: string[][]; code: number | null }
 
 /** One chat turn against a stub model that answers without calling any tool. */
-async function chat(home: string): Promise<Run> {
+async function chat(home: string, input = 'ok'): Promise<Run> {
   const project = path.join(home, 'project');
-  fs.mkdirSync(project, { recursive: true });
+  fs.mkdirSync(path.join(project, '.github', 'workflows'), { recursive: true });
   const systems: string[] = [];
+  const inputs: string[][] = [];
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', chunk => { raw += chunk; });
     req.on('end', () => {
       const body = JSON.parse(raw) as { messages: { role: string; content: string }[] };
+      inputs.push(body.messages.filter(message => message.role === 'user').map(message => message.content));
       systems.push(body.messages.find(message => message.role === 'system')?.content ?? '');
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.end(`data: ${JSON.stringify({
@@ -39,11 +41,11 @@ async function chat(home: string): Promise<Run> {
   child.stderr.on('data', data => { output += data; });
   const code = new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
   const timer = setTimeout(() => child.kill('SIGKILL'), 30_000);
-  child.stdin.end('ok\n/exit\n');
+  child.stdin.end(input + '\n/exit\n');
   try {
     const exitCode = await code;
     await new Promise<void>(resolve => setImmediate(resolve));
-    return { output, systems, code: exitCode };
+    return { output, systems, inputs, code: exitCode };
   } finally {
     clearTimeout(timer);
     child.kill('SIGKILL');
@@ -52,20 +54,19 @@ async function chat(home: string): Promise<Run> {
   }
 }
 
-test('システムプロンプトは意図不明時にツールより先に一度だけ聞き返す規則を持つ', async () => {
+test('CI の原因調査では作業ルートから失敗ログまで確認する指示がモデルに届く', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-clarify-'));
   try {
-    const run = await chat(home);
+    const run = await chat(home, 'ci fails. why?');
     assert.equal(run.code, 0, run.output);
     assert.equal(run.systems.length, 1, run.output);
-    assert.match(run.systems[0], /意図を特定できないときは、ツールを呼ぶ前に一度だけ聞き返す/);
-    assert.match(run.systems[0], /聞き返しは正常終了/);
-    // The clarification rule must come before the "keep working" rule, which still applies.
-    const clarify = run.systems[0].indexOf('ツールを呼ぶ前に一度だけ聞き返す');
-    const work = run.systems[0].indexOf('説明や計画だけで止めない');
-    assert.ok(clarify >= 0 && work >= 0, run.systems[0]);
-    assert.ok(clarify < work, '聞き返しの規則が「止めない」規則より後ろにある');
-    assert.equal(run.systems[0].split('説明や計画だけで止めない').length - 1, 1);
+    assert.match(run.systems[0], /目的を特定できないときだけ、一度聞き返す/);
+    assert.match(run.systems[0], /現在のGitリポジトリ・ブランチ・リモート/);
+    assert.ok(run.systems[0].includes(JSON.stringify(path.join(home, 'project'))));
+    assert.match(run.inputs[0].at(-1)!, /gh run view <id> --log-failed/);
+    assert.match(run.systems[0], /失敗ジョブ、ログの最初の原因エラー/);
+    assert.match(run.systems[0], /\[kiokuko-investigate\]/);
+    assert.doesNotMatch(run.systems[0], /\[kiokuko-ui-design-soul\]/);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -74,6 +75,7 @@ test('ツールを呼ばない応答は打ち切りではなく通常終了と�
   try {
     const run = await chat(home);
     assert.equal(run.code, 0, run.output);
+    assert.deepEqual(run.inputs[0], ['ok']);
     assert.match(run.output, /意図を教えてください/);
     assert.match(run.output, /応答終了/);
     assert.doesNotMatch(run.output, /打ち切り/);

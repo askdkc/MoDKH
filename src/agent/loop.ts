@@ -43,6 +43,8 @@ export interface AgentLoopOptions {
    * 履歴より後ろに置き、既存メッセージの位置を動かさない。
    */
   transientContext?: string | undefined;
+  /** Attach workspace hints to the initiating request, before its subsequent tool results. */
+  taskContext?: string;
   /** このターンでの推論レベル(/reasoning で指定)。省略はプロバイダーの初期値。 */
   reasoning?: import('./types.ts').ReasoningLevel;
   signal: AbortSignal;
@@ -129,6 +131,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
   const system = guidance ? (opts.system ?? '') + guidance : opts.system;
   // The provider sees the projection; the transcript keeps the full text for audit and replay safety.
   let compaction = opts.compaction;
+  let requestedVisibleAnswer = false;
   let truncatedResponse: AgentMessage | undefined;
   let recoveryScope: OutputLimitRecovery['scope'];
   const outgoing = (): AgentMessage[] => compaction ? projectCompacted(messages, compaction) : messages;
@@ -141,7 +144,10 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
   const transient = opts.transientContext?.trim() ? opts.transientContext : undefined;
   const requestMessages = (): AgentMessage[] => {
     const projection = truncatedResponse ? outgoing().filter(message => message !== truncatedResponse) : outgoing();
-    const visible = projectToolImages(projection);
+    const contextualized = opts.taskContext && task
+      ? projection.map(message => message === task ? { ...task, content: task.content + '\n\n' + opts.taskContext } : message)
+      : projection;
+    const visible = projectToolImages(contextualized);
     return transient === undefined ? visible : [...visible, { role: 'user', content: transient }];
   };
   const appendFollowups = (): boolean => {
@@ -162,6 +168,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     if (notices.length > 0) append({ role: 'user', content: `(バックグラウンドジョブの完了通知)\n${notices.join('\n\n')}` });
     appendFollowups();
     let text = '';
+    let receivedReasoning = false;
     const calls: ToolCall[] = [];
     let stopReason: Extract<ModelEvent, { type: 'finish' }>['stopReason'] | undefined;
     let errorMessage: string | undefined;
@@ -187,6 +194,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
           text += ev.text;
           opts.hooks?.onText?.(ev.text);
         } else if (ev.type === 'reasoning-delta') {
+          receivedReasoning ||= ev.text.length > 0;
           opts.hooks?.onReasoning?.(ev.text);
         } else if (ev.type === 'tool-call') {
           calls.push(ev.call);
@@ -258,6 +266,12 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
           continue;
         }
         if (decision) return { outcome: 'error', errorMessage: decision.errorMessage };
+      }
+      if (stopReason === 'stop' && !text.trim() && (receivedReasoning || requestedVisibleAnswer)) {
+        if (requestedVisibleAnswer || turn + 1 >= maxTurns) return { outcome: 'error', errorMessage: 'モデルから回答本文を取得できませんでした' };
+        requestedVisibleAnswer = true;
+        append({ role: 'user', content: 'The response contained no final answer. Give the user the answer from the evidence already available, in the final response text.' });
+        continue;
       }
       return stopReason === 'stop' ? { outcome: 'complete' }
         : { outcome: 'error', errorMessage: 'ツール終了イベントに呼び出しがない' };

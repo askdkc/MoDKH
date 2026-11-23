@@ -20,15 +20,16 @@ const catalog = (root: string, items: unknown) => fs.writeFileSync(path.join(roo
 
 const ui = 'kiokuko-ui-design-soul';
 
-test('neutral tasks receive only the bundled UI guidance', t => {
+test('neutral tasks need no specialist, CI failures route to investigation, UI work keeps UI guidance', t => {
   const root = fixture(t);
   const neutral = prepareSkillContext('hello', root);
-  assert.deepEqual(neutral.selected, [ui]);
-  assert.match(neutral.text, /Make every interactive action discoverable, operable, perceivable, recoverable/);
-  assert.deepEqual(prepareSkillContext('prefix fixture', root).selected, [ui]);
+  assert.deepEqual(neutral.selected, []);
+  assert.deepEqual(prepareSkillContext('ci fails. why?', root).selected, ['kiokuko-soul', 'kiokuko-investigate']);
+  assert.ok(prepareSkillContext('fix the UI', root).selected.includes(ui));
+  assert.deepEqual(prepareSkillContext('prefix fixture', root).selected, []);
 });
 
-test('mandatory UI leaves all three optional slots available', t => {
+test('explicit UI leaves all three optional slots available', t => {
   const root = fixture(t);
   const names = ['one', 'two', 'three'];
   catalog(root, names.map(name => entry(name)));
@@ -39,10 +40,10 @@ test('mandatory UI leaves all three optional slots available', t => {
 
 test('matched tasks retain Japanese, English and explicit skill routing', t => {
   const root = fixture(t);
-  const coding = [ui, 'kiokuko-soul', 'coding-ideal-routine-skill', 'one-shot-software-completion', 'kiokuko-single-purpose-functions'];
+  const coding = ['kiokuko-soul', 'coding-ideal-routine-skill', 'one-shot-software-completion', 'kiokuko-single-purpose-functions'];
   assert.deepEqual(prepareSkillContext('バグを修正', root).selected.toSorted(), [...coding, 'natural-japanese-output'].sort());
   assert.deepEqual(prepareSkillContext('fix error', root).selected.toSorted(), coding.sort());
-  assert.deepEqual(prepareSkillContext('こんにちは', root).selected.toSorted(), [ui, 'kiokuko-soul', 'natural-japanese-output'].sort());
+  assert.deepEqual(prepareSkillContext('こんにちは', root).selected.toSorted(), ['kiokuko-soul', 'natural-japanese-output'].sort());
   const skills = [entry('one'), entry('one-other'), entry('two'), entry('three'), entry('four')];
   assert.deepEqual(selectTaskSkills('$one-other', skills).map(s => s.name), ['one-other']);
   assert.equal(selectTaskSkills('$one $two $three $four', skills).length, 3);
@@ -54,7 +55,7 @@ test('local metadata selects only relevant bodies, exact duplicates are delivere
   fs.writeFileSync(path.join(root, 'php.md'), 'SPECIALIZED_GUIDANCE');
   fs.writeFileSync(path.join(root, 'duplicate.md'), 'SPECIALIZED_GUIDANCE');
   const context = prepareSkillContext('PHP', root);
-  assert.deepEqual(context.selected.toSorted(), [ui, 'kiokuko-soul', 'duplicate'].sort());
+  assert.deepEqual(context.selected.toSorted(), ['kiokuko-soul', 'duplicate'].sort());
   assert.equal(context.warnings.length, 0); // missing unused.md was never read
   assert.equal(context.text.split('SPECIALIZED_GUIDANCE').length, 2);
   assert.ok(context.bytes <= SKILL_CONTEXT_BYTES);
@@ -68,7 +69,7 @@ test('invalid catalogs, escaping symlinks and oversized or empty bodies degrade 
   fs.writeFileSync(path.join(root, 'large.md'), 'x'.repeat(SKILL_CONTEXT_BYTES + 1));
   fs.writeFileSync(path.join(root, 'empty.md'), '');
   const context = prepareSkillContext('$escape $large $empty', root);
-  assert.deepEqual(context.selected.toSorted(), [ui, 'kiokuko-soul'].sort());
+  assert.deepEqual(context.selected.toSorted(), ['kiokuko-soul'].sort());
   assert.doesNotMatch(context.text, /OUTSIDE_SECRET/);
   assert.equal(context.warnings.length, 3);
   catalog(root, [{ ...entry('invalid'), keywords: [null] }]);

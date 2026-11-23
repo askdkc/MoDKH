@@ -21,7 +21,7 @@ try {
     [{ type: 'tool-call', call: { id: 'reference', name: 'read_skill', args: { name: 'kiokuko-ui-design-soul', resource: 'references/accessibility-and-navigation.md' } } }, { type: 'finish', stopReason: 'tool-calls' }],
     [{ type: 'finish', stopReason: 'stop' }],
   ]);
-  const messages = [{ role: 'user', content: 'fix a bug' }];
+  const messages = [{ role: 'user', content: 'fix a UI bug' }];
   const result = await runAgentLoop(messages, { model, registry: new ToolRegistry(defaultTools()), root: directory, signal: new AbortController().signal, approval: { approve: async () => false } });
   assert.equal(result.outcome, 'complete');
   assert.ok(model.requests[0].system.includes(readBundledSkill('coding-ideal-routine-skill')));

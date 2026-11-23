@@ -227,10 +227,9 @@ test('Responses API アダプターが偽SSEでストリーミング+関数往�
     // 要求は公式契約どおり: フラットな function ツール、store:false、会話状態はCLI保持
     const first = requests[0];
     assert.equal(first['store'], false);
-    // 日本語の依頼ではホスト指示にルーター、常時注入のUI指針、日本語スキルが追加される。
+    // 日本語の依頼ではホスト指示にルーターと日本語スキルが追加される。
     const instructions = 'テスト用指示\n\n' + MODKH_SKILL_BINDING
       + `\n[kiokuko-soul]\n${readBundledSkill('kiokuko-soul')}\n`
-      + `\n[kiokuko-ui-design-soul]\n${readBundledSkill('kiokuko-ui-design-soul')}\n`
       + `\n[natural-japanese-output]\n${readBundledSkill('natural-japanese-output')}\n`;
     assert.equal(first['instructions'], instructions);
     const tools = first['tools'] as { type: string; name: string; strict: boolean }[];
