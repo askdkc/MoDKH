@@ -32,7 +32,7 @@ import { prepareSkillContext, mergeSkillContext, removeSkillSection, type SkillC
 import { parseModelRef, providerKeyEnv, modelBaseUrl as modelBaseUrlFor } from '../model/factory.ts';
 import { selectModel } from './models.ts';
 import { loginChatGpt, type LoginOptions } from '../model/chatgpt/login.ts';
-import { loadChatGptTokens } from '../model/chatgpt/tokens.ts';
+import { hasChatGptConnection } from '../model/chatgpt/tokens.ts';
 import { SessionStore, type Session, type MemoryObservation } from '../session/store.ts';
 import { openKiokukoMemory } from '../memory/kiokuko.ts';
 import { createTerminal, type ChatTerminal } from './terminal.ts';
@@ -650,7 +650,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     try {
       parseModelRef(ref);
       if (ref.startsWith('hermes/') && !await confirmRemoteAgent(ui)) return;
-      if (ref.startsWith('chatgpt/') && loadChatGptTokens() === null) {
+      if (ref.startsWith('chatgpt/') && !hasChatGptConnection()) {
         ui.write('ChatGPT の認証を開始します。\n');
         await loginChatGpt({ ...opts.loginOptions, write: text => ui.write(text) });
       }

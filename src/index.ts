@@ -150,9 +150,8 @@ async function dispatch(cmd: string, args: Record<string, string | undefined>, a
         process.exit(1);
       }
       const { loginChatGpt } = await import('./model/chatgpt/login.ts');
-      const tokens = await loginChatGpt();
+      await loginChatGpt();
       process.stdout.write('ログインしました(トークンはハーネス専用の保存先に保存済み)。\n');
-      if (tokens.expiresAt) process.stdout.write(`有効期限: ${tokens.expiresAt}\n`);
       return;
     }
     if (cmd === 'session') {

@@ -5,7 +5,7 @@ import { providerModelChoices } from './model-catalog.ts';
 import { knownProviders, providerDefinition, supportsLiveModels } from '../model/providers.ts';
 import { resolveApiKey } from './keys.ts';
 
-/** 一覧APIを持つプロバイダーか。chatgpt は公式Codexの一覧を使うため別扱いにする。 */
+/** 一覧APIを持つプロバイダーか。chatgpt はChatGPT プランの一覧を使うため別扱いにする。 */
 export function listsModels(provider: string): boolean {
   return provider === 'chatgpt' || supportsLiveModels(provider);
 }

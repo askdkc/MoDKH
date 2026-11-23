@@ -1,14 +1,10 @@
-import { currentChatGptTokens } from '../model/chatgpt/login.ts';
-import { loadChatGptTokens } from '../model/chatgpt/tokens.ts';
+import { planAccessToken } from '../model/chatgpt/login.ts';
+import { hasChatGptConnection } from '../model/chatgpt/tokens.ts';
 import { resolveApiKey } from './keys.ts';
 
 export type OfficialProvider = 'openai' | 'chatgpt';
-// Codex catalogue protocol compatibility, not the MoDKH application version.
-// https://github.com/openai/codex/releases/tag/rust-v0.169.0
-const CODEX_CATALOG_VERSION = '0.169.0';
-
 export function hasModelCredentials(provider: OfficialProvider): boolean {
-  return provider === 'chatgpt' ? loadChatGptTokens() !== null
+  return provider === 'chatgpt' ? hasChatGptConnection()
     : Boolean(resolveApiKey('openai', process.env, 'OPENAI_API_KEY'));
 }
 
@@ -17,10 +13,8 @@ export async function fetchOfficialModels(provider: OfficialProvider, signal: Ab
   const headers: Record<string, string> = { accept: 'application/json' };
   let endpoint: string;
   if (provider === 'chatgpt') {
-    const tokens = await currentChatGptTokens(signal);
-    headers.authorization = `Bearer ${tokens.accessToken}`;
-    if (tokens.accountId) headers['ChatGPT-Account-Id'] = tokens.accountId;
-    endpoint = `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CATALOG_VERSION}`;
+    headers.authorization = `Bearer ${await planAccessToken(signal)}`;
+    endpoint = 'https://api.openai.com/v1/models';
   } else {
     const key = resolveApiKey('openai', process.env, 'OPENAI_API_KEY');
     if (!key) throw new Error('OPENAI_API_KEY が未設定です。/connect openai で認証してください');

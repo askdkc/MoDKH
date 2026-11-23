@@ -119,35 +119,26 @@ test('/connect は認証先を案内し、キャンセルできる', async () =>
   assert.match(stdout, /終了しました/);
 });
 
+// Resolve dependencies from the CLI under test, including an isolated tarball installation.
+const fixtureModule = new URL('./fixtures/chatgpt-sign-in.ts', import.meta.url).href;
+const loginModule = process.env.MODKH_TEST_CHAT
+  ? path.join(path.dirname(entry), '../model/chatgpt/login.js')
+  : new URL('../src/model/chatgpt/login.ts', import.meta.url).href;
+const fixtureSetup = `import { chatGptFixture } from ${JSON.stringify(fixtureModule)};
+  const fixture = await chatGptFixture(${JSON.stringify(loginModule)}, apiFetch);`;
+
 test('/connect chatgpt はログイン処理を通り、モデル選択に進む', async () => {
-  let exchanges = 0;
-  const issuer = http.createServer((req, res) => {
-    assert.equal(req.url, '/oauth/token');
-    exchanges++;
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ access_token: 'test-token' }));
-  });
-  await new Promise<void>((resolve) => issuer.listen(0, '127.0.0.1', resolve));
-  const reserve = http.createServer();
-  await new Promise<void>((resolve) => reserve.listen(0, '127.0.0.1', resolve));
-  const redirectPort = (reserve.address() as AddressInfo).port;
-  await new Promise<void>((resolve) => reserve.close(() => resolve()));
-  try {
-    const options = `{loginOptions: {config: {issuer: 'http://127.0.0.1:${(issuer.address() as AddressInfo).port}', clientId: 'test', redirectPort: ${redirectPort}}, openUrl: async (url) => { const u = new URL(url); const callback = new URL(u.searchParams.get('redirect_uri')); callback.searchParams.set('code', 'test-code'); callback.searchParams.set('state', u.searchParams.get('state')); await fetch(callback); }}}`;
-    const setup = `const originalFetch = globalThis.fetch; globalThis.fetch = (url, options) => {
-      if (String(url).startsWith('https://chatgpt.com/backend-api/codex/models?')) {
-        if (new Headers(options?.headers).get('authorization') !== 'Bearer test-token') throw new Error('missing catalogue credentials');
-        return Promise.resolve(Response.json({models: [{slug: 'gpt-6.1-sol', visibility: 'list'}]}));
-      }
-      return originalFetch(url, options);
-    }`;
-    const { stdout, session } = await chat('/connect chatgpt\n/models chatgpt/gpt-6.1-sol\n1\n/connect\n\n/exit\n', options, {}, setup);
-    assert.equal(exchanges, 1);
-    assert.match(stdout, /認証しました: chatgpt/);
-    assert.match(stdout, /公式モデル一覧 1件/);
-    assert.match(stdout, /接続しました: chatgpt\/gpt-6\.1-sol/);
-    assert.doesNotMatch(stdout + session, /test-token/);
-  } finally { await new Promise<void>((resolve) => issuer.close(() => resolve())); }
+  const setup = `const apiFetch = async (url, options) => {
+    if (String(url) !== 'https://api.openai.com/v1/models' || new Headers(options.headers).get('authorization') !== 'Bearer oauth-fixture')
+      throw new Error('unexpected catalogue request');
+    return Response.json({models: [{slug: 'gpt-6.1-sol', visibility: 'list'}]});
+  }; ${fixtureSetup}`;
+  const { stdout, session } = await chat('/connect chatgpt\n/models chatgpt/gpt-6.1-sol\n1\n/connect\n\n/exit\n',
+    '{loginOptions: {openUrl: fixture.openUrl}}', {}, setup);
+  assert.match(stdout, /認証しました: chatgpt/);
+  assert.match(stdout, /公式モデル一覧 1件/);
+  assert.match(stdout, /接続しました: chatgpt\/gpt-6\.1-sol/);
+  assert.doesNotMatch(stdout + session, /oauth-fixture/);
 });
 
 test('チャット画面に Responses API の失敗理由と再試行までの時間を表示する', async () => {
@@ -158,9 +149,8 @@ test('チャット画面に Responses API の失敗理由と再試行までの�
   };
   const stream = [{ type: 'error', error }, { type: 'response.failed', response: { error } }]
     .map(event => `data: ${JSON.stringify(event)}\n\n`).join('');
-  const setup = `import { writeFileSync } from 'node:fs';
-    writeFileSync(process.env.MODKH_HOME + '/chatgpt-auth.json', JSON.stringify({accessToken:'test'}));
-    globalThis.fetch = async () => new Response(${JSON.stringify(stream)});`;
+  const setup = `const apiFetch = async () => new Response(${JSON.stringify(stream)});
+    ${fixtureSetup} await fixture.signIn();`;
   const { stdout } = await chat('hello\n/exit\n', "{args: {model: 'chatgpt/gpt-6.2-sol'}}", {}, setup);
   assert.ok(stdout.includes(error.message), stdout);
   assert.match(stdout, /server_is_overloaded/);
@@ -170,21 +160,20 @@ test('チャット画面に Responses API の失敗理由と再試行までの�
 test('/models lists saved API and OAuth accounts together and switches without another login', async () => {
   const setup = `import { writeFileSync } from 'node:fs';
     writeFileSync(process.env.MODKH_HOME + '/keys.json', JSON.stringify({ openai: 'api-fixture', anthropic: 'anthropic-fixture' }));
-    writeFileSync(process.env.MODKH_HOME + '/chatgpt-auth.json', JSON.stringify({ accessToken: 'oauth-fixture' }));
-    globalThis.fetch = async (url, options) => {
+    const apiFetch = async (url, options) => {
       const address = String(url);
       const auth = new Headers(options?.headers).get('authorization');
       if (address === 'https://api.anthropic.com/v1/models' && new Headers(options?.headers).get('x-api-key') === 'anthropic-fixture')
         return Response.json({ data: [{ id: 'claude-model' }] });
       if (address === 'https://api.openai.com/v1/models' && auth === 'Bearer api-fixture')
         return Response.json({ data: [{ id: 'api-model' }] });
-      if (address.startsWith('https://chatgpt.com/backend-api/codex/models?') && auth === 'Bearer oauth-fixture')
+      if (address === 'https://api.openai.com/v1/models' && auth === 'Bearer oauth-fixture')
         return Response.json({ models: [{ slug: 'oauth-model', visibility: 'list' }] });
       if (address.endsWith('/responses') && auth === 'Bearer oauth-fixture' && JSON.parse(options.body).model === 'oauth-model')
         return new Response('data: ' + JSON.stringify({type:'response.output_text.delta',delta:'switch-verified'}) + '\\n\\n' +
           'data: ' + JSON.stringify({type:'response.completed',response:{status:'completed'}}) + '\\n\\n');
       return new Response(null, { status: 403 });
-    }`;
+    }; ${fixtureSetup} await fixture.signIn();`;
   const { stdout } = await chat('/models\noauth-model\n1\nhello\n/models api-model\n1\n/exit\n', '{}', {}, setup);
   assert.match(stdout, /\d+\. openai\/api-model/);
   assert.match(stdout, /\d+\. chatgpt\/oauth-model/);

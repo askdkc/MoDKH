@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { configDir, loadConfig, saveConfig, defaultConfig } from '../src/cli/config.ts';
 import { defaultSessionDir, SessionStore } from '../src/session/store.ts';
-import { chatGptAuthPath, loadChatGptTokens, saveChatGptTokens } from '../src/model/chatgpt/tokens.ts';
+import { chatGptAuthPath, hasChatGptConnection, markChatGptConnected } from '../src/model/chatgpt/tokens.ts';
 import { workspaceRecordPath } from '../src/session/workspace.ts';
 import { languageHome } from '../src/language/detect.ts';
 
@@ -27,9 +27,9 @@ test('MoDKH storage ignores legacy DKH settings and credentials and leaves legac
     assert.equal(chatGptAuthPath(), path.join(home, 'chatgpt-auth.json'));
     assert.equal(languageHome(), path.join(home, 'language'));
     assert.equal(loadConfig().model, undefined);
-    assert.equal(loadChatGptTokens(), null);
+    assert.equal(hasChatGptConnection(), false);
     saveConfig(defaultConfig());
-    saveChatGptTokens({ accessToken: 'new-test-token' });
+    markChatGptConnected();
     new SessionStore().create(root, 'fixed/scripted');
     assert.equal(fs.readFileSync(path.join(process.env.DKH_HOME, 'config.json'), 'utf8'), legacyConfig);
     assert.equal(fs.readFileSync(path.join(process.env.DKH_HOME, 'chatgpt-auth.json'), 'utf8'), legacyToken);

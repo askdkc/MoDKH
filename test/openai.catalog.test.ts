@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { chooseProviderModel } from '../src/cli/providers.ts';
 import { selectModel } from '../src/cli/models.ts';
-import { saveChatGptTokens } from '../src/model/chatgpt/tokens.ts';
+import { chatGptFixture } from './fixtures/chatgpt-sign-in.ts';
 import type { ChatTerminal, Choice } from '../src/cli/terminal.ts';
 
 async function isolated(fn: () => Promise<void>) {
@@ -48,19 +48,18 @@ test('OpenAI picker obtains exact model IDs from the official API with the API k
   assert.equal(calls, 1);
 }));
 
-test('/models chatgpt uses the authenticated Codex catalogue and hides non-list entries', () => isolated(async () => {
-  saveChatGptTokens({ accessToken: 'test-token', accountId: 'account' });
+test('/models chatgpt uses the authenticated ChatGPT plan catalogue and hides non-list entries', t => isolated(async () => {
   let calls = 0;
-  globalThis.fetch = async (raw, options) => {
+  const fixture = await chatGptFixture(new URL('../src/model/chatgpt/login.ts', import.meta.url).href, async (raw, options) => {
     calls++;
     const url = new URL(String(raw));
-    assert.equal(url.origin + url.pathname, 'https://chatgpt.com/backend-api/codex/models');
-    assert.match(url.searchParams.get('client_version') ?? '', /^\d+\.\d+\.\d+$/);
-    assert.equal(new Headers(options?.headers).get('authorization'), 'Bearer test-token');
-    assert.equal(new Headers(options?.headers).get('ChatGPT-Account-Id'), 'account');
+    assert.equal(url.origin + url.pathname, 'https://api.openai.com/v1/models');
+    assert.equal(new Headers(options?.headers).get('authorization'), 'Bearer oauth-fixture');
     return Response.json({ models: [{ slug: 'gpt-6-astra', visibility: 'list' },
       { slug: 'gpt-6.1-sol', visibility: 'list' }, { slug: 'hidden-model', visibility: 'hide' }] });
-  };
+  });
+  t.after(fixture.restore);
+  await fixture.signIn();
   const { ui } = terminal(choices => {
     assert.ok(choices.some(c => c.value === 'chatgpt/gpt-6-astra'));
     assert.ok(choices.some(c => c.value === 'chatgpt/gpt-6.1-sol'));

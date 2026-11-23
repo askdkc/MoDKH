@@ -6,12 +6,11 @@ import { harnessProfile, CODEX_62_DEFAULTS } from '../harness-profile.ts';
 import { responsesReasoningEffort } from '../reasoning.ts';
 import { parseImages, imageDataUrl } from '../../agent/images.ts';
 
-export const DEFAULT_RESPONSES_BASE_URL = 'https://chatgpt.com/backend-api/codex';
+export const DEFAULT_RESPONSES_BASE_URL = 'https://api.openai.com/v1';
 
 export interface ResponsesModelOptions {
-  accessToken: string;
-  accountId?: string;
-  credentials?: (signal: AbortSignal) => Promise<{ accessToken: string; accountId?: string }>;
+  accessToken?: string;
+  getAccessToken?: (signal: AbortSignal) => Promise<string>;
   model: string;
   baseUrl?: string;
   fetchImpl?: typeof fetch;
@@ -21,6 +20,7 @@ interface ResponsesInputItem {
   type?: string;
   role?: string;
   content?: unknown;
+  namespace?: string;
   call_id?: string;
   name?: string;
   arguments?: string;
@@ -45,6 +45,7 @@ export function toResponsesInput(messages: AgentMessage[]): ResponsesInputItem[]
       for (const c of m.toolCalls ?? []) {
         out.push({
           type: 'function_call',
+          namespace: 'modkh',
           call_id: c.id,
           name: c.name,
           arguments: JSON.stringify(c.args ?? {}),
@@ -65,24 +66,46 @@ export function toResponsesInput(messages: AgentMessage[]): ResponsesInputItem[]
   return out;
 }
 
+function responseBody(req: ModelRequest, model: string) {
+  // /reasoning で指定した effort を付与する。off と未知のレベルはキー自体を送らない。
+  const defaults = harnessProfile(model) ? CODEX_62_DEFAULTS : undefined;
+  const effort = responsesReasoningEffort(req.reasoning ?? defaults?.reasoning, model);
+  const tools = req.tools.map((t) => ({
+    type: 'function',
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters,
+    strict: false,
+  }));
+  return {
+    model,
+    ...(defaults ? { text: { verbosity: defaults.verbosity } } : {}),
+    instructions: req.system,
+    input: toResponsesInput(req.messages),
+    tools: tools.length ? [{ type: 'namespace', name: 'modkh', description: 'MoDKH local tools', tools }] : tools,
+    stream: true,
+    store: false,
+    ...(req.promptCacheKey !== undefined ? { prompt_cache_key: req.promptCacheKey } : {}),
+    ...(effort !== undefined ? { reasoning: { effort } } : {}),
+  };
+}
+
 /**
- * ChatGPT Codex Responses アダプター(APIキー用の公開APIとは分離)。
+ * ChatGPT プランの Responses アダプター。
  * 会話状態は CLI 側が保持するため store:false で毎回全履歴を送る。
- * 関数ツールは公式の名前空間契約(type:'function' のフラット形式)に合わせる。
+ * DevKit のプラン利用では関数ツールを modkh 名前空間にまとめる。
  */
 export class ResponsesApiModel implements Model {
   readonly id: string;
-  private readonly accessToken: string;
-  private readonly accountId?: string;
-  private readonly credentials?: ResponsesModelOptions['credentials'];
+  private readonly accessToken?: string;
+  private readonly getAccessToken?: ResponsesModelOptions['getAccessToken'];
   private readonly model: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: ResponsesModelOptions) {
     this.accessToken = opts.accessToken;
-    this.accountId = opts.accountId;
-    this.credentials = opts.credentials;
+    this.getAccessToken = opts.getAccessToken;
     this.model = opts.model;
     this.baseUrl = (opts.baseUrl ?? DEFAULT_RESPONSES_BASE_URL).replace(/\/$/, '');
     this.fetchImpl = opts.fetchImpl ?? fetch;
@@ -90,41 +113,23 @@ export class ResponsesApiModel implements Model {
   }
 
   async *stream(req: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent> {
-    // /reasoning で指定した effort を付与する。off と未知のレベルはキー自体を送らない。
-    const defaults = harnessProfile(this.model) ? CODEX_62_DEFAULTS : undefined;
-    const effort = responsesReasoningEffort(req.reasoning ?? defaults?.reasoning, this.model);
-    const body = {
-      model: this.model,
-      ...(defaults ? { text: { verbosity: defaults.verbosity } } : {}),
-      instructions: req.system,
-      input: toResponsesInput(req.messages),
-      tools: req.tools.map((t) => ({
-        type: 'function',
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-        strict: false,
-      })),
-      stream: true,
-      store: false,
-      ...(req.promptCacheKey !== undefined ? { prompt_cache_key: req.promptCacheKey } : {}),
-      ...(effort !== undefined ? { reasoning: { effort } } : {}),
-    };
     let aborted = false;
     let errorMessage: string | undefined;
     let sawFunctionCall = false;
     let usage: TokenUsage | undefined;
     let completed = false;
     try {
-      const credentials = this.credentials ? await this.credentials(signal) : { accessToken: this.accessToken, accountId: this.accountId };
+      const accessToken = this.getAccessToken ? await this.getAccessToken(signal) : this.accessToken;
+      if (!accessToken) throw new Error('ChatGPT の認証が必要です。/connect chatgpt で接続してください');
       const res = await this.fetchImpl(`${this.baseUrl}/responses`, {
+        redirect: 'error',
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          authorization: `Bearer ${credentials.accessToken}`,
-          ...(credentials.accountId ? { 'ChatGPT-Account-Id': credentials.accountId } : {}),
+          accept: 'text/event-stream',
+          authorization: `Bearer ${accessToken}`,
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(responseBody(req, this.model)),
         signal,
       });
       if (!res.ok || res.body === null) {

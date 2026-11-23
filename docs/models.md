@@ -6,7 +6,7 @@
 TTYでは入力で検索、↑↓で選択、Enterで決定、Escで戻る。OpenAIではChatGPT OAuthとAPIキーを選べる。
 APIキーは環境変数を優先し、未設定ならTTYで伏せ字入力できる。入力したキーは `keys.json`(0600)に保存し、次回起動時に再利用する。
 OpenAIのモデル一覧は選択画面を開くたびに公式から取得する。APIキーでは `https://api.openai.com/v1/models`、
-ChatGPT OAuthでは公式Codexと同じ `https://chatgpt.com/backend-api/codex/models` を使い、アカウントに返されたモデルIDを表示する。
+Sign in with ChatGPT では `https://api.openai.com/v1/models` を使い、アカウントに返されたモデルIDを表示する。
 `/models openai`、`/models chatgpt` でも再取得できる。取得中はCtrl+Cで中止でき、失敗時は理由を表示する。
 古い固定リストや保存済み一覧へのフォールバックは行わない。再度開いて取得し直すか、モデルIDを直接指定できる。
 `/models` では、保存済みのAPIキー・環境変数のAPIキー・ChatGPTのOAuth認証で使える接続先のモデルをまとめて選べる。
@@ -41,7 +41,7 @@ AIプロバイダーはモデルの追加・廃止が多いため、組み込み
 | `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
 | `infron` | `INFRON_API_KEY` | `https://llm.onerouter.pro/v1` / `INFRON_BASE_URL` |
 | `hermes` | `HERMES_API_KEY` | `http://127.0.0.1:8642/v1` / `HERMES_BASE_URL` |
-| `chatgpt` | ChatGPT OAuth | `https://chatgpt.com/backend-api/codex/responses` |
+| `chatgpt` | ChatGPT OAuth | `https://api.openai.com/v1/responses` |
 
 既存の `anthropic` / `google` / `deepseek` / `groq` / `xai` / `lmstudio` も直接指定と `/models` から利用できる。
 `compatible/<model> --base-url <url>` は任意のOpenAI互換API、`fixed/scripted` はオフライン検証専用。
@@ -86,24 +86,20 @@ modkh auth login chatgpt
 # またはMODKH内で /connect → OpenAI → ChatGPT
 ```
 
-- PKCE (S256) とランダムなstateを使い、`https://auth.openai.com/oauth/authorize` で認証する。
-- ローカルの `http://127.0.0.1:1455/auth/callback` を待ち受けてからブラウザを開く。
-- 正しいパス・stateのコールバックだけを受理し、`/oauth/token` で一度だけ交換する。
-- トークンを `$MODKH_HOME/chatgpt-auth.json`（既定 `~/.config/modkh/`）へ0600で保存した後、ブラウザに成功を表示する。
-- ポート使用中、認証拒否、交換エラーは端末に表示する。他プロセスは停止しない。Ctrl+Cで中止でき、コールバックサーバーも閉じる。
-- ブラウザが自動で開かなければ表示URLを手動で開く。SSH・コンテナではコールバックへ到達できる構成が必要。
-- 期限切れの認証は次の送信前に更新する。更新失敗時は `/connect chatgpt` で再認証する。モデル要求を自動再送しない。
-- ChatGPT用トークンはCodex Responsesへ送信する。通常のOpenAI APIキー用エンドポイントとは分離する。
-  `store: false`、フラットな `type: "function"` のツール定義を使う。
+ブラウザで MoDKH へのサインインと ChatGPT プランの利用を許可してください。端末にログイン成功が表示されたら、`/models chatgpt` でモデルを選べます。ブラウザが自動で開かない場合は端末の URL を使えます。コールバックには同じマシンの空きループバックポートを使います。
+
+OpenAI の Sign in with ChatGPT DevKit がアプリ登録、ID トークンの検証、アクセストークンの更新を担当します。登録情報は `$MODKH_HOME/siwc/` に暗号化して保存し、暗号鍵は OS の資格情報ストアに保存します。Linux ではロック解除済みの Secret Service が必要です。
+
+プラン利用の許可を得たリクエストは `https://api.openai.com/v1/responses` に送信し、`store: false` とストリーミングを使います。[公式 DevKit とライセンス](siwc/README.md)
 
 ## 検証範囲と参照
 
 実OAuthログインや有料モデルへのライブ送信は未検証。ローカルの偽HTTPサーバーで
-PKCE・コールバック・交換・保存・キャンセル・ポート競合・期限切れ更新とCLI接続を検証する。
+登録・コールバック・同意・保存・期限切れ更新と CLI 接続を検証する。
 TTY入出力ストリームの統合テストに加え、`scripts/terminal-acceptance.py` は実PTYで操作する。
 PTY権限のないサンドボックスでは後者を実行できない。
 
-- [OpenAI CodexのOAuth実装](https://github.com/openai/codex/blob/main/codex-rs/login/src/server.rs)
+- [OpenAI Sign in with ChatGPT DevKit](https://github.com/openai/sign-in-with-chatgpt-devkit)
 - [OpenCode Console](https://opencode.ai/docs/console/models/)
 - [Infron OpenAI-compatible API](https://infron.ai/docs/llm-apis/openai-compatible-api/overview)
 - [Hermes Agent API server](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server)

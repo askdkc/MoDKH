@@ -1,8 +1,8 @@
 import type { Model, ModelEvent } from '../agent/types.ts';
 import { FixedModel, type FixedStep } from './fixed.ts';
 import { parseModelRef, resolveModel, type ModelSpec } from './factory.ts';
-import { currentChatGptTokens } from './chatgpt/login.ts';
-import { loadChatGptTokens } from './chatgpt/tokens.ts';
+import { planAccessToken } from './chatgpt/login.ts';
+import { hasChatGptConnection } from './chatgpt/tokens.ts';
 import { ResponsesApiModel } from './chatgpt/responses.ts';
 import { fetchModel } from './record-fetch.ts';
 
@@ -57,16 +57,12 @@ export function buildModelFromRef(ref: string, baseUrl?: string, fixedSkip?: num
     return new FixedModel(defaultFixedSteps(), { skip: fixedSkip ?? 0 });
   }
   if (ref.startsWith('chatgpt/')) {
-    const tokens = loadChatGptTokens();
-    if (tokens === null) {
+    if (!hasChatGptConnection()) {
       throw new Error('ChatGPTにログインしていない: /connect chatgpt または modkh auth login chatgpt を実行する');
     }
     return new ResponsesApiModel({
-      accessToken: tokens.accessToken,
-      accountId: tokens.accountId,
-      credentials: currentChatGptTokens,
+      getAccessToken: planAccessToken,
       model: ref.slice('chatgpt/'.length),
-      baseUrl,
       fetchImpl: fetchModel,
     });
   }
