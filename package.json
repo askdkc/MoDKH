@@ -1,6 +1,6 @@
 {
   "name": "modkh",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "MoDKH — Common Lispで担当を定義できるコーディングハーネス",
   "type": "module",
   "license": "MIT",
