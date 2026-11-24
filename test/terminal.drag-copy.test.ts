@@ -103,3 +103,54 @@ test('wheel history keeps TUI styling, supports reverse drag and restores the dr
     ui.close();
   }
 });
+
+test('dragging past the top edge keeps selecting across older pages', async () => {
+  const input = new PassThrough() as unknown as ReadStream;
+  input.isRaw = false;
+  input.setRawMode = (raw) => { input.isRaw = raw; return input; };
+  const output = new PassThrough() as unknown as WriteStream;
+  output.columns = 80;
+  output.rows = 20;
+  let screen = '';
+  output.on('data', chunk => { screen += chunk.toString(); });
+  const copies: string[] = [];
+  const ui = new TerminalUI('/workspace', input, output, {
+    writeClipboardText: async (text: string) => { copies.push(text); },
+  });
+  try {
+    const prompt = ui.next(AbortSignal.timeout(5000));
+    ui.write('▶ You: start\n', 'user');
+    for (let i = 0; i < 40; i++) ui.write(`行 ${i}\n`, 'answer');
+    const rows = screenFrom(screen, output.rows);
+    const start = rows.findIndex(row => row.startsWith('行 39')) + 1;
+    assert.ok(start > 0, 'the newest line is on screen');
+    // 上端へ向けてドラッグしたまま待つと、履歴を送りながら選択が伸びる。
+    input.write(`\x1b[<0;1;${start}M\x1b[<32;1;1M`);
+    await setTimeout(200);
+    const first = screen.slice(screen.lastIndexOf('\x1b[H\x1b[J'));
+    assert.match(first, /会話履歴/, 'the history view opens while the button stays down');
+    const shown = screenFrom(first, output.rows).map(row => /^行 (\d+)/.exec(row)?.[1]).filter(Boolean).map(Number);
+    // 待っている間も送り続けるので、押した位置より上の行がどんどん入ってくる。
+    assert.ok(shown.includes(30), `older lines scroll in: ${shown.slice(0, 3)}`);
+    await setTimeout(200);
+    const later = screen.slice(screen.lastIndexOf('\x1b[H\x1b[J'));
+    const laterShown = screenFrom(later, output.rows).map(row => /^行 (\d+)/.exec(row)?.[1]).filter(Boolean).map(Number);
+    assert.ok(Math.min(...laterShown) < Math.min(...shown), 'holding at the edge keeps scrolling');
+    input.write('\x1b[<0;1;1m');
+    await setImmediate();
+    assert.equal(copies.length, 1);
+    // 上へ向かうドラッグなので、コピーは文書順(古い行が先頭)になる。
+    const copied = copies[0].split('\n').filter(line => line.startsWith('行 '));
+    assert.ok(!copies[0].startsWith('\n'), `no leading newline: ${JSON.stringify(copies[0].slice(0, 8))}`);
+    assert.ok(copied.includes('行 30'), 'lines a page above the press are included');
+    assert.ok(copied.length > output.rows - 1, `more than one screen is selected: ${copied.length}`);
+    const order = copied.map(line => Number(line.slice(2)));
+    assert.deepEqual(order, [...order].sort((a, b) => a - b), 'copied text keeps document order');
+    // 押した行(行 39)の1文字目までが選択の終点になる。
+    assert.equal(copies[0].at(-1), '行');
+    input.write('done\r');
+    assert.equal(await prompt, 'done');
+  } finally {
+    ui.close();
+  }
+});

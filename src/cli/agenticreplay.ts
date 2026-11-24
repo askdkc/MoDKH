@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { constants, tmpdir } from 'node:os';
 import path from 'node:path';
 import { configureHttpModelRecording } from '../model/record-fetch.ts';
@@ -109,7 +109,21 @@ export function summarizeRecording(
   runDir: string | undefined, recorderExitCode: number,
 ): RecordingOutcome {
   const outcome: RecordingOutcome = { status: 'unverified', recorderExitCode };
-  const manifest = runDir ? readManifest(runDir) : undefined;
+  let manifest = runDir ? readManifest(runDir) : undefined;
+  // AgenticReplay renames a sealed run using the first prompt, retaining the run ID suffix.
+  if (!manifest && runDir) {
+    const suffix = /^\d{14}-[a-z0-9-]+-([a-f0-9]{6,32})$/.exec(path.basename(runDir))?.[1];
+    if (suffix) {
+      const parent = path.dirname(runDir);
+      try {
+        for (const entry of readdirSync(parent, { withFileTypes: true })) {
+          if (!entry.isDirectory() || !entry.name.endsWith(`-${suffix}`)) continue;
+          const candidate = readManifest(path.join(parent, entry.name));
+          if (candidate?.runId === `run_${suffix}`) { manifest = candidate; break; }
+        }
+      } catch { /* The run is unavailable. */ }
+    }
+  }
   const capture = manifest?.capture;
   if (!capture) return outcome;
   const issues = issueList(capture.issues);
@@ -295,7 +309,7 @@ export async function recordChat(
       'record', 'exec', '--tls-intercept', ...tlsHosts, '--no-fs', '--no-shell', '--no-agent-spans', '--',
       process.execPath, ...process.execArgv, entry, ...argv,
     ], { cwd, stdio: 'inherit', env: {
-      ...process.env, MODKH_AGENTICREPLAY_LAUNCH_CWD: process.cwd(), MODKH_AGENTICREPLAY_RECEIPT: receipt,
+      ...process.env, AGENTICREPLAY_CONTINUE_ON_STORAGE_LIMIT: '1', MODKH_AGENTICREPLAY_LAUNCH_CWD: process.cwd(), MODKH_AGENTICREPLAY_RECEIPT: receipt,
     } });
 
     const forwardInterrupt = () => child.kill('SIGINT');

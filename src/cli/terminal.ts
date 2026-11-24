@@ -4,7 +4,10 @@ import { isPdfPathPrefix } from './pdf.ts';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { TerminalMouseInput, type MouseReport } from './terminal-mouse.ts';
-import { reflowTranscript, selectedTranscript, transcriptLine, transcriptLines, type DragSelection, type TranscriptScreenLine } from './transcript-selection.ts';
+import {
+  docPointAt, highlightAtLine, reflowDisplay, reflowTranscript, selectionText, transcriptLine, transcriptLines,
+  type DisplayLine, type DocPoint, type TranscriptScreenLine,
+} from './transcript-selection.ts';
 import { EMPTY_USAGE, USAGE_HEADING, usageFooter, usageBadgeLine, usageBreakdownLines, type UsageTotals } from './usage.ts';
 import { chars, clean, fitText, textWidth, wrap, wrapText, editorLayout, verticalCursor, lineEdge } from './editor.ts';
 export { textWidth, fitText } from './editor.ts';
@@ -243,14 +246,20 @@ export class TerminalUI implements ChatTerminal {
   private queue: { text: string; kind: TranscriptKind }[] = [];
   private transcriptRows = new Map<number, TranscriptScreenLine>();
   private liveTranscriptRows = new Map<number, TranscriptScreenLine>();
-  private drag?: DragSelection;
+  /** ドラッグ選択。位置は文書の文字位置なので、履歴を送ってもずれない。 */
+  private drag?: { anchor: DocPoint; focus: DocPoint; moved: boolean };
+  /** 強調表示を描いた行(画面行)。再描画時に元へ戻す。 */
   private selectionRows: number[] = [];
+  /** 画面端でドラッグしている間、履歴を送り続けるタイマーとその向き。 */
+  private dragScroll?: NodeJS.Timeout;
+  private dragDirection = 0;
   private readonly mouseInput?: TerminalMouseInput;
   private readonly keyInput?: PassThrough;
   private readonly copyText: typeof writeClipboardText;
   private copyQueue = Promise.resolve();
   private historyRows: TranscriptScreenLine[] = [];
-  private history?: { source: TranscriptScreenLine[]; width: number; lines: TranscriptScreenLine[]; offset: number; rows: Map<number, TranscriptScreenLine> };
+  /** 履歴表示。`top` は先頭に出す行、`lines` は文書の開始位置を持つ折り返し後の行。 */
+  private history?: { source: TranscriptScreenLine[]; width: number; lines: DisplayLine[]; top: number };
   private page?: { title: string; text: string; width: number; lines: string[]; top: number; pasting: boolean; resolve: () => void };
   /** まだ改行が来ていない最終行。ライブブロックの一部として再描画する。 */
   private partial = '';
@@ -803,53 +812,165 @@ export class TerminalUI implements ChatTerminal {
     if (!released && (button === 64 || button === 65)) {
       const delta = button === 64 ? -3 : 3;
       if (this.page) this.renderPage(delta);
+      // ドラッグ中はホイールでも選択を伸ばす。正の値で過去へ送る。
+      else if (this.drag) this.scrollDrag(-delta);
       else this.scrollHistory(-delta);
       return;
     }
     if (this.page) return;
+    if (this.drag) {
+      if (released ? button !== 0 : button !== 32) return;
+      if (released) this.finishDrag(point);
+      else this.extendDrag(point);
+      return;
+    }
+    if (released || button !== 0) return;
     if (point.row < 1 || point.row > this.rows() || point.column < 1) return;
-    const rows = this.visibleTranscript();
-    if (!released && button === 0) {
-      // Some terminals repeat the press immediately before the release.
-      if (!this.drag && rows.has(point.row) && point.column <= this.width()) {
-        this.drag = { anchor: point, end: point };
-      }
-      return;
-    }
-    const drag = this.drag;
-    if (!drag || (released ? button !== 0 : button !== 32)) return;
-    drag.end = point;
-    if (!released) {
-      this.writeOutput(this.clearDragHighlight() + this.drawDragHighlight());
-      return;
-    }
-    const moved = drag.anchor.row !== point.row || drag.anchor.column !== point.column;
-    const text = moved ? selectedTranscript(rows, drag).map(line => line.text + (line.newline ? '\n' : '')).join('') : '';
-    this.cancelDrag();
-    this.render();
-    if (text.trim()) this.copyQueue = this.copyQueue.then(() => this.copySelection(text));
+    const line = this.screenLines().find(candidate => candidate.row === point.row);
+    if (!line) return;
+    const anchor = docPointAt(line.line, point.column);
+    this.drag = { anchor, focus: anchor, moved: false };
   };
 
-  private visibleTranscript(): Map<number, TranscriptScreenLine> {
-    return this.history?.rows ?? new Map([...this.transcriptRows, ...this.liveTranscriptRows]);
+  /**
+   * 画面に出ている行と、それがトランスクリプトのどの行に当たるか。メイン画面の行は表示幅で
+   * 折り返し済みなので、そのまま文書の行として扱える。
+   */
+  private screenLines(): { row: number; line: DisplayLine }[] {
+    const history = this.history;
+    if (history) {
+      const body = Math.max(1, this.rows() - 1);
+      return history.lines.slice(history.top, history.top + body)
+        .map((line, index) => ({ row: index + 1, line }));
+    }
+    const base = this.historyRows.length;
+    return [...this.transcriptRows.entries()].sort((a, b) => a[0] - b[0])
+      .map(([row, line], index) => ({ row, line: { ...line, row: base + index, offset: 0 } }));
   }
 
+  /** 選択範囲をコピーする文字列の元になる行。`screenLines` の行番号と同じ並び。 */
+  private documentRows(): readonly TranscriptScreenLine[] {
+    if (this.history) return this.history.source;
+    const rows = [...this.transcriptRows.entries()].sort((a, b) => a[0] - b[0]).map(([, line]) => line);
+    return [...this.historyRows, ...rows];
+  }
+
+  /** 画面の行・列を選択位置へ直す。文字のない行では null。 */
+  private pointSpan(point: { row: number; column: number }): DocPoint | null {
+    const hit = this.screenLines().find(candidate => candidate.row === point.row);
+    return hit ? docPointAt(hit.line, point.column) : null;
+  }
+
+  /** ドラッグ中のポインタ移動。上端・下端に寄っていれば履歴を送り続ける。 */
+  private extendDrag(point: { row: number; column: number }): void {
+    const drag = this.drag;
+    if (!drag) return;
+    const focus = this.pointSpan(point);
+    if (focus) drag.focus = focus;
+    drag.moved = drag.moved || drag.anchor.row !== drag.focus.row || drag.anchor.char !== drag.focus.char;
+    const edge = point.row <= 1 ? 1 : point.row >= this.rows() ? -1 : 0;
+    if (!edge) {
+      this.stopDragScroll();
+      this.redrawDrag();
+      return;
+    }
+    this.scrollDrag(edge * 2);
+    this.startDragScroll(edge);
+  }
+
+  private startDragScroll(direction: number): void {
+    if (this.dragScroll && this.dragDirection === direction) return;
+    this.stopDragScroll();
+    this.dragDirection = direction;
+    this.dragScroll = setInterval(() => {
+      if (!this.drag) { this.stopDragScroll(); return; }
+      this.scrollDrag(direction * 2);
+    }, 60);
+    this.dragScroll.unref();
+  }
+
+  private stopDragScroll(): void {
+    if (this.dragScroll) clearInterval(this.dragScroll);
+    this.dragScroll = undefined;
+    this.dragDirection = 0;
+  }
+
+  /**
+   * ドラッグを保ったまま表示を送る。上へ送りきると履歴表示へ切り替え、さらに過去を出す。
+   * 終点は送った先の端の行に合わせるので、選択は画面をまたいで伸びる。
+   */
+  private scrollDrag(delta: number): void {
+    const drag = this.drag;
+    if (!drag) return;
+    const restore = this.clearDragHighlight();
+    if (restore) this.writeOutput(restore);
+    // まだ過去の行が無い、あるいは終端に着いているときは送らず、強調表示だけ戻す。
+    if (!this.history && !(delta > 0 && this.openHistory())) { this.redrawDrag(); return; }
+    const history = this.history;
+    if (!history) { this.redrawDrag(); return; }
+    const body = Math.max(1, this.rows() - 1);
+    const furthest = Math.max(0, history.lines.length - body);
+    const next = Math.max(0, Math.min(furthest, history.top - delta));
+    if (furthest === 0 || next === history.top) { this.redrawDrag(); return; }
+    history.top = next;
+    // 送った先の端の行に終点を寄せるので、選択は画面をまたいで伸びる。
+    const row = delta > 0 ? 1 : Math.min(this.rows() - 1, body);
+    const column = delta > 0 ? 1 : this.columns();
+    const focus = this.pointSpan({ row, column });
+    if (focus) drag.focus = focus;
+    drag.moved = true;
+    this.renderHistory();
+  }
+
+  private redrawDrag(): void {
+    this.writeOutput(this.clearDragHighlight() + this.drawDragHighlight());
+  }
+
+  /** ボタンを離した時点で選択範囲をコピーする。動いていなければ何もしない。 */
+  private finishDrag(point: { row: number; column: number }): void {
+    const drag = this.drag;
+    if (!drag) return;
+    const focus = this.pointSpan(point);
+    if (focus) drag.focus = focus;
+    this.stopDragScroll();
+    const text = drag.moved ? selectionText(this.documentRows(), drag.anchor, drag.focus) : '';
+    this.cancelDrag();
+    if (this.history) this.renderHistory();
+    else this.render();
+    if (text.trim()) this.copyQueue = this.copyQueue.then(() => this.copySelection(text));
+  }
+
+  private visibleTranscript(): Map<number, TranscriptScreenLine> {
+    return new Map([...this.transcriptRows, ...this.liveTranscriptRows]);
+  }
+
+  /** 表示中の行に選択範囲の強調表示を重ねる。行の本文は選択の内側だけを反転する。 */
   private drawDragHighlight(): string {
-    if (!this.drag) return '';
-    const lines = selectedTranscript(this.visibleTranscript(), this.drag).filter(line => line.text);
-    this.selectionRows = lines.map(line => line.row);
-    return lines.length ? '\x1b7' + lines.map(line => `\x1b[${line.row};${line.column}H\x1b[7m${line.text}\x1b[0m`).join('') + '\x1b8' : '';
+    const drag = this.drag;
+    if (!drag) return '';
+    const rows = this.documentRows();
+    const painted: number[] = [];
+    let out = '';
+    for (const { row, line } of this.screenLines()) {
+      const hit = highlightAtLine(rows, line, drag.anchor, drag.focus);
+      if (!hit) continue;
+      painted.push(row);
+      out += `\x1b[${row};${hit.column}H\x1b[7m${hit.text}\x1b[0m`;
+    }
+    this.selectionRows = painted;
+    return out ? '\x1b7' + out + '\x1b8' : '';
   }
 
   private clearDragHighlight(): string {
     if (!this.selectionRows.length) return '';
-    const rows = this.visibleTranscript();
-    const restore = this.selectionRows.map(row => `\x1b[${row};1H${rows.get(row)?.painted ?? ''}`).join('');
+    const lines = new Map(this.screenLines().map(entry => [entry.row, entry.line]));
+    const restore = this.selectionRows.map(row => `\x1b[${row};1H${lines.get(row)?.painted ?? ''}`).join('');
     this.selectionRows = [];
     return '\x1b7' + restore + '\x1b8';
   }
 
   private cancelDrag(): void {
+    this.stopDragScroll();
     const restore = this.clearDragHighlight();
     if (restore) this.writeOutput(restore);
     this.drag = undefined;
@@ -881,19 +1002,39 @@ export class TerminalUI implements ChatTerminal {
     }
   }
 
+  /** 履歴表示を開く。開けなければ false。 */
+  private openHistory(): boolean {
+    if (this.history) return true;
+    if (!this.historyRows.length) return false;
+    const source = [...this.historyRows, ...this.visibleTranscript().values()];
+    const width = this.width();
+    const lines = reflowDisplay(source, width);
+    const body = Math.max(1, this.rows() - 1);
+    this.history = { source, width, lines, top: Math.max(0, lines.length - body) };
+    this.inputNotice = '';
+    this.writeOutput('\x1b[?1049h\x1b[?25l');
+    return true;
+  }
+
+  /** ホイール・PgUp。正の値で過去へ送り、下端まで戻ったら通常画面へ帰る。 */
   private scrollHistory(delta: number): void {
     if (!this.started) return;
     this.cancelDrag();
     if (!this.history) {
-      if (delta < 0 || !this.historyRows.length) return;
-      const source = [...this.historyRows, ...this.visibleTranscript().values()];
-      this.history = { source, width: 0, lines: [], offset: 0, rows: new Map() };
-      this.inputNotice = '';
-      this.writeOutput('\x1b[?1049h\x1b[?25l');
+      if (delta < 0 || !this.openHistory()) return;
     }
-    this.history.offset = Math.max(0, this.history.offset + delta);
-    if (this.history.offset) this.renderHistory();
-    else this.leaveHistory();
+    const history = this.history;
+    if (!history) return;
+    const body = Math.max(1, this.rows() - 1);
+    const furthest = Math.max(0, history.lines.length - body);
+    const next = Math.max(0, Math.min(furthest, history.top - delta));
+    if (furthest === 0 || next >= furthest) {
+      history.top = next;
+      this.leaveHistory();
+      return;
+    }
+    history.top = next;
+    this.renderHistory();
   }
 
   private renderHistory(): void {
@@ -903,17 +1044,14 @@ export class TerminalUI implements ChatTerminal {
     const width = this.width();
     if (history.width !== width) {
       history.width = width;
-      history.lines = reflowTranscript(history.source, width);
+      history.lines = reflowDisplay(history.source, width);
     }
-    const transcript = history.lines;
-    const bodyRows = rows - 1;
-    history.offset = Math.min(history.offset, Math.max(1, transcript.length - bodyRows));
-    const end = Math.max(0, transcript.length - history.offset);
-    const visible = transcript.slice(Math.max(0, end - bodyRows), end);
+    const body = Math.max(1, rows - 1);
+    const furthest = Math.max(0, history.lines.length - body);
+    history.top = Math.max(0, Math.min(furthest, history.top));
+    const visible = history.lines.slice(history.top, history.top + body);
     let out = this.clearDragHighlight() + '\x1b[H\x1b[J';
-    history.rows.clear();
     visible.forEach((line, index) => {
-      history.rows.set(index + 1, line);
       out += `\x1b[${index + 1};1H${line.painted}`;
     });
     const hint = 'MoDKH · 会話履歴 · Esc 戻る';

@@ -24,6 +24,7 @@ if [ "$1" = version ]; then
   exit "$REPLAY_TEST_STATUS"
 fi
 printf '%s\\n' "$PWD" "$@" >> "$REPLAY_TEST_CALLS"
+[ "$AGENTICREPLAY_CONTINUE_ON_STORAGE_LIMIT" = 1 ] || exit 19
 while [ "$1" != -- ]; do shift; done
 shift
 AGENTICREPLAY_TLS_CA=active exec "$@"
@@ -108,7 +109,7 @@ const scenario = JSON.parse(fs.readFileSync(process.env.REPLAY_SCENARIO, 'utf8')
 const runDir = path.join(process.env.REPLAY_ROOT, 'runs', '20260101000000-exec-session-' + scenario.runId);
 if (scenario.writeManifest !== false) {
   fs.mkdirSync(path.join(runDir, 'tls'), { recursive: true });
-  fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ run_id: scenario.runId, capture: scenario.capture }));
+  fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ run_id: scenario.seal ? 'run_' + scenario.runId : scenario.runId, capture: scenario.capture }));
 } else {
   // A previous call reused the same directory; only an absent manifest is the case under test.
   fs.rmSync(runDir, { recursive: true, force: true });
@@ -116,7 +117,10 @@ if (scenario.writeManifest !== false) {
 // Only the recorder's own child gets this path, which is how the run is correlated.
 if (scenario.reportCa !== false) process.env.AGENTICREPLAY_TLS_CA = path.join(runDir, 'tls', 'ca.crt');
 const child = require('node:child_process').spawn(process.argv[2], process.argv.slice(3), { stdio: 'inherit' });
-child.on('close', code => process.exit(scenario.recorderExit ?? code ?? 0));
+child.on('close', code => {
+  if (scenario.seal) fs.renameSync(runDir, path.join(path.dirname(runDir), '20260101000000-exec-title-' + scenario.runId));
+  process.exit(scenario.recorderExit ?? code ?? 0);
+});
 `);
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${root}${path.delimiter}${process.env.PATH ?? ''}`,
     MODKH_HOME: root, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '1',
@@ -124,7 +128,7 @@ child.on('close', code => process.exit(scenario.recorderExit ?? code ?? 0));
   delete env.AGENTICREPLAY_TLS_CA;
   delete env.AGENTICREPLAY_PROXY_URL;
 
-  const run = (capture: object, extra: { runId?: string; recorderExit?: number; writeManifest?: boolean; reportCa?: boolean } = {}) => {
+  const run = (capture: object, extra: { seal?: boolean; runId?: string; recorderExit?: number; writeManifest?: boolean; reportCa?: boolean } = {}) => {
     fs.writeFileSync(scenario, JSON.stringify({ runId: 'run_test0001', ...extra, capture }));
     const result = spawnSync(process.execPath, [entry, '--cwd', project, '--model', 'fixed/scripted'], {
       cwd: root, env, input: '/exit\n', encoding: 'utf8', timeout: 20_000,
@@ -151,6 +155,11 @@ child.on('close', code => process.exit(scenario.recorderExit ?? code ?? 0));
   assert.equal(partial.status, 0);
   assert.match(partial.stderr, /記録: 不完全/);
   assert.match(partial.stderr, /要求2\/応答1/);
+
+  const sealed = run({ status: 'incomplete', issues: ['diagnostic_storage_limit'], requests: 12, responses: 12 },
+    { seal: true, runId: 'abcdef123456', recorderExit: 2 });
+  assert.equal(sealed.status, 0);
+  assert.match(sealed.stderr, /記録: 不完全.*diagnostic_storage_limit/);
 
   // A completed conversation whose recorder reported an error status keeps that exit code.
   const failed = run({ status: 'complete', issues: [] }, { recorderExit: 5 });
@@ -450,4 +459,60 @@ AGENTICREPLAY_TLS_CA=active HTTPS_PROXY="$REPLAY_TEST_PROXY" https_proxy="$REPLA
   const responses = events.filter(event => event.type === 'net.response');
   assert.equal(responses.length, 2, output);
   assert.deepEqual(responses.map(event => event.attrs.status), [200, 200]);
+});
+
+test('a full AgenticReplay event log still allows the answer and the following turn', {
+  skip: process.env.MODKH_TEST_REAL_AGENTICREPLAY !== '1', timeout: 45_000,
+}, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-replay-full-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const runs = path.join(root, '.agenticreplay', 'runs');
+  let calls = 0;
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      if (++calls === 1) {
+        const file = path.join(runs, fs.readdirSync(runs)[0], 'events.jsonl');
+        // JSON whitespace prefixes the next event. Reach the real writer's quota without
+        // fabricating a receipt, altering the sequence, or making thousands of API calls.
+        const remaining = 64 * 1024 * 1024 + 4096 - fs.statSync(file).size;
+        fs.appendFileSync(file, Buffer.alloc(remaining, 0x20));
+      }
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      for (const [delta, finish_reason] of [
+        [{ reasoning_content: 'reasoning '.repeat(4096) }, null],
+        [{ content: `quota-answer-${calls}` }, 'stop'],
+      ]) {
+        res.write(`data: ${JSON.stringify({ id: 'fixture', model: 'fixture',
+          choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
+      }
+      res.end('data: [DONE]\n\n');
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  t.after(() => { server.closeAllConnections(); return new Promise<void>(resolve => server.close(() => resolve())); });
+  const env = { ...process.env, MODKH_HOME: root, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '1',
+    OLLAMA_BASE_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1` };
+  delete (env as NodeJS.ProcessEnv).AGENTICREPLAY_TLS_CA;
+  delete (env as NodeJS.ProcessEnv).AGENTICREPLAY_PROXY_URL;
+  const child = spawn(process.execPath, [entry, '--model', 'ollama/fixture'], { cwd: root, env });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill(); });
+  let output = '';
+  child.stdout.on('data', data => { output += data; });
+  child.stderr.on('data', data => { output += data; });
+  child.stdin.end('first request\nsecond request\n/exit\n');
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', resolve);
+  });
+  assert.equal(code, 0, output.slice(-2000));
+  assert.equal(calls, 2);
+  const store = new SessionStore(path.join(root, 'sessions'));
+  const session = store.load(store.list()[0].id);
+  assert.deepEqual(session.messages.filter(m => m.role === 'assistant').map(m => m.content),
+    ['quota-answer-1', 'quota-answer-2']);
+  assert.match(output, /記録: 不完全.*diagnostic_storage_limit/);
 });

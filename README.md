@@ -25,6 +25,8 @@ modkh
 
 `agenticreplay version` が成功する環境では、[AgenticReplay](https://github.com/askdkc/AgenticReplay) がモデル API の通信をワークスペースの `.agenticreplay/runs/` に記録します。Ollama や LM Studio などの HTTP モデル API も対象です。HTTPS は AgenticReplay の既定ホストと、起動時に `--base-url` で指定したホストを記録します。記録を止めて起動するには `MODKH_AGENTICREPLAY=0 modkh` を使います。
 
+長時間の作業で AgenticReplay のイベントログが保存上限に達した場合は、そこまでの記録を「不完全」として残し、モデルとの会話を続けます。この動作には `AGENTICREPLAY_CONTINUE_ON_STORAGE_LIMIT` に対応した AgenticReplay が必要です。公開版 0.1.27 を使う場合は、`MODKH_AGENTICREPLAY=0 modkh` で通信記録を無効にしても、MoDKH の会話履歴は保存されます。
+
 `.git` があるワークスペースでは、起動時に `.gitignore` の末尾へ `.modkh/` と `.agenticreplay/` を追加します。どちらも modkh がワークスペースへ書く実行記録で、プロジェクトの成果物ではありません。既存の行は書き換えず、既に書かれていれば何も追加しません。`.git` が無いディレクトリは変更せず、ワークスペース外を指すシンボリックリンクの `.gitignore` も書き換えません(その場合は起動時に一度だけ理由を表示します)。
 
 通常の `modkh` で言語別のマイクロエージェントを使えます。複数言語をまたぐ依頼では、親モデルが調査を担当ごとに分けて委譲し、返ってきた結果をまとめます。`/agents` で利用できる担当を確認できます。
