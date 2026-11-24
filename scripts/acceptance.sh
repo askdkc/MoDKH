@@ -3,7 +3,18 @@
 # npm pack → 隔離ディレクトリへインストール → 固定応答モデルで
 # 読む → 承認して編集 → テスト実行 → 再起動して再開 を確認する。
 # 不正引数・ルート外・承認拒否・二重実行防止も確認する。
+#
+# `--replay-only` は同じ導入だけを行い、実レコーダーの容量枯渇ケースだけを実行する。
+# CI は通常の受け入れと、実レコーダー必須のケースを別ステップに分けて実行する。
 set -eu
+
+REPLAY_ONLY=0
+for arg in "$@"; do
+  case $arg in
+    --replay-only) REPLAY_ONLY=1 ;;
+    *) echo "FAIL: 不明な引数: $arg"; exit 1 ;;
+  esac
+done
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/modkh-accept.XXXXXX")
@@ -24,6 +35,24 @@ npm install --no-audit --no-fund --loglevel=error "$TARBALL" >/dev/null
 CLI="$WORK/install/node_modules/modkh/dist/index.js"
 test -f "$CLI" || { echo "FAIL: dist/index.js が tarball に含まれていない"; exit 1; }
 "$CLI" --version >/dev/null || { echo "FAIL: --version が動かない"; exit 1; }
+
+# 2b) 実レコーダーの容量枯渇ケースだけを実行する (--replay-only)。
+#     導入済み tarball の CLI を MODKH_TEST_ENTRY で指し、同じテストを実際の記録器で回す。
+#     未実行・SKIP・不合格は scripts/assert-replay-tap.sh がすべて失敗にする。
+if [ "$REPLAY_ONLY" = 1 ]; then
+  command -v agenticreplay >/dev/null || { echo "FAIL: PATH に agenticreplay がない"; exit 1; }
+  echo "RECORDER_PATH=$(command -v agenticreplay)"
+  echo "RECORDER_VERSION=$(agenticreplay version)"
+  cd "$ROOT"
+  MODKH_TEST_ENTRY="$CLI" MODKH_TEST_REAL_AGENTICREPLAY=1 node --test --test-reporter=tap \
+    --test-name-pattern='AgenticReplay event log' \
+    "$ROOT/test/cli.agenticreplay.test.ts" > "$WORK/replay-tarball.tap" 2>&1 || true
+  sh scripts/assert-replay-tap.sh "$WORK/replay-tarball.tap" \
+    'a full AgenticReplay event log still allows the answer and the following turn' \
+    'a rotated AgenticReplay event log stays complete when only the file budget is small'
+  echo "ACCEPTANCE_OK"
+  exit 0
+fi
 
 export MODKH_HOME="$WORK/home"
 PROJ="$WORK/project"
@@ -118,7 +147,10 @@ echo "$OUTUNCONNECTED" | grep -q 'Connect an integration' || { echo "FAIL: 未�
 OUTMODELS=$(printf '/models ScRiPt\n1\n/connect\n\n/exit\n' | "$CLI" --cwd "$PROJ3")
 echo "$OUTMODELS" | grep -q '1. fixed/scripted' || { echo 'FAIL: 検索候補がない'; exit 1; }
 echo "$OUTMODELS" | grep -q '接続中: fixed/scripted' || { echo 'FAIL: モデル選択が反映されない'; exit 1; }
-MODKH_TEST_FIXED="$WORK/install/node_modules/modkh/dist/model/fixed.js" MODKH_TEST_ENTRY="$CLI" MODKH_TEST_CHAT="$WORK/install/node_modules/modkh/dist/cli/chat.js" MODKH_TEST_TERMINAL="$WORK/install/node_modules/modkh/dist/cli/terminal.js" node --test --test-reporter=tap \
+# 実レコーダーの容量枯渇ケースは 2b) --replay-only が専用に実行する。ここでは明示的に外し、
+# この一括実行をオフライン回帰に保つ（SKIP が増えても受け入れの意味が変わらないようにする）。
+MODKH_TEST_FIXED="$WORK/install/node_modules/modkh/dist/model/fixed.js" MODKH_TEST_ENTRY="$CLI" MODKH_TEST_CHAT="$WORK/install/node_modules/modkh/dist/cli/chat.js" MODKH_TEST_TERMINAL="$WORK/install/node_modules/modkh/dist/cli/terminal.js" env -u MODKH_TEST_REAL_AGENTICREPLAY \
+  node --test --test-reporter=tap \
   "$ROOT/test/stateright.install.test.ts" "$ROOT/test/cli.interactive.test.ts" "$ROOT/test/cli.safety.test.ts" \
   "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.compaction.test.ts" "$ROOT/test/cli.memory.test.ts" "$ROOT/test/cli.tui.test.ts" \
   "$ROOT/test/cli.agenticreplay.test.ts" "$ROOT/test/terminal.drag-copy.test.ts" \

@@ -5,7 +5,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import { SessionStore } from '../src/session/store.ts';
 
 const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
@@ -461,58 +461,162 @@ AGENTICREPLAY_TLS_CA=active HTTPS_PROXY="$REPLAY_TEST_PROXY" https_proxy="$REPLA
   assert.deepEqual(responses.map(event => event.attrs.status), [200, 200]);
 });
 
-test('a full AgenticReplay event log still allows the answer and the following turn', {
-  skip: process.env.MODKH_TEST_REAL_AGENTICREPLAY !== '1', timeout: 45_000,
-}, async t => {
+/**
+ * Answers with text, in saved order. The tool round trips of the first turn are saved as
+ * assistant messages without text, and they are not what the following turn is judged on.
+ */
+function textAnswers(session: { messages: { role: string; content?: string }[] } | undefined): string[] {
+  return (session?.messages ?? []).flatMap(message =>
+    message.role === 'assistant' && message.content?.trim() ? [message.content] : []);
+}
+
+/**
+ * Run one AgenticReplay storage case against the real recorder.
+ *
+ * Whether the conversation worked is judged separately from whether the recording did: the exit
+ * code and the saved turns are one question, the manifest's `capture` is another. The run under
+ * test is identified by the manifest of the single run directory the isolated home produced, not
+ * by the directory name, because the recorder renames a sealed run after its first prompt.
+ *
+ * With `awaitExhaustion` the second turn is only typed once the recorder has reported
+ * `capture.storage_limit` mid-run, so "the answer came back because the run was not full yet" is
+ * not a passing outcome. Without it the same fixture drives a rotating run that must stay whole.
+ */
+function runStorageCase(t: TestContext, options: {
+  fileBytes: string; runBytes: string; tools: number; awaitExhaustion: boolean;
+}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-replay-full-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const runs = path.join(root, '.agenticreplay', 'runs');
+  /** Answers the fixture returned, in the order it returned them. */
+  const answers: string[] = [];
+  let firstTurnRequests = 0;
   let calls = 0;
   const server = http.createServer((req, res) => {
-    req.resume();
+    let raw = '';
+    req.on('data', chunk => { raw += chunk; });
     req.on('end', () => {
-      if (++calls === 1) {
-        const file = path.join(runs, fs.readdirSync(runs)[0], 'events.jsonl');
-        // JSON whitespace prefixes the next event. Reach the real writer's quota without
-        // fabricating a receipt, altering the sequence, or making thousands of API calls.
-        const remaining = 64 * 1024 * 1024 + 4096 - fs.statSync(file).size;
-        fs.appendFileSync(file, Buffer.alloc(remaining, 0x20));
-      }
+      calls += 1;
+      let prompt = '';
+      try {
+        const body = JSON.parse(raw) as { messages?: { role?: string; content?: unknown }[] };
+        const users = (body.messages ?? []).filter(message => message.role === 'user');
+        prompt = String(users.at(-1)?.content ?? '');
+      } catch { /* The fixture reads the prompt only to tell its turns apart. */ }
+      const secondTurn = prompt.includes('storage second turn');
+      const round = secondTurn ? 1 : (firstTurnRequests += 1);
+      // The first turn keeps the writer busy with real round trips to a fixed tool, which is how a
+      // run budget is crossed by an ordinary conversation rather than by one oversized response
+      // (a large body is spilled to a blob and does not move the event log the same way).
+      const useTool = !secondTurn && round <= options.tools;
+      const delta: { content?: string; tool_calls?: object[] } = useTool
+        ? { tool_calls: [{ index: 0, id: `call-${calls}`, type: 'function', function: { name: 'list_files', arguments: '{}' } }] }
+        : { content: secondTurn ? 'storage-answer-2' : 'storage-answer-1' };
+      if (delta.content !== undefined) answers.push(delta.content);
       res.writeHead(200, { 'content-type': 'text/event-stream' });
-      for (const [delta, finish_reason] of [
-        [{ reasoning_content: 'reasoning '.repeat(4096) }, null],
-        [{ content: `quota-answer-${calls}` }, 'stop'],
-      ]) {
-        res.write(`data: ${JSON.stringify({ id: 'fixture', model: 'fixture',
-          choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
-      }
+      res.write(`data: ${JSON.stringify({ id: 'fixture', model: 'fixture',
+        choices: [{ index: 0, delta, finish_reason: useTool ? 'tool_calls' : 'stop' }] })}\n\n`);
       res.end('data: [DONE]\n\n');
     });
   });
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  t.after(() => { server.closeAllConnections(); return new Promise<void>(resolve => server.close(() => resolve())); });
-  const env = { ...process.env, MODKH_HOME: root, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '1',
-    OLLAMA_BASE_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1` };
-  delete (env as NodeJS.ProcessEnv).AGENTICREPLAY_TLS_CA;
-  delete (env as NodeJS.ProcessEnv).AGENTICREPLAY_PROXY_URL;
-  const child = spawn(process.execPath, [entry, '--model', 'ollama/fixture'], { cwd: root, env });
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill(); });
-  let output = '';
-  child.stdout.on('data', data => { output += data; });
-  child.stderr.on('data', data => { output += data; });
-  child.stdin.end('first request\nsecond request\n/exit\n');
-  const code = await new Promise<number | null>((resolve, reject) => {
-    child.once('error', reject);
-    child.once('close', resolve);
-  });
+  return (async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    t.after(() => { server.closeAllConnections(); return new Promise<void>(resolve => server.close(() => resolve())); });
+    const env: NodeJS.ProcessEnv = { ...process.env, MODKH_HOME: root, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '1',
+      OLLAMA_BASE_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
+      AGENTICREPLAY_EVENT_FILE_BYTES: options.fileBytes, AGENTICREPLAY_RUN_EVENT_BYTES: options.runBytes };
+    delete env.AGENTICREPLAY_TLS_CA;
+    delete env.AGENTICREPLAY_PROXY_URL;
+    // Only MoDKH's own launch may set this. Inheriting it from the process that started the tests
+    // (an interactive session that is itself being recorded) would satisfy the recorder without
+    // the behaviour under test and hide a regression in the launch environment.
+    delete env.AGENTICREPLAY_CONTINUE_ON_STORAGE_LIMIT;
+    const child = spawn(process.execPath, [entry, '--model', 'ollama/fixture'], { cwd: root, env });
+    t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill(); });
+    let output = '';
+    child.stdout.on('data', data => { output += data; });
+    child.stderr.on('data', data => { output += data; });
+    const waitFor = async (pattern: RegExp, timeoutMs = 30_000): Promise<boolean> => {
+      const until = Date.now() + timeoutMs;
+      while (Date.now() < until) {
+        if (pattern.test(output)) return true;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      return pattern.test(output);
+    };
+    child.stdin.write('storage first turn\n');
+    // The signal can only be observed before the next turn if this waits for it here: a run that
+    // reports exhaustion only after the second answer has not exercised what this case is about.
+    // The bound is generous against a slow CI machine and still fails a run that never saturates.
+    const reached = options.awaitExhaustion
+      ? await waitFor(/capture\.storage_limit/, 45_000)
+      : await waitFor(/storage-answer-1/, 60_000);
+    child.stdin.write('storage second turn\n');
+    // The second answer is awaited before ending the session, so the exit is not racing the turn
+    // the case is about. The assertion below still decides, this only sequences the two.
+    await waitFor(/storage-answer-2/, 60_000);
+    child.stdin.end('/exit\n');
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', resolve);
+    });
+    const runs = path.join(root, '.agenticreplay', 'runs');
+    const dirs = fs.existsSync(runs) ? fs.readdirSync(runs) : [];
+    const manifest = dirs.length === 1
+      ? JSON.parse(fs.readFileSync(path.join(runs, dirs[0], 'manifest.json'), 'utf8')) as {
+        run_id?: string; capture?: { status?: string; issues?: string[] } } : undefined;
+    const events = dirs.length === 1
+      ? fs.readdirSync(path.join(runs, dirs[0])).filter(name => /^events(\.[0-9]+)?\.jsonl$/.test(name)) : [];
+    const store = new SessionStore(path.join(root, 'sessions'));
+    const sessions = store.list();
+    const session = sessions.length ? store.load(sessions[0].id) : undefined;
+    t.diagnostic?.(JSON.stringify({ fileBytes: options.fileBytes, runBytes: options.runBytes,
+      tools: options.tools, calls, reached, runs: dirs.length, segments: events.length,
+      runId: manifest?.run_id, capture: manifest?.capture }));
+    return { output, code, reached, answers, manifest, dirs, segments: events.length, session, sessions };
+  })();
+}
+
+test('a full AgenticReplay event log still allows the answer and the following turn', {
+  skip: process.env.MODKH_TEST_REAL_AGENTICREPLAY !== '1', timeout: 180_000,
+}, async t => {
+  const { output, code, reached, answers, manifest, dirs, session, sessions } =
+    await runStorageCase(t, { fileBytes: '4096', runBytes: '12288', tools: 24, awaitExhaustion: true });
+  // The recorder has to run out of room for the whole run, not merely for one file.
+  assert.equal(reached, true,
+    `capture.storage_limit was not observed before the second turn (${manifest?.capture?.issues?.join(', ') ?? 'no manifest'}): ${output.slice(-2000)}`);
+  // Whether the conversation worked is judged separately from whether the recording did.
   assert.equal(code, 0, output.slice(-2000));
-  assert.equal(calls, 2);
-  const store = new SessionStore(path.join(root, 'sessions'));
-  const session = store.load(store.list()[0].id);
-  assert.deepEqual(session.messages.filter(m => m.role === 'assistant').map(m => m.content),
-    ['quota-answer-1', 'quota-answer-2']);
-  assert.match(output, /記録: 不完全.*diagnostic_storage_limit/);
+  assert.equal(dirs.length, 1, `exactly one run directory is expected: ${dirs.join(', ')}`);
+  assert.equal(sessions.length, 1, 'exactly one saved session is expected');
+  assert.deepEqual(answers, ['storage-answer-1', 'storage-answer-2']);
+  // The round trips in the first turn are saved as tool-call messages without text; the answers
+  // under test are the two carrying one, in the order the user saw them.
+  assert.deepEqual(textAnswers(session), ['storage-answer-1', 'storage-answer-2']);
+  // The recording that did survive has to say it is incomplete, and for the reason under test.
+  assert.match(output, /記録: 不完全/);
+  assert.equal(manifest?.capture?.status, 'incomplete', JSON.stringify(manifest));
+  assert.ok(manifest?.capture?.issues?.includes('diagnostic_storage_limit'), JSON.stringify(manifest));
+  assert.match(manifest?.run_id ?? '', /^run_/);
+});
+
+test('a rotated AgenticReplay event log stays complete when only the file budget is small', {
+  skip: process.env.MODKH_TEST_REAL_AGENTICREPLAY !== '1', timeout: 180_000,
+}, async t => {
+  const { output, code, reached, answers, manifest, dirs, segments, session, sessions } =
+    await runStorageCase(t, { fileBytes: '4096', runBytes: '1048576', tools: 8, awaitExhaustion: false });
+  // The negative control: the run is allowed to continue into new files, so this must not be
+  // reported as exhausted. Without this, a test that always fails to saturate would still pass.
+  assert.doesNotMatch(output, /capture\.storage_limit/, output.slice(-2000));
+  assert.ok(segments > 1, `rotation is expected: ${segments} event files`);
+  assert.equal(code, 0, output.slice(-2000));
+  assert.equal(dirs.length, 1, `exactly one run directory is expected: ${dirs.join(', ')}`);
+  assert.equal(sessions.length, 1, 'exactly one saved session is expected');
+  assert.deepEqual(answers, ['storage-answer-1', 'storage-answer-2']);
+  assert.deepEqual(textAnswers(session), ['storage-answer-1', 'storage-answer-2']);
+  assert.equal(manifest?.capture?.status, 'complete', JSON.stringify(manifest));
+  assert.ok(!manifest?.capture?.issues?.includes('diagnostic_storage_limit'), JSON.stringify(manifest));
+  assert.equal(reached, true, output.slice(-2000));
 });
