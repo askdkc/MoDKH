@@ -16,8 +16,8 @@ function requireString(v: unknown, name: string): string {
 export type ShellName = 'bash' | 'zsh' | 'sh';
 export const SHELLS: readonly ShellName[] = ['bash', 'zsh', 'sh'];
 
-/** The shell that backs `sh`. Falls back through the usual install locations. */
-export function resolveShell(name: ShellName = 'sh'): { file: string; name: ShellName } {
+/** Use Bash for the default pipeline-aware mode; explicit sh remains POSIX sh. */
+export function resolveShell(name: ShellName = 'bash'): { file: string; name: ShellName } {
   if (name === 'sh') return { file: '/bin/sh', name };
   const candidates = name === 'bash'
     ? ['/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash']
@@ -86,7 +86,7 @@ export class TextSink {
 }
 
 export interface ShellOptions {
-  /** Defaults to POSIX sh; callers that need bash/zsh features ask for them explicitly. */
+  /** Defaults to Bash with pipefail; explicit Bash also enables errexit and nounset. */
   shell?: ShellName;
   /** `0` or omitted means no timer: a background job runs until it exits or is stopped. */
   timeoutMs?: number;
@@ -151,8 +151,8 @@ export class ShellProcess {
     this.err = new TextSink(Math.max(1, Math.ceil(maxOutput / 2)));
     this.timeoutMs = opts.timeoutMs ?? 0;
     this.promoteOnTimeout = opts.onTimeout !== undefined;
-    const script = name === 'bash' ? `set -eou pipefail\n${command}` : command;
-    this.child = spawn(file, ['-c', script], {
+    const flags = opts.shell === 'bash' ? ['-eu', '-o', 'pipefail'] : name === 'bash' ? ['-o', 'pipefail'] : [];
+    this.child = spawn(file, [...flags, '-c', command], {
       cwd,
       ...(opts.env === undefined ? {} : { env: opts.env }),
       detached: true,

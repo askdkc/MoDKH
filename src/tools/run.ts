@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { ToolError, type Tool } from '../agent/types.ts';
 import { resolveInRoot, assertRealInRoot } from './guard.ts';
-import { describeShellResult, ShellProcess, SHELLS, type ShellName } from './shell-process.ts';
+import { describeShellResult, ShellProcess, SHELLS } from './shell-process.ts';
 import { prepareCommand } from './job-tools.ts';
 import type { JobView } from './jobs.ts';
 import { browserCapability } from './browser-capability.ts';
@@ -21,7 +21,7 @@ function positiveInt(v: unknown, name: string, max: number): number | undefined 
 }
 
 /** Resolve, approve, and verify the target directory without running anything. */
-async function authorize(args: Record<string, unknown>, ctx: Parameters<Tool['execute']>[1]): Promise<{ command: string; cwd: string; cwdRel: string; shell: ShellName; description?: string }> {
+async function authorize(args: Record<string, unknown>, ctx: Parameters<Tool['execute']>[1]): Promise<ReturnType<typeof prepareCommand>> {
   const prepared = prepareCommand(args, ctx.root);
   // Capture the real target BEFORE approval; the check after approval compares against it, so a
   // directory swapped for another (even inside the root) cannot silently run the command.
@@ -58,7 +58,7 @@ async function authorize(args: Record<string, unknown>, ctx: Parameters<Tool['ex
 const OPERATION_IDENTITY = (args: Record<string, unknown>, ctx: Parameters<Tool['execute']>[1]) => ({
   command: args.command,
   cwd: resolveInRoot(ctx.root, typeof args.cwd === 'string' ? args.cwd : '.'),
-  shell: args.shell ?? 'sh',
+  // A shell switch must not replay an unresolved command, including pre-pipefail sessions.
 });
 
 const PARAMETERS = {
@@ -67,7 +67,7 @@ const PARAMETERS = {
     description: { type: 'string', description: '何をするコマンドか(5〜10語、命令形。例: "run unit tests")' },
     command: { type: 'string', description: '実行するコマンド' },
     cwd: { type: 'string', description: '作業ディレクトリ(ルート相対、既定はルート)' },
-    shell: { type: 'string', enum: [...SHELLS], description: '使用するシェル(既定 sh。bash は set -eou pipefail を先頭に追加する)' },
+    shell: { type: 'string', enum: [...SHELLS], description: '使用するシェル(既定は bash の pipefail。明示した bash は errexit・nounset も有効。sh は /bin/sh)' },
     timeoutMs: { type: 'number', description: `制限時間(ミリ秒、既定 ${DEFAULT_TIMEOUT_MS}、上限 ${MAX_TIMEOUT_MS})` },
     run_in_background: { type: 'boolean', description: 'true にすると即座に job_id を返し、結果は job_output で読む。長時間かかる処理で使う' },
   },
@@ -90,7 +90,7 @@ export const runCommandTool: Tool = {
   get description() { return 'シェルコマンドを1回実行し、終了コード・stdout・stderr を返す。作業場所は作業ルート内に限る。'
     + '終了コードが0以外でも実行結果として返る(エラー扱いにはしない)。'
     + 'cd は次の呼び出しに引き継がれないので cwd を指定する。'
-    + '確認は grep やテスト実行のように終了コードを見て判断する。'
+    + 'テストでは終了コードと失敗件数を確認する。非同期処理の試験は完了を待ち、期待する呼び出しや結果をアサートする。'
     + 'run_in_background を true にすると待たずに job_id を返す。ビルドやテストの全体実行など、'
     + '制限時間に収まらない見込みの処理で使う。' + browserCapability(); },
   parameters: PARAMETERS,

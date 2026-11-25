@@ -88,9 +88,9 @@ test('bash and zsh are selectable and the chosen shell is reported', async () =>
     // The command only prints a version inside bash; an empty result would mean sh ran.
     assert.match(bash.output, /--- stdout ---\n\d+\.\d+/);
 
-    const sh = await run(dir, 'printf "%s" "$0"', {});
+    const sh = await run(dir, 'printf "%s" "$0"', { shell: 'sh' });
     assert.equal(sh.status, 'ok');
-    assert.match(sh.output, /--- stdout ---\n\/(bin\/)?sh/, 'the default shell is sh');
+    assert.match(sh.output, /--- stdout ---\n\/(bin\/)?sh/, 'explicit sh runs /bin/sh');
 
     if (fs.existsSync('/bin/zsh')) {
       const zsh = await run(dir, 'printf "%s" "$ZSH_VERSION"', { shell: 'zsh' });
@@ -103,7 +103,7 @@ test('bash and zsh are selectable and the chosen shell is reported', async () =>
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('Bash starts with errexit, nounset, and pipefail while default sh is unchanged', async () => {
+test('Bash starts with errexit, nounset, and pipefail while explicit sh is unchanged', async () => {
   const dir = root();
   try {
     for (const command of ['false', 'unset MODKH_STRICT_TEST; printf "%s" "$MODKH_STRICT_TEST"', 'false | true']) {
@@ -112,7 +112,9 @@ test('Bash starts with errexit, nounset, and pipefail while default sh is unchan
       assert.match(result.output, /^\[exit code: [1-9]\d*\]/);
       assert.doesNotMatch(result.output, /REACHED/);
     }
-    const sh = await run(dir, 'false | true; printf REACHED');
+    const pipeline = await run(dir, '(exit 7) | tail -1');
+    assert.match(pipeline.output, /^\[exit code: 7\]/);
+    const sh = await run(dir, 'false | true; printf REACHED', { shell: 'sh' });
     assert.match(sh.output, /^\[exit code: 0\]/);
     assert.match(sh.output, /REACHED/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }

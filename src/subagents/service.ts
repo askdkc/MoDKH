@@ -65,6 +65,19 @@ function resultText(value: unknown): string {
   if (typeof value !== 'string' || Buffer.byteLength(value) > 65536) throw new Error('Subagent result exceeds 64 KiB or is not text');
   return value;
 }
+function partialReadResults(child: Session): string {
+  const calls = new Map(child.messages.flatMap(message =>
+    message.role === 'assistant' ? (message.toolCalls ?? []).map(call => [call.id, call] as const) : []));
+  const reads = child.messages.flatMap(message => message.role === 'tool' ? message.results : [])
+    .filter(receipt => receipt.status === 'ok' && ['read_file', 'search_files', 'list_files', 'code_syntax_search'].includes(receipt.name))
+    .slice(-4);
+  if (!reads.length) return '';
+  return '中断までの読み取り結果（抜粋）\n' + JSON.stringify(reads.map(receipt => ({
+    tool: receipt.name, callId: receipt.callId, path: calls.get(receipt.callId)?.args.path,
+    output: receipt.output.slice(0, 1024),
+  })));
+}
+
 function waitFor<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => reject(new Error('Subagent interrupted or timed out'));
@@ -453,6 +466,7 @@ export class SubagentService {
         catch (e) { result.status = 'unknown'; result.cleanup = 'unknown'; result.diagnostic = String(e); }
       }
       if (signal.aborted && result.status === 'completed') result.status = 'cancelled';
+      if (child && signal.aborted && !result.text) result.text = partialReadResults(child);
       try { child?.setStatus(result.status === 'completed' ? 'complete' : result.status === 'error' ? 'error' : 'interrupted'); }
       catch (e) { result.status = 'unknown'; result.diagnostic = `Child journal: ${String(e)}`; }
       if (lease && result.cleanup === 'settled') {

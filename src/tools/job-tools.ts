@@ -16,9 +16,9 @@ function optionalString(v: unknown, name: string, max: number): string | undefin
   return v;
 }
 
-function shellArg(v: unknown): ShellName {
+function shellArg(v: unknown): ShellName | undefined {
   const value = optionalString(v, 'shell', 8);
-  if (value === undefined) return 'sh';
+  if (value === undefined) return undefined;
   if (!(SHELLS as readonly string[]).includes(value)) {
     throw new ToolError('INVALID_ARGS', `shell は ${SHELLS.join(' | ')} のいずれか`);
   }
@@ -26,7 +26,7 @@ function shellArg(v: unknown): ShellName {
 }
 
 /** Shared with the foreground tool so both paths resolve and approve identically. */
-export function prepareCommand(args: Record<string, unknown>, root: string): { command: string; cwd: string; cwdRel: string; shell: ShellName; description?: string } {
+export function prepareCommand(args: Record<string, unknown>, root: string): { command: string; cwd: string; cwdRel: string; shell?: ShellName; description?: string } {
   const command = requireString(args.command, 'command');
   const cwdRel = args.cwd === undefined ? '.' : requireString(args.cwd, 'cwd');
   const shell = shellArg(args.shell);

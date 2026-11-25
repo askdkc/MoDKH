@@ -45,7 +45,7 @@ interface JobRecord {
 export interface JobStartRequest {
   command: string;
   cwd: string;
-  shell: ShellName;
+  shell?: ShellName;
   description?: string;
   /** Not applied to background jobs: a job has no deadline, only an explicit kill. */
 }
@@ -126,7 +126,7 @@ export class JobRegistry {
     const id = `bash-${randomUUID().replaceAll('-', '').slice(0, 16)}`;
     const view: JobView = {
       id, kind: 'bash', label: label(request.command, request.description),
-      command: request.command, cwd: request.cwd, shell: request.shell,
+      command: request.command, cwd: request.cwd, shell: process.shell,
       status: 'running', startedAt: Date.now(),
     };
     const record: JobRecord = { view, process, outCursor: 0, errCursor: 0, unreadOut: 0, unreadErr: 0, waiters: new Set() };

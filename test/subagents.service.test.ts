@@ -402,6 +402,29 @@ for (const wake of ['followup', 'job'] as const) {
   });
 }
 
+test('interrupted explorer returns its last completed reads to the parent', async t => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.root, 'evidence.txt'), 'partial-finding');
+  const controller = new AbortController();
+  const service = new SubagentService({ ...f.opts, connection: () => ({ ref: 'fixed/scripted', create: () => ({
+    id: 'fixed/read', async *stream(req) {
+      if (req.messages.some(message => message.role === 'tool')) {
+        controller.abort('deadline');
+        yield { type: 'finish' as const, stopReason: 'aborted' as const };
+        return;
+      }
+      yield { type: 'tool-call' as const, call: { id: 'read-one', name: 'read_file', args: { path: 'evidence.txt' } } };
+      yield { type: 'finish' as const, stopReason: 'tool-calls' as const };
+    },
+  }) }) });
+  const handle = await service.start(request, owner('read', controller.signal));
+  const result = await handle.result;
+  assert.equal(result.status, 'cancelled');
+  assert.match(result.text, /partial-finding/);
+  assert.match(result.text, /evidence.txt/);
+  assert.equal(f.parent.delegations()[0].result?.text, result.text);
+});
+
 test('async tools enforce two slots, expose running status, cancel independently and preserve cold receipts', async t => {
   const f = fixture(t);
   const service = new SubagentService({ ...f.opts, connection: () => ({ ref: 'fixed/scripted', create: () => ({
