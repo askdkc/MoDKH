@@ -356,10 +356,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     ? '\n前鬼（modkh-micro-zenki）が利用可能。状態遷移・競合・不変条件の検証には、対象から有限状態JSONモデルを作成し、start_subagent に pluginId と formalInput:{path:モデルJSON} を渡して前鬼を使う。モデルの仮定・範囲を示し、実装全体の証明と混同しない。単純な変更に不要なモデル検証は追加しない。' : '');
   let turnToolCount = 0;
   const staged = new StagedAttachments();
-  const registry = new ToolRegistry(
-    [...subagents.parentTools([...headTools, ...languageTools(language)]), staged.tool(), ...subagentTools(subagents)],
-    () => ui.setTurnToolCount?.(++turnToolCount),
-  );
+  const parentTools = [...subagents.parentTools([...headTools, ...languageTools(language)]), staged.tool()];
 
   // 任意メモリ(既定無効)。接続不能でも会話は続く。
   const memory = openKiokukoMemory(config.memory.enabled, {
@@ -506,6 +503,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           if (output.length > 13) ui.write(`  … 残り${output.length - 13}行（全文はセッション記録）\n`);
         },
       };
+      const registry = new ToolRegistry([...parentTools, ...subagentTools(subagents)], () => ui.setTurnToolCount?.(++turnToolCount));
       const directOutcome = direct && await runDirectAgent(direct, session, registry, cwd, ac.signal, approval, ui);
       const continueInChat = !directOutcome || (directOutcome.outcome === 'complete' && followups.length > 0 && !ac.signal.aborted);
       const turnSkills = continueInChat && !lisp?.headInstruction ? prepareSkillContext(input, cwd, pstackEnabled ? { include: ['pstack'] } : {}) : undefined;

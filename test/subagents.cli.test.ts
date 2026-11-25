@@ -41,6 +41,7 @@ test('CLI parent reads independently while two child API requests are live and i
   const children: { task: string; res: http.ServerResponse }[] = [];
   let parentStep = 0, active = 0, peak = 0, parentWorked = false;
   const parentRequests: string[] = [];
+  let advertisedPluginIds: string[] = [];
   const send = (res: http.ServerResponse, delta: object, calls = false) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     res.end(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture',
@@ -60,6 +61,8 @@ test('CLI parent reads independently while two child API requests are live and i
     }
     parentRequests.push(JSON.stringify(body.messages));
     if (++parentStep === 1) {
+      const launch = body.tools.find((tool: { function: { name: string } }) => tool.function.name === 'start_subagent');
+      advertisedPluginIds = launch?.function.parameters.properties.pluginId.enum ?? [];
       send(res, { tool_calls: [call('left', 'start_subagent', { pluginId: 'modkh-explorer', task: 'Inspect left' }),
         call('right', 'start_subagent', { pluginId: 'modkh-explorer', task: 'Inspect right' }, 1)] }, true);
     } else if (parentStep === 2) {
@@ -84,6 +87,8 @@ test('CLI parent reads independently while two child API requests are live and i
   try {
     const [code] = await once(child, 'close');
     assert.equal(code, 0, output);
+    assert.ok(advertisedPluginIds.includes('modkh-explorer'));
+    assert.ok(!advertisedPluginIds.includes('code-explorer'));
     assert.equal(children.length, 2, output);
     assert.equal(parentWorked, true, output);
     // The first request must guide tool selection even when spawn and parent reads share a batch.

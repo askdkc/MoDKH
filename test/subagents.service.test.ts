@@ -42,6 +42,23 @@ function externalFixture(root: string, manager: PluginManager, body: string): st
   return 'external-test';
 }
 
+test('both delegation tools advertise only enabled plugin IDs to the parent', async t => {
+  const f = fixture(t);
+  f.manager.setEnabled('modkh-worker', false);
+  const service = new SubagentService(f.opts);
+  const registry = new ToolRegistry(subagentTools(service));
+  const ids = service.list().map(plugin => plugin.id);
+  assert.ok(ids.includes('modkh-explorer'));
+  assert.ok(!ids.includes('code-explorer') && !ids.includes('modkh-worker'));
+  for (const name of ['run_subagent', 'start_subagent']) {
+    const spec = registry.specs().find(tool => tool.name === name)!;
+    const properties = spec.parameters.properties as { pluginId: { enum: string[] } };
+    assert.deepEqual(properties.pluginId.enum, ids);
+  }
+  await assert.rejects(service.start({ ...request, pluginId: 'code-explorer' }, owner()), /list_subagents/);
+  assert.equal(f.parent.delegations().length, 0);
+});
+
 test('child owns a fresh model and history; exact replay never executes again', async t => {
   const f = fixture(t);
   f.parent.append({ role: 'user', content: 'parent-only-private' });
