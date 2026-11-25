@@ -3,8 +3,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readFileMentions } from '../src/cli/file-mentions.ts';
+import { activeFileMention, readFileMentions } from '../src/cli/file-mentions.ts';
 import { StagedAttachments } from '../src/cli/staged-attachments.ts';
+
+test('file completion skips literal examples and resumes at the original cursor offset', () => {
+  for (const fence of ['````', '~~~~']) {
+    const example = [fence + 'diff', fence.slice(1), '@example'].join('\n');
+    assert.equal(activeFileMention(example, example.length), undefined);
+    const draft = example + '\n' + fence + '\n@notes';
+    assert.deepEqual(activeFileMention(draft, draft.length), {
+      start: draft.indexOf('@notes'), end: draft.length, query: 'notes',
+    });
+  }
+});
 
 test('a user-supplied external path attaches exactly that PDF, a typo only suggests names', t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'submitted-path-'));

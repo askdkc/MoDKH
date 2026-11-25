@@ -80,7 +80,7 @@ for (const scenario of ['clipboard only', 'with file mentions', 'provider reject
           fileImages.push({ mediaType: 'image/' + format, data: bytes.toString('base64') });
         }
       }
-      const prompt = withFiles ? '@screen.png ./screen.jpeg を比較して' : rejected ? '' : 'この画像を説明して\n/exit はコード例です';
+      const prompt = withFiles ? '```diff\n@@ -1 +1 @@\n- @private\n+ ./example.js\n```\n@screen.png ./screen.jpeg を比較して' : rejected ? '' : 'この画像を説明して\n/exit はコード例です';
       if (prompt) input.write(`\x1b[200~${prompt}\x1b[201~`);
       input.emit('keypress', '', { name: 'return' });
       await waitFor(rejected ? 'IMAGE_UNSUPPORTED' : 'IMAGE_ACCEPTED');

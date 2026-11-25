@@ -16,6 +16,32 @@ const tokens = /(?<!\S)@(?:"(?:[^"\\\r\n]|\\["\\])*"?|[^\s"]*)/gu;
 // Unlike @ completion, explicit paths are recognized only on user submission.
 const submittedPaths = /(?<!\S)(?:@(?:"(?:[^"\\\r\n]|\\["\\])*"?|[^\s"]*)|"(?:~\/|\.{1,2}\/|\/(?!\/))[^"\r\n]+"|(?:~\/|\.{1,2}\/|\/(?!\/)(?=[^\s"]*[/.]))[^\s"]+)/gu;
 
+// Keep offsets in the original draft for completion and typo correction.
+function* fencedCodeRanges(input: string) {
+  const delimiters = /^ {0,3}(`{3,}|~{3,})([^\r\n]*)/gm;
+  let opening: { marker: string; start: number } | undefined;
+  for (const line of input.matchAll(delimiters)) {
+    const [, marker, rest] = line;
+    if (!opening) {
+      if (marker[0] === '`' && rest.includes('`')) continue;
+      opening = { marker, start: line.index };
+    } else if (marker.startsWith(opening.marker) && /^[ \t]*$/.test(rest)) {
+      yield { start: opening.start, end: line.index + line[0].length };
+      opening = undefined;
+    }
+  }
+  if (opening) yield { start: opening.start, end: input.length };
+}
+
+function* attachmentMatches(input: string, pattern: RegExp) {
+  const ranges = fencedCodeRanges(input);
+  let range = ranges.next().value;
+  for (const match of input.matchAll(pattern)) {
+    while (range && match.index >= range.end) range = ranges.next().value;
+    if (!range || match.index < range.start) yield match;
+  }
+}
+
 function submittedPath(root: string, file: string): string {
   const absolute = path.resolve(root, file.startsWith('~/') ? path.join(os.homedir(), file.slice(2)) : file);
   const relative = path.relative(root, absolute);
@@ -143,7 +169,7 @@ export type FileMention = { start: number; end: number; query: string };
 export type FileCandidate = { path: string; directory: boolean };
 
 export function activeFileMention(text: string, cursor: number): FileMention | undefined {
-  for (const match of text.matchAll(tokens)) {
+  for (const match of attachmentMatches(text, tokens)) {
     const start = match.index;
     const end = start + match[0].length;
     if (cursor <= start || cursor > end) continue;
@@ -228,7 +254,7 @@ export function readFileMentions(root: string, input: string, store: import('./s
   const texts: { path: string; content: string }[] = [];
   const images: ImageAttachment[] = [], pdfs: PdfAttachment[] = [];
   let remaining = MENTION_BYTE_LIMIT;
-  for (const match of input.matchAll(submittedPaths)) {
+  for (const match of attachmentMatches(input, submittedPaths)) {
     const mention = match[0];
     if (mention === '@') continue;
     const value = mention.startsWith('@') ? mention.slice(1) : mention;
