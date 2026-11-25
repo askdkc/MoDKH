@@ -105,6 +105,7 @@ export type ModelEvent =
   /** Provider-reported reasoning. Shown to the human, never merged into assistant content. */
   | { type: 'reasoning-delta'; text: string }
   | { type: 'tool-call'; call: ToolCall }
+  | { type: 'continuation'; value: ProviderContinuation }
   | {
       type: 'finish';
       stopReason: 'stop' | 'tool-calls' | 'aborted' | 'error' | 'length';
@@ -122,7 +123,13 @@ export type AgentMessage =
  */
 export type ReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'max';
 
+/** Provider-private replay data; not a transcript field. */
+export type ProviderContinuation =
+  | { kind: 'chat-reasoning'; text: string }
+  | { kind: 'responses'; items: Record<string, unknown>[] };
+
 export interface ModelRequest {
+  continuation?(message: AgentMessage): ProviderContinuation | undefined;
   /** Stable session identity for providers supporting prompt-cache routing. */
   promptCacheKey?: string;
   messages: AgentMessage[];

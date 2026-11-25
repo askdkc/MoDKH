@@ -1,7 +1,7 @@
 import { projectToolImages } from '../model/context.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { modelInstructions } from '../model/harness-profile.ts';
-import type { AgentMessage, Model, ModelEvent, TokenUsage, ToolCall, ToolResult, ToolSpec } from './types.ts';
+import type { AgentMessage, Model, ModelEvent, ProviderContinuation, TokenUsage, ToolCall, ToolResult, ToolSpec } from './types.ts';
 import { ToolRegistry } from '../tools/registry.ts';
 import { prepareSkillContext, type SkillContext } from './skills.ts';
 import { projectCompacted, type CompactionState } from './compaction.ts';
@@ -29,6 +29,8 @@ export interface AgentLoopOptions {
   root: string;
   system?: string;
   promptCacheKey?: string;
+  /** One state per live CLI session; isolated by model instance and not serialized. */
+  continuationState?: WeakMap<AgentMessage, { model: Model; value: ProviderContinuation }>;
   /** Embedders can disable automatic purpose-specific guidance. */
   skills?: boolean;
   /**
@@ -38,9 +40,8 @@ export interface AgentLoopOptions {
    */
   skillContext?: SkillContext | null;
   /**
-   * このターンのモデル要求にだけ付け足す末尾のデータ。セッション履歴には保存しない。
-   * system を書き換えるとキャッシュprefixが毎ターン崩れるため、可変の参考データは
-   * 履歴より後ろに置き、既存メッセージの位置を動かさない。
+   * このターンの起点の発話に一度だけ添える参考データ。セッション履歴には保存しない。
+   * 同じターン内の後続ツール結果は、この位置より後ろに追加される。
    */
   transientContext?: string | undefined;
   /** Attach workspace hints to the initiating request, before its subsequent tool results. */
@@ -59,6 +60,8 @@ export interface AgentLoopOptions {
   followupSignal?(): AbortSignal;
   /** Trusted host workflow may require more work before this response can close. */
   terminalToolBlock?(): string | undefined;
+  /** Do not display provisional model prose before the host accepts completion. */
+  holdAnswerUntilComplete?: boolean;
   beforeComplete?(): Promise<{ continueWith: string } | { errorMessage: string } | undefined>;
   /** A trusted workflow may settle or revise its work after a persisted tool batch. */
   afterToolBatch?(): Promise<{ continueWith: string } | TurnResult | undefined>;
@@ -139,16 +142,16 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     messages.push(message);
     opts.checkpoint?.();
   };
-  // Appended to the projection only: earlier messages keep their bytes and order, so a provider
-  // that caches a common prefix still hits it, while the transcript stays free of turn-local data.
-  const transient = opts.transientContext?.trim() ? opts.transientContext : undefined;
+  const hint = [opts.taskContext, opts.transientContext].filter(value => value?.trim()).join('\n\n');
+  const continuationState = opts.continuationState ?? new WeakMap<AgentMessage, { model: Model; value: ProviderContinuation }>();
+  // A transport recorder can see replayed request bodies. Never add a second copy of the
+  // provider-private data to that path until the recorder can prove redaction.
+  const privateReplay = !process.env.AGENTICREPLAY_TLS_CA && !process.env.AGENTICREPLAY_PROXY_URL;
   const requestMessages = (): AgentMessage[] => {
     const projection = truncatedResponse ? outgoing().filter(message => message !== truncatedResponse) : outgoing();
-    const contextualized = opts.taskContext && task
-      ? projection.map(message => message === task ? { ...task, content: task.content + '\n\n' + opts.taskContext } : message)
-      : projection;
-    const visible = projectToolImages(contextualized);
-    return transient === undefined ? visible : [...visible, { role: 'user', content: transient }];
+    return projectToolImages(hint && task
+      ? projection.map(message => message === task ? { ...task, content: task.content + '\n\n' + hint } : message)
+      : projection);
   };
   const appendFollowups = (): boolean => {
     const followups = opts.takeFollowups?.() ?? [];
@@ -169,6 +172,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     appendFollowups();
     let text = '';
     let receivedReasoning = false;
+    let continuation: ProviderContinuation | undefined;
     const calls: ToolCall[] = [];
     let stopReason: Extract<ModelEvent, { type: 'finish' }>['stopReason'] | undefined;
     let errorMessage: string | undefined;
@@ -180,6 +184,10 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
       opts.hooks?.onModelRequest?.();
       for await (const ev of opts.model.stream({
         messages: requestMessages(),
+        ...(privateReplay ? { continuation: (message: AgentMessage) => {
+          const entry = continuationState.get(message);
+          return entry?.model === opts.model ? entry.value : undefined;
+        } } : {}),
         ...(opts.promptCacheKey ? { promptCacheKey: opts.promptCacheKey } : {}),
         tools: scope ? toolSpecs.filter(tool => tool.name === scope.tool) : toolSpecs,
         system: scope?.system ?? system,
@@ -192,10 +200,12 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
           opts.hooks?.onModelActivity?.(ev.stage, ev.toolName);
         } else if (ev.type === 'text-delta') {
           text += ev.text;
-          opts.hooks?.onText?.(ev.text);
+          if (!opts.holdAnswerUntilComplete) opts.hooks?.onText?.(ev.text);
         } else if (ev.type === 'reasoning-delta') {
           receivedReasoning ||= ev.text.length > 0;
           opts.hooks?.onReasoning?.(ev.text);
+        } else if (ev.type === 'continuation') {
+          continuation = ev.value;
         } else if (ev.type === 'tool-call') {
           calls.push(ev.call);
           opts.hooks?.onToolCall?.(ev.call);
@@ -235,6 +245,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
       return interrupted ? { outcome: 'interrupted' }
         : { outcome: 'error', errorMessage: errorMessage ?? 'モデル応答が終了イベントなしで切れた' };
     }
+    if (privateReplay && continuation) continuationState.set(response, { model: opts.model, value: continuation });
     if (calls.length === 0) {
       // A job that settled while this answer was streaming still owes the model a report.
       // Yield one more step instead of closing the turn on an unread completion.
@@ -273,6 +284,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
         append({ role: 'user', content: 'The response contained no final answer. Give the user the answer from the evidence already available, in the final response text.' });
         continue;
       }
+      if (stopReason === 'stop' && opts.holdAnswerUntilComplete && text) opts.hooks?.onText?.(text);
       return stopReason === 'stop' ? { outcome: 'complete' }
         : { outcome: 'error', errorMessage: 'ツール終了イベントに呼び出しがない' };
     }

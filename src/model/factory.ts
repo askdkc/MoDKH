@@ -20,6 +20,25 @@ export interface ModelSpec {
 
 export class MissingKeyError extends Error {}
 
+function localReasoningField(preset: ProviderDefinition, url: string, model: string): ProviderDefinition['localReasoningField'] {
+  const endpoint = URL.parse(url);
+  if (!endpoint || !['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password ||
+      !['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname) || /(?:[:_-]cloud|@cloud)$/i.test(model)) return;
+  return preset.localReasoningField;
+}
+
+/** Ollama maps assistant reasoning (not reasoning_content) to api.Message.Thinking. */
+function ollamaReasoningBody(args: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(args.messages)) return args;
+  return { ...args, messages: args.messages.map((value: Record<string, unknown>) => {
+    if (value.role !== 'assistant' || typeof value.reasoning_content !== 'string') return value;
+    const { reasoning_content, ...rest } = value;
+    return { ...rest, reasoning: reasoning_content };
+  }) };
+}
+
+const localModelFetch: typeof fetch = (input, init) => fetchModel(input, { ...init, redirect: 'error' });
+
 /** --model <provider>/<model> の解釈。モデルID自体に / を含む(openrouter 等)ため最初の / で分ける。 */
 export function parseModelRef(ref: string): ModelSpec {
   const at = ref.indexOf('/');
@@ -90,11 +109,13 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
       });
     case 'deepseek':
       return new AiSdkModel({ ...sdkOptions, languageModel: createDeepSeek({ apiKey: key!, fetch: fetchModel })(spec.model) });
-    default:
+    default: {
+      const reasoningField = localReasoningField(preset, baseUrl!, spec.model);
       // OpenAI互換プリセット（Ollama Local / Cloud はURLと認証情報を分離）。
       // OpenCode は user-agent と会話セッションIDを要求するため、定義側のヘッダを渡す。
       return new AiSdkModel({
         ...sdkOptions,
+        ...(reasoningField ? { replayChatReasoning: true } : {}),
         languageModel: createOpenAICompatible({
           name: spec.provider,
           baseURL: baseUrl!,
@@ -102,8 +123,10 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
           // Compatible streaming APIs may omit prompt-token counts unless requested.
           includeUsage: spec.provider !== 'hermes',
           ...(preset.headers ? { headers: preset.headers() } : {}),
-          fetch: fetchModel,
+          fetch: reasoningField ? localModelFetch : fetchModel,
+          ...(reasoningField === 'reasoning' ? { transformRequestBody: ollamaReasoningBody } : {}),
         })(spec.model),
       });
+    }
   }
 }

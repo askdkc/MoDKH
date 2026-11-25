@@ -12,6 +12,8 @@ export interface ProviderDefinition {
   baseURL?: string;
   /** baseURL を差し替える環境変数名。 */
   baseURLVar?: string;
+  /** Assistant-history reasoning input field; only activated for loopback endpoints. */
+  localReasoningField?: 'reasoning' | 'reasoning_content';
   /** モデル一覧のパス(baseURL からの相対)。一覧APIが無い場合は省略。 */
   modelsPath?: string;
   /**
@@ -80,7 +82,8 @@ export const PROVIDERS: Readonly<Record<string, ProviderDefinition>> = {
   hermes: { env: 'HERMES_API_KEY', baseURL: 'http://127.0.0.1:8642/v1', baseURLVar: 'HERMES_BASE_URL', modelsPath: '/models' },
   groq: { env: 'GROQ_API_KEY', baseURL: 'https://api.groq.com/openai/v1', modelsPath: '/models' },
   xai: { env: 'XAI_API_KEY', baseURL: 'https://api.x.ai/v1', modelsPath: '/models' },
-  ollama: { env: null, baseURL: 'http://127.0.0.1:11434/v1', baseURLVar: 'OLLAMA_BASE_URL', modelsPath: '/models' },
+  ollama: { env: null, baseURL: 'http://127.0.0.1:11434/v1', baseURLVar: 'OLLAMA_BASE_URL', modelsPath: '/models', localReasoningField: 'reasoning' },
+  'llama-server': { env: null, baseURL: 'http://127.0.0.1:8080/v1', baseURLVar: 'LLAMA_SERVER_BASE_URL', modelsPath: '/models', localReasoningField: 'reasoning_content' },
   'ollama-cloud': { env: 'OLLAMA_API_KEY', baseURL: 'https://ollama.com/v1', baseURLVar: 'OLLAMA_CLOUD_BASE_URL', modelsPath: '/models' },
   lmstudio: { env: null, baseURL: 'http://127.0.0.1:1234/v1', baseURLVar: 'LMSTUDIO_BASE_URL', modelsPath: '/models' },
   compatible: { env: null },

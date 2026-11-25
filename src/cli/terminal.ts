@@ -1353,8 +1353,11 @@ export class TerminalUI implements ChatTerminal {
 
     const optionsLines: { text: string; style: string }[] = [];
     if (options) {
-      const maxOptions = this.pending?.choices ? 8 : COMMANDS.length;
-      const height = Math.max(1, Math.min(options.length || 1, Math.max(2, rows - (partialCount + liveReasoning.length) - 6 - stackedHeight), maxOptions));
+      // 選択肢の一覧は、入力欄を画面外へ押し出さない範囲で全体を出す。プロバイダーが増えても
+      // 末尾の行が隠れたままにならず、入りきらない分だけ選択位置に合わせて送る。
+      const room = Math.max(2, rows - (partialCount + liveReasoning.length) - 6 - stackedHeight);
+      const maxOptions = this.pending?.choices ? room : COMMANDS.length;
+      const height = Math.max(1, Math.min(options.length || 1, room, maxOptions));
       const start = Math.max(0, Math.min(this.selection - height + 1, options.length - height));
       optionsLines.push({ text: this.pending?.choices ? this.pending.title : 'Commands', style: READABLE_TEXT_STYLE });
       if (!options.length) optionsLines.push({ text: '該当なし — 検索語を変える / Esc で戻る', style: '2' });

@@ -2,6 +2,7 @@ import { completionArtPicker } from './completion-art.ts';
 import { shellCall, shellOutput } from './shell-display.ts';
 import { ToolDisplay } from './tool-display.ts';
 import { headCheckCompletion } from './head-checks.ts';
+import { parseWorkspaceVerification, workspaceVerification } from './workspace-verification.ts';
 import fs from 'node:fs';
 import { loadLispConfiguration } from '../lisp/config.ts';
 import { routeIntent, routeRole } from '../lisp/routing.ts';
@@ -184,6 +185,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     session = store.create(cwd, 'unconnected');
   }
 
+  const continuationState = new WeakMap();
   const nextCompletionArt = completionArtPicker();
   const toolDisplay = new ToolDisplay(session.messages);
   const { model: candidate, baseUrl } = selectInitialConnection(args, config, args['resume'] ? session : undefined);
@@ -392,6 +394,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   let contextWindow: number | undefined;
   let nextMetadataRead = 0;
   let failedCompaction: { model: Model; from: number; eligibleBytes: number } | undefined;
+  const workspaceCheckConfig = parseWorkspaceVerification(config.workspaceVerification);
+  if (config.workspaceVerification !== undefined && !workspaceCheckConfig) ui.write('(workspaceVerification の設定が不正です。固定検証は実行しません)\n');
   const runTurn = async (input: string, activeModel: Model | null, direct?: DelegationRequest, images: ImageAttachment[] = [], documentText?: string, pdfs: PdfAttachment[] = []): Promise<void> => {
     turnToolCount = 0;
     ui.setTurnToolCount?.(turnToolCount);
@@ -438,6 +442,12 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       return messages.map(message => message.content);
     };
     try {
+      // The existing Lisp head workflow retains authority when it defines its own checks.
+      let workspaceCheck: ReturnType<typeof workspaceVerification> | undefined;
+      if (!direct && !lisp?.headChecks && workspaceCheckConfig) {
+        try { workspaceCheck = workspaceVerification(workspaceCheckConfig, cwd, approval, ac.signal, verificationIsolation); }
+        catch { throw new Error('workspaceVerification: 開始時の検証入力を読み取れません'); }
+      }
       let memoryText: string | null = null;
       if (config.memory.enabled && !direct && input.trim()) {
         const started = Date.now();
@@ -448,7 +458,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       }
       // Recalled data is specific to this turn. Appending it to the system prompt would push a
       // changing suffix in front of the whole transcript and lose the provider's cached prefix,
-      // so it is sent as the newest input instead and never persisted.
+      // so attach it to this turn's initiating message in the outgoing projection only.
       const memoryContext = memoryText === null ? '' : JSON.stringify(memoryText);
       const ciContext = !lisp && /\b(ci|github actions)\b/i.test(input) && /\b(fail(?:s|ed|ing|ure)?|broken|red)\b|失敗|落ち/u.test(input.toLowerCase())
         && fs.existsSync(path.join(cwd, '.github', 'workflows'))
@@ -525,6 +535,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const outcome = continueInChat ? await runAgentLoop(session.messages, {
         model: activeModel!,
         promptCacheKey: session.id,
+        continuationState,
         registry,
         subagents,
         root: cwd,
@@ -579,6 +590,12 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         takeFollowups,
         followupSignal: () => followupWake.signal,
         ...headChecks?.hooks,
+        ...(workspaceCheck ? {
+          beforeComplete: () => jobs.list().some(job => job.status === 'running' || job.status === 'stopping')
+            ? Promise.resolve({ errorMessage: '最終差分を未検証: バックグラウンドジョブが終了していません。' })
+            : workspaceCheck.beforeComplete(),
+          holdAnswerUntilComplete: true,
+        } : {}),
         analyze,
         maxTurns,
         skills: false, // The CLI already assembled the session guidance and per-turn memory.
@@ -594,7 +611,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         const formal = headChecks?.formalVerdict();
         ui.write(ui.interactive ? `\n\n${nextCompletionArt()}\n` : '\n\n(応答終了)\n');
         if (formal?.status === 'passed') ui.write(`${formal.message}\n`);
-        else if (direct || usedTools) ui.write('依頼全体の検証結果はありません。\n');
+        else if (workspaceCheck?.verdict() === 'passed') ui.write(`設定された最終差分の固定検証は合格しました (SHA-256: ${workspaceCheck.verifiedDigest()})。\n`);
+        else if (workspaceCheck || direct || usedTools) ui.write('依頼全体の検証結果はありません。\n');
         // 会話完了後、メモリ保存の提案(有効かつ書き込み可のときだけ)
         const lastAssistant = [...session.messages].reverse().find((m) => m.role === 'assistant');
         if (config.memory.enabled && lastAssistant?.role === 'assistant' && lastAssistant.content) {

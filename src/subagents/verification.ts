@@ -19,7 +19,7 @@ export interface Verification {
   isolationRequirement: 'integrity-only' | 'required';
 }
 interface Snapshot { bytes: Buffer; stat: fs.Stats; file: string }
-function safeSnapshot(root: string, relative: string, max = 2 * 1024 * 1024): Snapshot {
+export function safeSnapshot(root: string, relative: string, max = 2 * 1024 * 1024): Snapshot {
   if (path.isAbsolute(relative) || relative.split(/[\\/]/).some(p => !p || p === '.' || p === '..')) throw new ToolError('INVALID_ARGS', 'Unsafe manifest path');
   const file = path.join(root, relative);
   let probe = root;

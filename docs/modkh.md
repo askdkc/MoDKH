@@ -57,6 +57,27 @@ During editing, the child gets a private snapshot containing only the approved t
 
 **Security limitation:** the private snapshot is not an OS sandbox. Arbitrary checker or tested source code may execute OS operations, and pre/post hashes do not prove the verifier stayed unchanged throughout execution. External executable/dependency closures and hostile filesystem races are not fully protected. A process can interfere with its own test execution. `passed` means this fixed command exited zero for the recorded unchanged snapshots, not a proof against adversarial code or proof of the task's semantics. Use reviewed trusted execution inputs. Strong hostile-input isolation remains unfinished; see `modkh-verification.md`.
 
+### Ordinary chat: owner-configured final check
+
+A normal `modkh chat` turn can end with one fixed check that the model cannot choose. Add it by hand to `config.json`; it never comes from model output.
+
+```json
+{
+  "workspaceVerification": {
+    "root": "/absolute/real/path/to/project",
+    "command": "sh verify.sh",
+    "sources": ["candidate.txt"],
+    "protected": ["verify.sh"]
+  }
+}
+```
+
+`root` must equal the real path of the session directory, so a project with the same file names elsewhere never triggers it. `sources` lists the files the model may change; `protected` lists the checker and its dependencies. Each array holds up to 32 relative paths, and no path may be absolute, contain `..`/`.git`, or appear in both lists. Every listed file must be an existing single-link regular file of at most 2 MiB; symlinks fail the whole check. Files outside these lists are not inspected, so a project-wide pass is not implied.
+
+The check runs in a fresh temporary copy built only from the listed files, through the ordinary approval path, with a 30-second limit and a restricted environment. It is not an OS sandbox. `--verification-isolation required` skips it and reports `not-executed`, and a configured Lisp head check keeps its own verdict.
+
+For an accepted turn the completion line names the SHA-256 of the command, input paths and file contents, and is only shown when this turn ended on the same fingerprint that exited zero. A failed check returns its output (marked as data, not instructions) to the model once for one revision; the same candidate is never re-run, a third candidate is not executed, and a denied approval is not retried. Reused evidence is limited to the same fingerprint. Verdicts are `passed`, `failed`, `unverified` (no change), `not-executed` (no approval or required isolation), `stale` (candidate or verifier changed during the run) and `unknown` (exit state or cleanup could not be settled). A still-running background job blocks the check. Provisional model prose is withheld until the check settles, but the journal still records the transcript.
+
 Examples inside the chat:
 
 ```text

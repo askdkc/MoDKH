@@ -26,9 +26,11 @@ export interface AiSdkModelOptions {
    * (既存の呼び出し元の挙動を変えない)。
    */
   provider?: string;
+  /** Selected by the factory for a local endpoint with a known wire contract. */
+  replayChatReasoning?: boolean;
 }
 
-function toCoreMessages(req: ModelRequest): ModelMessage[] {
+function toCoreMessages(req: ModelRequest, replayChatReasoning: boolean): ModelMessage[] {
   const out: ModelMessage[] = [];
   // Chat Completions accepts images in user content. Keep each tool batch contiguous
   // and attach its observations only after all matching tool receipts.
@@ -45,6 +47,8 @@ function toCoreMessages(req: ModelRequest): ModelMessage[] {
       ] : m.content });
     } else if (m.role === 'assistant') {
       const content: AssistantContent = [];
+      const continuation = replayChatReasoning ? req.continuation?.(m) : undefined;
+      if (continuation?.kind === 'chat-reasoning') content.push({ type: 'reasoning', text: continuation.text });
       if (m.content.length > 0) content.push({ type: 'text', text: m.content });
       for (const c of m.toolCalls ?? []) {
         const part: ToolCallPart = {
@@ -100,17 +104,20 @@ export class AiSdkModel implements Model {
   private readonly lm: LanguageModel;
   private readonly timeoutMs: number;
   private readonly provider?: string;
+  private readonly replayChatReasoning: boolean;
 
   constructor(opts: AiSdkModelOptions) {
     this.id = opts.id;
     this.lm = opts.languageModel;
     this.provider = opts.provider;
+    this.replayChatReasoning = opts.provider === 'deepseek' || opts.replayChatReasoning === true;
     this.timeoutMs = opts.timeoutMs ?? 600000;
     if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs <= 0) throw new Error('timeoutMs must be a positive integer');
   }
 
   /** 無通信タイムアウト。受信が続く限り延期され、何も来なければ締め切る。 */
   async *stream(req: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent> {
+    const replaysPrivate = this.replayChatReasoning && req.messages.some(m => req.continuation?.(m)?.kind === 'chat-reasoning');
     let aborted = false;
     let timedOut = false;
     const deadline = new AbortController();
@@ -122,6 +129,7 @@ export class AiSdkModel implements Model {
     let usage: TokenUsage | undefined;
     let errorMessage: string | undefined;
     let sawToolCall = false;
+    const privateReasoning: string[] = [];
     let finishReason: 'stop' | 'tool-calls' | 'length' | undefined;
     const defaults = harnessProfile(this.id) ? CODEX_62_DEFAULTS : undefined;
     const reasoning = reasoningProviderOptions(this.provider ?? '', req.reasoning ?? defaults?.reasoning, this.id);
@@ -138,7 +146,7 @@ export class AiSdkModel implements Model {
     try {
       const result = streamText({
         model: this.lm,
-        messages: toCoreMessages(req),
+        messages: toCoreMessages(req, this.replayChatReasoning),
         system: req.system,
         tools: toAiSdkTools(req.tools),
         abortSignal: requestSignal,
@@ -153,7 +161,10 @@ export class AiSdkModel implements Model {
         arm(); // 受信が継続している間は制限時間を延ばす
         if (part.type === 'reasoning-start' || part.type === 'reasoning-delta') {
           if (activity !== 'reasoning') { activity = 'reasoning'; yield { type: 'activity', stage: activity }; }
-          if (part.type === 'reasoning-delta' && part.text.length > 0) yield { type: 'reasoning-delta', text: part.text };
+          if (part.type === 'reasoning-delta' && part.text.length > 0) {
+            if (req.continuation && this.replayChatReasoning) privateReasoning.push(part.text);
+            yield { type: 'reasoning-delta', text: part.text };
+          }
         } else if (part.type === 'tool-input-start') {
           activity = 'tool-input';
           yield { type: 'activity', stage: activity, toolName: part.toolName };
@@ -201,8 +212,12 @@ export class AiSdkModel implements Model {
       yield { type: 'finish', stopReason: 'aborted' };
     } else if (errorMessage !== undefined || finishReason === undefined ||
       (finishReason !== 'length' && (finishReason === 'tool-calls') !== sawToolCall)) {
-      yield { type: 'finish', stopReason: 'error', errorMessage: errorMessage ?? 'モデル終了イベントがない、またはツール要求と終了理由が不整合' };
+      yield { type: 'finish', stopReason: 'error', errorMessage: replaysPrivate ? 'モデルの継続応答が未完了です (詳細非表示)'
+        : errorMessage ?? 'モデル終了イベントがない、またはツール要求と終了理由が不整合' };
     } else {
+      if (finishReason !== 'length' && privateReasoning.length) {
+        yield { type: 'continuation', value: { kind: 'chat-reasoning', text: privateReasoning.join('') } };
+      }
       yield { type: 'finish', stopReason: finishReason };
     }
   }

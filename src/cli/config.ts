@@ -35,6 +35,7 @@ export interface LiteConfig {
    * トークン数やプロバイダーのコンテキスト上限とは別の目安。
    */
   compactionAutoBytes?: unknown;
+  workspaceVerification?: unknown;
   modelContextWindows?: Record<string, unknown>;
   diagnostics?: string[];
 }
@@ -73,7 +74,7 @@ export function defaultConfig(): LiteConfig {
 }
 
 /** 書き込み時に意味を持つ既知のキー。これ以外は利用者の手書き設定として保持する。 */
-const KNOWN_KEYS = new Set(['memory', 'subagents', 'subagentLimit', 'language', 'permissions', 'maxTurns', 'model', 'modelBaseUrl', 'reasoning', 'pstack', 'timeoutMs']);
+const KNOWN_KEYS = new Set(['memory', 'subagents', 'subagentLimit', 'language', 'permissions', 'maxTurns', 'model', 'modelBaseUrl', 'reasoning', 'pstack', 'timeoutMs', 'workspaceVerification']);
 
 function readRawConfig(): string | undefined {
   try { return fs.readFileSync(configPath(), 'utf8'); } catch { return undefined; }
@@ -104,6 +105,7 @@ function toLiteConfig(parsed: Record<string, unknown>): LiteConfig {
     pstack: parsed.pstack,
     timeoutMs: parsed.timeoutMs,
     compactionKeepTurns: parsed.compactionKeepTurns,
+    workspaceVerification: parsed.workspaceVerification,
     compactionAutoBytes: parsed.compactionAutoBytes,
     modelContextWindows: parsed.modelContextWindows as LiteConfig['modelContextWindows'],
     memory: {

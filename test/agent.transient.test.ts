@@ -22,15 +22,12 @@ test('transient context keeps the byte-identical cached prefix and never enters 
     signal: new AbortController().signal, approval: gate, skills: false,
   });
   assert.equal(outcome.outcome, 'complete');
-  for (const request of model.requests) {
-    // The policy stays the whole system value, so a provider caching the prefix still hits it.
-    assert.equal(request.system, 'STABLE_POLICY');
-    const last = request.messages.at(-1)!;
-    assert.equal(last.role, 'user');
-    assert.equal(last.role === 'user' && last.content, 'MEMORY_SENTINEL');
-    // The turn-local data is appended, so every earlier message keeps its position and bytes.
-    assert.deepEqual(request.messages.slice(0, -1), messages.slice(0, request.messages.length - 1));
-  }
+  const [first, second] = model.requests;
+  assert.equal(first!.system, 'STABLE_POLICY');
+  assert.equal(second!.system, 'STABLE_POLICY');
+  assert.deepEqual(second!.messages.slice(0, first!.messages.length), first!.messages);
+  assert.deepEqual(first!.messages, [{ role: 'user', content: 'go\n\nMEMORY_SENTINEL' }]);
+  assert.equal(second!.messages.at(-1)?.role, 'tool');
   assert.equal(JSON.stringify(messages).includes('MEMORY_SENTINEL'), false, 'the journal never stores it');
   assert.deepEqual(messages.at(-1), { role: 'assistant', content: 'done' });
 });

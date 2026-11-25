@@ -101,7 +101,7 @@ test('CLIの記憶検索結果はモデル入力に届き、過去の参考デ�
   assert.match(lastUser(requests[1])?.content ?? '', /REFERENCE_FOR_second-task/);
   assert.doesNotMatch(lastUser(requests[1])?.content ?? '', /REFERENCE_FOR_first-task/);
   assert.ok(requests[1].messages.some((m) => m.role === 'user' && m.content === 'first-task'));
-  assert.ok(requests[1].messages.some((m) => m.role === 'user' && m.content === 'second-task'));
+  assert.ok(requests[1].messages.some((m) => m.role === 'user' && m.content.startsWith('second-task\n\n')));
   const messages = events.filter((event) => event.type === 'message').map((event) => event.message);
   assert.doesNotMatch(JSON.stringify(messages), /REFERENCE_FOR_/);
   const memory = events.filter((event) => event.type === 'memory');

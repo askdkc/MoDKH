@@ -2,7 +2,7 @@
 
 ## モデル参照と選択画面
 
-`modkh` を起動し、`/connect` で OpenAI / OpenCode Zen / OpenCode Go / Ollama Local / Ollama Cloud / OpenRouter / Infron / Hermes Agent を選ぶ。
+`modkh` を起動し、`/connect` で OpenAI / OpenCode Zen / OpenCode Go / Ollama Local / llama.cpp Local / Ollama Cloud / OpenRouter / Infron / Hermes Agent を選ぶ。
 TTYでは入力で検索、↑↓で選択、Enterで決定、Escで戻る。OpenAIではChatGPT OAuthとAPIキーを選べる。
 APIキーは環境変数を優先し、未設定ならTTYで伏せ字入力できる。入力したキーは `keys.json`(0600)に保存し、次回起動時に再利用する。
 OpenAIのモデル一覧は選択画面を開くたびに公式から取得する。APIキーでは `https://api.openai.com/v1/models`、
@@ -37,6 +37,7 @@ AIプロバイダーはモデルの追加・廃止が多いため、組み込み
 | `opencode` | `OPENCODE_API_KEY` | `https://opencode.ai/zen/v1` / `OPENCODE_BASE_URL` |
 | `opencode-go` | `OPENCODE_API_KEY`(Zenと共通) | `https://opencode.ai/zen/go/v1` / `OPENCODE_GO_BASE_URL` |
 | `ollama`（Local） | 不要 | `http://127.0.0.1:11434/v1` / `OLLAMA_BASE_URL` |
+| `llama-server`（Local） | 不要 | `http://127.0.0.1:8080/v1` / `LLAMA_SERVER_BASE_URL` |
 | `ollama-cloud` | `OLLAMA_API_KEY` | `https://ollama.com/v1` / `OLLAMA_CLOUD_BASE_URL` |
 | `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
 | `infron` | `INFRON_API_KEY` | `https://llm.onerouter.pro/v1` / `INFRON_BASE_URL` |
@@ -63,6 +64,25 @@ MODKHの個別承認やStopでリモートの副作用を制御・停止でき�
 直接APIでは `:cloud` 接尾辞を付けず、[API一覧のモデル名](https://ollama.com/api/tags)をそのまま使う。
 `OLLAMA_BASE_URL` はLocalだけ、`OLLAMA_CLOUD_BASE_URL` はCloudだけに適用する。
 Cloudのキー未設定・通信失敗時にLocalへ自動で切り替えない。
+
+## llama.cpp Local とローカル推論の再送
+
+`/connect` の **llama.cpp Local** は、利用者が起動した `llama-server` に接続する。
+MODKH はモデルの取得・起動・ダウンロードを行わない。`modkh chat --model llama-server/<model>` に
+`--base-url http://127.0.0.1:8080/v1` を添えて直接指定することもできる。
+
+Ollama Local と llama.cpp Local では、受信した推論を次回の送信で同じ会話履歴の一部として返す。
+ツール往復のたびにモデルが考え直さずに済むが、再送するフィールド名は接続先ごとに異なるため、
+次の条件をすべて満たすときだけ有効にする。
+
+- 接続先ホストが `localhost`・`127.0.0.1`・`[::1]` のいずれか
+- 汎用 `compatible` ではなく `ollama` か `llama-server` のプリセット
+- モデル名が `-cloud` / `:cloud` 系ではない
+
+HTTPリダイレクトは追わない。`ollama-cloud` や外部URLへの上書きは対象外である。
+推論の再送は、モデルとチャットテンプレートが対応している場合にだけ効果がある。
+テンプレートが履歴の推論を無視すれば、通常のツール処理に戻るだけである。
+記録(AgenticReplay)が有効な実行では、記録に2回目のコピーを残さないため再送しない。
 
 ## OpenCode Zen / Go
 

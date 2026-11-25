@@ -17,6 +17,7 @@ export interface ResponsesModelOptions {
 }
 
 interface ResponsesInputItem {
+  [key: string]: unknown;
   type?: string;
   role?: string;
   content?: unknown;
@@ -28,7 +29,7 @@ interface ResponsesInputItem {
 }
 
 /** 会話履歴(CLI 保持)を Responses API の input へ変換する。 */
-export function toResponsesInput(messages: AgentMessage[]): ResponsesInputItem[] {
+export function toResponsesInput(messages: AgentMessage[], continuation?: ModelRequest['continuation']): ResponsesInputItem[] {
   const out: ResponsesInputItem[] = [];
   const outputs = toolContext(messages);
   for (const [index, m] of messages.entries()) {
@@ -39,6 +40,11 @@ export function toResponsesInput(messages: AgentMessage[]): ResponsesInputItem[]
         ...parseImages(m.images).map(image => ({ type: 'input_image', image_url: `data:${image.mediaType};base64,${image.data}`, detail: 'auto' })),
       ] });
     } else if (m.role === 'assistant') {
+      const saved = continuation?.(m);
+      if (saved?.kind === 'responses') {
+        out.push(...saved.items);
+        continue;
+      }
       if (m.content.length > 0) {
         out.push({ role: 'assistant', content: [{ type: 'output_text', text: m.content }] });
       }
@@ -81,7 +87,7 @@ function responseBody(req: ModelRequest, model: string) {
     model,
     ...(defaults ? { text: { verbosity: defaults.verbosity } } : {}),
     instructions: req.system,
-    input: toResponsesInput(req.messages),
+    input: toResponsesInput(req.messages, req.continuation),
     tools: tools.length ? [{ type: 'namespace', name: 'modkh', description: 'MoDKH local tools', tools }] : tools,
     stream: true,
     store: false,
@@ -113,11 +119,16 @@ export class ResponsesApiModel implements Model {
   }
 
   async *stream(req: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent> {
+    const replaysPrivate = req.messages.some(m => req.continuation?.(m)?.kind === 'responses');
     let aborted = false;
     let errorMessage: string | undefined;
     let sawFunctionCall = false;
     let usage: TokenUsage | undefined;
     let completed = false;
+    let output: unknown;
+    const streamed: unknown[] = [];
+    const calls: string[] = [];
+    let sawText = false;
     try {
       const accessToken = this.getAccessToken ? await this.getAccessToken(signal) : this.accessToken;
       if (!accessToken) throw new Error('ChatGPT の認証が必要です。/connect chatgpt で接続してください');
@@ -133,7 +144,8 @@ export class ResponsesApiModel implements Model {
         signal,
       });
       if (!res.ok || res.body === null) {
-        const detail = res.body === null ? '' : await res.text();
+        const detail = res.body === null || replaysPrivate ? '' : await res.text();
+        if (replaysPrivate) await res.body?.cancel();
         yield { type: 'finish', stopReason: 'error', errorMessage: `Responses API エラー: ${res.status} ${detail}` };
         return;
       }
@@ -162,6 +174,7 @@ export class ResponsesApiModel implements Model {
             } else if (ev['type'] === 'response.output_text.delta') {
               const text = ev['delta'];
               if (typeof text === 'string' && text.length > 0) {
+                sawText = true;
                 yield { type: 'text-delta', text };
               }
             } else if (ev['type'] === 'response.reasoning_summary_text.delta' || ev['type'] === 'response.reasoning_text.delta') {
@@ -172,7 +185,9 @@ export class ResponsesApiModel implements Model {
               }
             } else if (ev['type'] === 'response.output_item.done') {
               const item = ev['item'] as { type?: string; call_id?: string; name?: string; arguments?: string } | undefined;
+              if (req.continuation) streamed.push(item);
               if (item?.type === 'function_call' && item.call_id && item.name) {
+                calls.push(item.call_id);
                 sawFunctionCall = true;
                 const args: unknown = JSON.parse(item.arguments ?? '{}');
                 if (args === null || typeof args !== 'object' || Array.isArray(args)) {
@@ -184,6 +199,7 @@ export class ResponsesApiModel implements Model {
               completed = true;
               // Codex reports cached tokens in a nested detail object; missing values stay undefined.
               const reported = ev['response'] as { usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } } } | undefined;
+              output = (reported as { output?: unknown } | undefined)?.output;
               const tokens = reported?.usage;
               if (tokens) {
                 const cached = tokens.input_tokens_details?.cached_tokens;
@@ -218,11 +234,33 @@ export class ResponsesApiModel implements Model {
     if (aborted) {
       yield { type: 'finish', stopReason: 'aborted' };
     } else if (errorMessage !== undefined || !completed) {
-      yield { type: 'finish', stopReason: 'error', errorMessage: errorMessage ?? 'Responses API の完了イベントがない' };
+      yield { type: 'finish', stopReason: 'error', errorMessage: replaysPrivate ? 'Responses API の継続応答が未完了です (詳細非表示)'
+        : errorMessage ?? 'Responses API の完了イベントがない' };
     } else {
+      const items = req.continuation ? replayableOutput(output ?? streamed, calls, sawText) : undefined;
+      if (items) yield { type: 'continuation', value: { kind: 'responses', items } };
       yield { type: 'finish', stopReason: sawFunctionCall ? 'tool-calls' : 'stop' };
     }
   }
+}
+
+function replayableOutput(items: unknown, calls: readonly string[], sawText: boolean): Record<string, unknown>[] | undefined {
+  if (!Array.isArray(items)) return;
+  let foundReasoning = false, foundMessage = false, callIndex = 0;
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || typeof item.id !== 'string') return;
+    if (item.type === 'reasoning') {
+      if (typeof item.encrypted_content !== 'string' || !item.encrypted_content || !Array.isArray(item.summary)) return;
+      foundReasoning = true;
+    } else if (item.type === 'message') {
+      if (item.role !== 'assistant' || !Array.isArray(item.content)) return;
+      foundMessage = true;
+    } else if (item.type === 'function_call') {
+      if (callIndex >= calls.length || item.call_id !== calls[callIndex++] ||
+          typeof item.name !== 'string' || typeof item.arguments !== 'string') return;
+    } else return;
+  }
+  return foundReasoning && (!sawText || foundMessage) && callIndex === calls.length ? items : undefined;
 }
 
 function describeFailure(error: unknown): string | undefined {
