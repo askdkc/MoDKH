@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { APP_VERSION } from '../version.ts';
 
 export interface McpOptions {
   command: string;
@@ -127,7 +128,7 @@ export class McpStdioClient {
 
     try {
       const result = await this.request('initialize', {
-        protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'modkh', version: '0.1.0' },
+        protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'modkh', version: APP_VERSION },
       }, this.connectTimeoutMs, signal);
       if (!result || typeof result !== 'object') throw new Error('MCP初期化応答が不正');
       if (signal?.aborted || this.closed) throw new Error('MCP接続を中断した');

@@ -34,7 +34,14 @@ npm init -y >/dev/null
 npm install --no-audit --no-fund --loglevel=error "$TARBALL" >/dev/null
 CLI="$WORK/install/node_modules/modkh/dist/index.js"
 test -f "$CLI" || { echo "FAIL: dist/index.js が tarball に含まれていない"; exit 1; }
-"$CLI" --version >/dev/null || { echo "FAIL: --version が動かない"; exit 1; }
+EXPECTED_VERSION=$(node -p "require('./node_modules/modkh/package.json').version")
+for flag in -v --version; do
+  ACTUAL_VERSION=$("$CLI" "$flag")
+  [ "$ACTUAL_VERSION" = "$EXPECTED_VERSION" ] || {
+    echo "FAIL: modkh $flag returned '$ACTUAL_VERSION', expected '$EXPECTED_VERSION'"
+    exit 1
+  }
+done
 
 # 2b) 実レコーダーの容量枯渇ケースだけを実行する (--replay-only)。
 #     導入済み tarball の CLI を MODKH_TEST_ENTRY で指し、同じテストを実際の記録器で回す。
