@@ -37,6 +37,7 @@ Svelte・Common Lisp は文法WASMを同梱していないため、`code_outline
 
 - 解析器は `MODKH_HOME`（既定は `~/.config/modkh`）配下の `language/` に置きます。対象プロジェクトの依存・lockfileは変更しません。
 - npm系は専用prefixと専用キャッシュへ導入し、`--ignore-scripts` で導入時のコード実行を避けます。プロジェクトや利用者のnpmキャッシュは変更しません。
+- npmレジストリへプロキシ経由でしか接続できない環境では、起動元のシェルで `MODKH_LANGUAGE_NPM_PROXY=http://proxy.example:8080` を設定できます。認証情報を含まない HTTP(S) のURLのみ受け付け、npmによる導入だけに渡します。独自のCAが必要なら、信頼するPEMを `MODKH_LANGUAGE_NPM_CA_FILE=/absolute/path/to/ca.pem` でnpmのみに指定します。TLS検証は無効にしません。通常のプロキシ環境変数・利用者のnpm設定・認証情報を自動継承することはありません。
 - 導入先は一時領域に作り、検証後に原子的に公開します。同時導入はロックで排他します。
 - 導入した版・取得元・検証時刻は `language/state.json` に記録します。毎起動時にlatestを取り直しません。
 - 失敗はその言語だけの縮退です。記録した失敗を同じターンで無限に再試行しません。

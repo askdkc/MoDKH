@@ -46,6 +46,7 @@ test('real Lean binds the named theorem to an independently selected proposition
    ['namespace Candidate\ntheorem goal : True := trivial\nend Candidate', 'rejected', 'TARGET_STATEMENT_MISMATCH'],
    ['theorem unrelated (n : Nat) : n + 0 = n := rfl', 'rejected', 'TARGET_THEOREM_MISSING'],
    ['axiom assumption : ∀ n : Nat, n + 0 = n\nnamespace Candidate\ntheorem goal : ∀ n : Nat, n + 0 = n := assumption\nend Candidate', 'rejected', 'DISALLOWED_AXIOMS'],
+   ['axiom assumption : ∀ n : Nat, n + 0 = n\ntheorem helper : ∀ n : Nat, n + 0 = n := assumption\nnamespace Candidate\ntheorem goal : ∀ n : Nat, n + 0 = n := helper\nend Candidate', 'rejected', 'DISALLOWED_AXIOMS'],
   ]) {
    fs.writeFileSync(path.join(root, 'Input.lean'), source);
    const result = await tool.execute({ path: 'Input.lean' }, ctx);

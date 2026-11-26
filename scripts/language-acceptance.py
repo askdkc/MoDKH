@@ -83,7 +83,12 @@ try:
     first = run_cli()
     check("the CLI exited cleanly", first.returncode == 0, first.stderr[-1200:])
     state_path = os.path.join(home, "language", "state.json")
-    check("a language server was installed into the managed area", os.path.exists(state_path))
+    initial_state = state() if os.path.exists(state_path) else {}
+    installed = initial_state.get("servers", {}).get("typescript")
+    receipt = os.path.join(home, "language", "servers", "typescript", "install-receipt.json")
+    check("a language server was installed into the managed area",
+          bool(installed and os.path.isfile(installed["command"]) and os.path.isfile(receipt)),
+          str(initial_state.get("failures", {}).get("typescript", {}).get("reason", "")))
     check("the project gained no server dependency", not os.path.exists(os.path.join(project, "node_modules")))
     check("the project lockfile was not modified", not os.path.exists(os.path.join(project, "package-lock.json")))
     check("the model received a real type diagnostic", any(

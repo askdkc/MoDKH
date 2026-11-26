@@ -11,10 +11,40 @@ open Lean
 def fromModule (env : Environment) (decl mod : Name) : Bool :=
   (env.getModuleIdxFor? decl).any fun idx => env.header.moduleNames[idx.toNat]? == some mod
 
+-- Older Lean exposes replay on Environment and lacks the kernel recursion argument.
+-- Elaborate the supported API shape; both branches keep kernel checking enabled.
+set_option linter.deprecated false in
+def replayChecked (env : Environment) (additions : Std.HashMap Name ConstantInfo) : IO Environment := by
+  first
+  | exact Environment.ofKernelEnv <$> env.toKernelEnv.replay additions
+  | exact env.replay additions
+
+def addChecked (env : Environment) (proof : Declaration) : Except Kernel.Exception Environment := by
+  first
+  | exact env.addDeclCore 0 1000 proof none
+  | exact env.addDeclCore 0 proof none
+
+-- Inspect the replayed kernel's declaration graph, not metadata exported by the candidate.
+partial def auditAxioms (env : Kernel.Environment) (pending : List Name)
+    (seen : NameSet := {}) : Option Bool :=
+  match pending with
+  | [] => some true
+  | name :: rest => do
+    if seen.contains name then return ← auditAxioms env rest seen
+    let info ← env.find? name
+    if let .axiomInfo _ := info then
+      if !([\`propext, \`Classical.choice, \`Quot.sound].contains name) then return false
+    auditAxioms env (info.getUsedConstantsAsSet.toList ++ rest) (seen.insert name)
+
 def checkTarget (target : Name) : IO String := do
   initSearchPath (← getBuildDir)
-  let base ← importModules #[{ module := \`Lean }, { module := \`MoDKHTarget }] {}
-  let loaded ← importModules #[{ module := \`Lean }, { module := \`MoDKHTarget }, { module := \`MoDKHProof }] {}
+  let loaded ← importModules #[{ module := \`MoDKHTarget }, { module := \`MoDKHProof }] {}
+  let some proofIndex := loaded.getModuleIdx? \`MoDKHProof | return "target-missing"
+  let some proofData := loaded.header.moduleData[proofIndex.toNat]? | return "comparison-not-checked"
+  if !proofData.imports.all (fun i => [\`Init, \`Lean, \`Std].contains i.module.getRoot) then
+    return "comparison-not-checked"
+  -- Load the contract and the proof's standard library dependencies, never the proof itself.
+  let base ← importModules (proofData.imports.push { module := \`MoDKHTarget }) {}
   let some (.defnInfo expected) := base.find? \`modkhExpected | return "invalid-contract"
   if !fromModule base \`modkhExpected \`MoDKHTarget || expected.type != mkSort .zero || !expected.levelParams.isEmpty then
     return "invalid-contract"
@@ -23,16 +53,17 @@ def checkTarget (target : Name) : IO String := do
   if !theoremInfo.levelParams.isEmpty then return "unsupported-universes"
   let additions := loaded.constants.fold (init := ({} : Std.HashMap Name ConstantInfo)) fun acc name info =>
     if base.contains name then acc else acc.insert name info
-  let env ← base.replay additions
+  let env ← replayChecked base additions
   let proof : Declaration := .thmDecl {
     name := \`_modkh.checked, levelParams := [], type := expected.value, value := mkConst target }
-  match env.addDeclCore 0 proof none with
-  | .error _ => return "statement-mismatch"
+  match addChecked env proof with
+  | .error (.declTypeMismatch ..) => return "statement-mismatch"
+  | .error _ => return "comparison-not-checked"
   | .ok env =>
-    let (_, result) := ((CollectAxioms.collect \`_modkh.checked).run env).run {}
-    if result.axioms.any (fun ax => !([\`propext, \`Classical.choice, \`Quot.sound].contains ax)) then
-      return "disallowed-axioms"
-    return "proved"
+    match auditAxioms env.toKernelEnv [\`_modkh.checked] with
+    | some true => return "proved"
+    | some false => return "disallowed-axioms"
+    | none => return "comparison-not-checked"
 
 def main (args : List String) : IO UInt32 := do
   match args with

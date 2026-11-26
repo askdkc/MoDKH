@@ -99,7 +99,25 @@ async function withLock<T>(target: string, action: () => Promise<T>): Promise<T>
 async function run(command: string, args: readonly string[], signal?: AbortSignal): Promise<{ code: number; stdout: string; stderr: string }> {
   const home = path.join(languageHome(), 'runtime-home');
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
-  const result = await executeBounded(command, [...args], { cwd: home, env: privateEnvironment(home),
+  const env = privateEnvironment(home);
+  // Only the operator's opt-in npm transport settings, not ambient settings or credentials.
+  const proxy = command === 'npm' ? process.env.MODKH_LANGUAGE_NPM_PROXY : undefined;
+  if (proxy !== undefined) {
+    const url = URL.parse(proxy);
+    if (!url || !['http:', 'https:'].includes(url.protocol) || !url.hostname ||
+        url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+      throw new Error('MODKH_LANGUAGE_NPM_PROXY には認証情報を含まない HTTP(S) プロキシの origin を指定してください');
+    }
+    env.npm_config_https_proxy = url.origin;
+  }
+  const caFile = command === 'npm' ? process.env.MODKH_LANGUAGE_NPM_CA_FILE : undefined;
+  if (caFile !== undefined) {
+    if (!path.isAbsolute(caFile) || !fs.statSync(caFile, { throwIfNoEntry: false })?.isFile()) {
+      throw new Error('MODKH_LANGUAGE_NPM_CA_FILE には信頼する CA 証明書（PEM）の絶対パスを指定してください');
+    }
+    env.NODE_EXTRA_CA_CERTS = caFile;
+  }
+  const result = await executeBounded(command, [...args], { cwd: home, env,
     inputDigest: createHash('sha256').update(JSON.stringify([command,args])).digest('hex'), signal, timeoutMs: MAKE_TIMEOUT_MS, maxOutputBytes: 1024 * 1024 });
   if (result.state !== 'exited') throw new Error(`Installer ${result.state}: ${result.stderr.slice(-1000)}`);
   return { code: result.exitCode ?? -1, stdout: result.stdout, stderr: result.stderr };
