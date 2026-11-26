@@ -73,6 +73,123 @@ test('browse reports its running state to the pane while the CLI call is in flig
   }
 });
 
+test('a failing browse call keeps the CLI message, which arrives on stdout', { skip: process.platform === 'win32' }, async () => {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-browse-stdout-error-'));
+  const previous = process.env.PATH;
+  try {
+    // browse reports failures on stdout with a nonzero exit code.
+    fs.writeFileSync(path.join(bin, 'browse'), '#!/bin/sh\necho "Unknown snapshot ref: e11"\nexit 1\n', { mode: 0o755 });
+    process.env.PATH = bin;
+    const { browseTools } = await import('../src/tools/browse.ts');
+    const result = await new ToolRegistry(browseTools()).executeOne(
+      { id: '1', name: 'browse', args: { action: 'click', tab: 12, ref: 'e11' } },
+      { root: process.cwd(), approval: { approve: async () => true } });
+    assert.match(result.output, /Unknown snapshot ref: e11/, 'the reason the click failed must reach the model');
+  } finally {
+    if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous;
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
+});
+
+test('navigate reuses the given tab instead of opening another one', { skip: process.platform === 'win32' }, async () => {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-browse-navigate-'));
+  const previous = process.env.PATH;
+  try {
+    fs.writeFileSync(path.join(bin, 'browse'), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
+    process.env.PATH = bin;
+    const { browseTools } = await import('../src/tools/browse.ts');
+    const registry = new ToolRegistry(browseTools());
+    const ctx = { root: process.cwd(), approval: { approve: async () => assert.fail('unexpected prompt') } };
+    const moved = await registry.executeOne({ id: '1', name: 'browse', args: { action: 'navigate', url: 'https://example.com', tab: 12 } }, ctx);
+    assert.equal(moved.output, `navigate\n--json\n${JSON.stringify({ url: 'https://example.com', tab: 12 })}\n`);
+    const opened = await registry.executeOne({ id: '2', name: 'browse', args: { action: 'navigate', url: 'https://example.com' } }, ctx);
+    assert.match(opened.output, /"url":"https:\/\/example\.com"/);
+    assert.doesNotMatch(opened.output, /"tab"/, 'without tab the CLI opens a new tab');
+  } finally {
+    if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous;
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
+});
+
+test('a screenshot comes back as an image saved under the session records', { skip: process.platform === 'win32' }, async () => {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-browse-shot-'));
+  const previous = process.env.PATH;
+  // 1x1 PNG, written wherever --output points.
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+  try {
+    fs.writeFileSync(path.join(bin, 'browse'), `#!/bin/sh
+for last; do :; done
+mkdir -p "$(dirname "$last")"
+printf %s '${png}' | base64 -d > "$last"
+printf '{"width":1,"height":1,"format":"png"}\\n'
+`, { mode: 0o755 });
+    process.env.PATH = `${bin}${path.delimiter}${previous ?? ''}`;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-browse-root-'));
+    try {
+      const { browseTools } = await import('../src/tools/browse.ts');
+      const result = await new ToolRegistry(browseTools()).executeOne(
+        { id: '1', name: 'browse', args: { action: 'screenshot', tab: 12 } },
+        { root, approval: { approve: async () => true } });
+      assert.equal(result.status, 'ok');
+      assert.equal(result.image?.mediaType, 'image/png', 'the model must receive the pixels, not just a path');
+      const saved = path.join(root, '.modkh', 'browse', '12.png');
+      assert.ok(fs.existsSync(saved), 'the capture is written inside the working root');
+      assert.match(result.output, /\.modkh\/browse\/12\.png/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous;
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
+});
+
+test('a failed screenshot never attaches the previous capture', { skip: process.platform === 'win32' }, async () => {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-browse-shot-fail-'));
+  const previous = process.env.PATH;
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-browse-shot-fail-root-'));
+  const saved = path.join(root, '.modkh', 'browse', '12.png');
+  try {
+    fs.mkdirSync(path.dirname(saved), { recursive: true });
+    fs.writeFileSync(saved, Buffer.from(png, 'base64'));
+    fs.writeFileSync(path.join(bin, 'browse'), '#!/bin/sh\necho "Tab 12 is gone"\nexit 1\n', { mode: 0o755 });
+    process.env.PATH = `${bin}${path.delimiter}${previous ?? ''}`;
+    const { browseTools } = await import('../src/tools/browse.ts');
+    const result = await new ToolRegistry(browseTools()).executeOne(
+      { id: '1', name: 'browse', args: { action: 'screenshot', tab: 12 } },
+      { root, approval: { approve: async () => true } });
+    assert.equal(result.image, undefined, 'an old file must not stand in for a failed capture');
+    assert.match(result.output, /Tab 12 is gone/);
+    assert.equal(result.status, 'error', 'a failed capture has no unknown effect');
+  } finally {
+    if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous;
+    fs.rmSync(bin, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('list only shows the tabs this session opened', { skip: process.platform === 'win32' }, async () => {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-browse-list-'));
+  const previous = process.env.PATH;
+  try {
+    fs.writeFileSync(path.join(bin, 'browse'), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
+    process.env.PATH = bin;
+    const { browseTools, BrowseTabs } = await import('../src/tools/browse.ts');
+    const registry = new ToolRegistry(browseTools(new BrowseTabs()));
+    const ctx = { root: process.cwd(), approval: { approve: async () => true } };
+    const early = await registry.executeOne({ id: '1', name: 'browse', args: { action: 'list' } }, ctx);
+    assert.equal(early.status, 'not-executed', 'an empty session must not list the user tabs');
+    await registry.executeOne({ id: '2', name: 'browse', args: { action: 'navigate', url: 'https://example.com' } }, ctx);
+    const listed = await registry.executeOne({ id: '3', name: 'browse', args: { action: 'list' } }, ctx);
+    assert.equal(listed.status, 'ok');
+    assert.match(listed.output, /"action":"list","group":"modkh-/);
+  } finally {
+    if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous;
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
+});
+
 test('a failing browse call still clears the running state', { skip: process.platform === 'win32' }, async () => {
   const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-browse-fail-'));
   const previous = process.env.PATH;

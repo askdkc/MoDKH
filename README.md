@@ -78,7 +78,7 @@ modkh
 
 ## ブラウザ検証（任意）
 
-[browse](https://github.com/anomalyco/browse) を使うと、Chrome・Braveなどでページ表示、入力・クリック、スクリーンショット取得を行えます。PATH に実行可能な `browse` があれば、MoDKH は専用の `browse` ツールを登録します。接続状態の確認、HTTP(S) ページを開く、スナップショットの取得、クリック、フォーム入力は都度の許可なしで実行します。任意のスクリプトや管理コマンドには、従来どおり `run_command` の承認設定が適用されます。
+[browse](https://github.com/anomalyco/browse) を使うと、Chrome・Braveなどでページ表示、入力・クリック、スクリーンショット取得を行えます。PATH に実行可能な `browse` があれば、MoDKH は専用の `browse` ツールを登録します。接続状態の確認、HTTP(S) ページを開く、スナップショットの取得、クリック、フォーム入力、スクリーンショットは都度の許可なしで実行します。任意のスクリプトや管理コマンドには、従来どおり `run_command` の承認設定が適用されます。
 
 ```sh
 npm install -g @opencode/browse
@@ -89,6 +89,8 @@ browse status --json
 案内に従ってブラウザ拡張を導入・接続し、ブラウザを開いた状態で使います。`--agent none` は他のエージェントへのMCP登録を省く指定です。`status` の `extension.connected` が `true` なら接続済みです。`paired-offline` の場合は、拡張を導入したプロファイルを開き、拡張が有効か確認してください。
 
 MoDKHの専用 `browse` ツールで開いたタブとポップアップは、応答の完了・エラー・中断時に自動で閉じます。既存のタブは閉じません。終了を確認できなかった場合は対象のグループ名を表示し、セッション終了時にも再確認します。
+
+`screenshot` の画像は `.modkh/browse/<tab>.png` に保存し、そのままモデルへ渡します。保存先は `.gitignore` の `.modkh/` 配下です。
 
 `run_command` から直接 `browse` CLIを使う場合は自動終了の対象外です。開いたタブのIDを控え、作業後に `browse tabs close --tab <id>` で閉じてください。操作方法は `browse --help` で確認できます。
 
