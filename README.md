@@ -40,6 +40,32 @@ modkh
 
 `/pdf ~/Downloads/仕様書.pdf` のようにルート外のPDFを明示すると、追加確認なしで選んだページの本文と画像をモデルに送信します。ルート内のパスがシンボリックリンク経由でルート外を指す場合は、送信前に確認します。ファイルが見つからない場合、似た名前があればエラーに候補を表示します。
 
+## macOS の依存ツール（任意）
+
+Lisp プリセット・前鬼（Stateright）・Rust 解析を使う場合だけ用意します。Node.js と npm は[インストール](#インストール)の手順で導入済みとします。
+
+```sh
+# Command Line Tools が未導入の場合のみ
+xcode-select --install
+
+# Lisp プリセットの設定評価と Common Lisp の補助構文診断で使う
+brew install sbcl
+
+# 前鬼と Rust 解析で使う
+brew install rustup
+export PATH="$(brew --prefix rustup)/bin:$PATH"   # keg-only のため PATH に追加する
+rustup default stable
+rustup component add rust-analyzer
+```
+
+`sbcl --version`、`cargo --version`、`rust-analyzer --version` がそれぞれバージョンを返せば準備完了です。`rust-analyzer --version` が「unavailable for the active toolchain」と出るときは、`rustup component add rust-analyzer` を実行してから確認してください。
+
+`export PATH` の行は `~/.zshrc` に書くと次の起動でも有効になります。Homebrew の rustup は keg-only なので、`cargo` も `rust-analyzer` もこのディレクトリのラッパー経由で動きます。Rust 公式の [rustup](https://rust-lang.org/tools/install/) で導入した場合は stable が既定で入り `~/.cargo/bin` も PATH に入るため、`rustup component add rust-analyzer` だけで済みます。
+
+Rust の解析だけが必要なら `brew install rust-analyzer` でも構いません。この場合は `cargo` が入らないため、`modkh stateright install` は実行できません。`rust-analyzer` を PATH 上のどこに置いても MoDKH は見つけます。
+
+`modkh language install` は SBCL と Rust toolchain を自動導入しません。他のOS向けの手順は[依存パッケージ](docs/setup.md)にあります。
+
 ## プロジェクトの MCP サーバー
 
 プロジェクトのルートで `modkh` を起動すると、通常のチャットで次の stdio サーバーを使えます。Svelte と Laravel Boost は検出時に起動し、最初の依頼を待たずに接続します。どちらも MoDKH 自身が決めた固定の起動コマンドを作業ルートで実行するため、`permissions` の既定値 `workspace` でも起動時の確認は出ません。`permissions` を `none` にすると、この接続も含めて毎回確認します。接続中のサーバーはサイドバーに表示され、チャット終了時に切断します。
