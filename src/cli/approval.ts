@@ -45,6 +45,11 @@ export class TerminalApprovalGate implements ApprovalGate {
     if (request.signal?.aborted) return false;
     const req = request as ApprovalScope;
     if (!shouldAsk({ policy: this.policy, kind: req.kind, outsideWorkspace: req.outsideWorkspace !== false })) return true;
+    return this.confirmOnce(request);
+  }
+
+  async confirmOnce(request: ApprovalRequest): Promise<boolean> {
+    if (request.signal?.aborted) return false;
     const controller = new AbortController();
     const cancel = () => controller.abort();
     request.signal?.addEventListener('abort', cancel, { once: true });
@@ -54,7 +59,7 @@ export class TerminalApprovalGate implements ApprovalGate {
       onAbort = () => resolve(false);
       controller.signal.addEventListener('abort', onAbort, { once: true });
     });
-    const operation = this.queue.then(() => controller.signal.aborted ? false : this.prompt({ ...req, signal: controller.signal }));
+    const operation = this.queue.then(() => controller.signal.aborted ? false : this.prompt({ ...request, signal: controller.signal }));
     this.queue = operation.then(() => {}, () => {});
     try { return await Promise.race([operation, interrupted]); }
     finally {

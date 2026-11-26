@@ -51,6 +51,15 @@ export async function safeAnalysis(run: () => Promise<string | null>): Promise<s
   catch (e) { return `解析: 失敗 — ${e instanceof Error ? e.message : String(e)}（本文の操作は成功）`; }
 }
 
+// The same page may be requested with explicit defaults or a different relative spelling.
+export function readPageKey(root: string, args: Record<string, unknown>): string | undefined {
+  if (Object.keys(args).some(key => !['path', 'offset', 'limit'].includes(key))) return;
+  try {
+    return JSON.stringify([resolveInRoot(root, args.path), argPositiveInt(args.offset, 'offset') ?? 1,
+      argPositiveInt(args.limit, 'limit') ?? READ_DEFAULT_LIMIT]);
+  } catch { return; }
+}
+
 export const readFileTool: Tool = {
   readOnly: true,
   name: 'read_file',

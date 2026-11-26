@@ -42,6 +42,8 @@ export interface ApprovalRequest {
 }
 
 export interface ApprovalGate {
+  /** Explicit per-operation confirmation when resuming a shortened history. */
+  confirmOnce?(req: ApprovalRequest): Promise<boolean>;
   approve(req: ApprovalRequest): Promise<boolean>;
 }
 
@@ -53,6 +55,8 @@ export interface ToolContext {
   signal?: AbortSignal;
   /** Assigned by the registry, never a model-controlled argument. */
   callId?: string;
+  /** Host-only check immediately before a deferred foreground command would start. */
+  commandStartBlocked?(): boolean;
   /**
    * Post-effect analysis (structure, diagnostics). It runs after a successful read/write and its
    * failure must never change the tool's own result or cause a second edit.
@@ -110,6 +114,7 @@ export type ModelEvent =
       type: 'finish';
       stopReason: 'stop' | 'tool-calls' | 'aborted' | 'error' | 'length';
       errorMessage?: string;
+      rejectedToolHistory?: true;
     };
 
 /** 会話メッセージ。tool メッセージは1つのアシスタント応答に対する結果群を保持する。 */
@@ -129,6 +134,7 @@ export type ProviderContinuation =
   | { kind: 'responses'; items: Record<string, unknown>[] };
 
 export interface ModelRequest {
+  recoverToolHistory?: boolean;
   continuation?(message: AgentMessage): ProviderContinuation | undefined;
   /** Stable session identity for providers supporting prompt-cache routing. */
   promptCacheKey?: string;

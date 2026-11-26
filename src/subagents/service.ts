@@ -96,11 +96,13 @@ async function settleWithin<T>(pending: Promise<T>, ms: number): Promise<T> {
 /** The parent captures authority once. Plugins receive neither this owner nor its session. */
 export class SubagentService {
   private opts: SubagentOptions;
+  private readonly parentToolSources = new WeakMap<Tool, Tool>();
   private handles = new Map<string, SubagentHandle>();
   private notices = new Map<string, string>();
   private activities = new Map<string, SubagentActivity>();
   private limit: number;
   get maxConcurrent(): number { return this.limit; }
+  get hasNotices(): boolean { return this.notices.size > 0; }
   get hasPending(): boolean { return this.handles.size > 0; }
   get hasUnknown(): boolean {
     return this.opts.parent.delegations().some(r => r.result?.status === 'unknown' || (!r.result && !this.handles.has(r.runId)));
@@ -136,16 +138,24 @@ export class SubagentService {
     await this.handles.get(runId)?.cancel('Parent requested cancellation');
   }
   /** Parent reads remain usable; mutations cannot race a child writer. */
+  isParentToolWrapper(candidate: Tool, source: Tool): boolean {
+    return this.parentToolSources.get(candidate) === source;
+  }
   parentTools(tools: Tool[]): Tool[] {
-    return tools.map(tool => tool.readOnly || tool.name === 'job_kill' ? tool : { ...tool, execute: async (args, ctx) => {
-      if (this.hasUnknown) throw new ToolError('RESULT_UNKNOWN', '先行する委譲の結果が不明です。状態を確認してください');
-      if (writers.get(this.opts.root)?.size) throw new ToolError('BUSY', '子が編集中です。別の読み取り・統合作業を進め、編集は結果回収後に実行してください');
-      // Reserve through async approval/execution too, so a child cannot start writing meanwhile.
-      const claim = `parent-${randomUUID()}`;
-      this.claimWriter(claim, null, false);
-      try { return await tool.execute(args, ctx); }
-      finally { this.releaseWriter(claim); }
-    } });
+    return tools.map(tool => {
+      if (tool.readOnly || tool.name === 'job_kill') return tool;
+      const wrapped: Tool = { ...tool, execute: async (args, ctx) => {
+        if (this.hasUnknown) throw new ToolError('RESULT_UNKNOWN', '先行する委譲の結果が不明です。状態を確認してください');
+        if (writers.get(this.opts.root)?.size) throw new ToolError('BUSY', '子が編集中です。別の読み取り・統合作業を進め、編集は結果回収後に実行してください');
+        // Reserve through async approval/execution too, so a child cannot start writing meanwhile.
+        const claim = `parent-${randomUUID()}`;
+        this.claimWriter(claim, null, false);
+        try { return await tool.execute(args, ctx); }
+        finally { this.releaseWriter(claim); }
+      } };
+      this.parentToolSources.set(wrapped, tool);
+      return wrapped;
+    });
   }
   private claimWriter(id: string, paths: string[] | null, checkJobs = true): void {
     if (checkJobs && this.opts.hasBackgroundJobs?.()) throw new ToolError('BUSY', '親のバックグラウンドコマンドが実行中です。結果を回収してから編集を委譲してください');

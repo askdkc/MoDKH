@@ -444,3 +444,57 @@ test('long histories resend recent tool images and keep the complete tool journa
   assert.deepEqual(model.requests[0].messages[0], messages[0]);
   assert.equal(receipts(messages).filter(result => result.image).length, 11);
 });
+
+test('a rejected Ollama read history resumes the request and reuses receipts under new IDs', async t => {
+  const root = tmpRoot();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, 'b.txt'), 'SECOND');
+  const task = 'Read a.txt and b.txt and compare the two labels.';
+  const read = (id: string, path: string) => ({ id, name: 'read_file', args: { path } });
+  const messages: AgentMessage[] = [{ role: 'user', content: task },
+    { role: 'assistant', content: '', toolCalls: [read('original', 'a.txt')] },
+    { role: 'tool', results: [{ callId: 'original', name: 'read_file', status: 'ok', output: 'FIRST\n' + 'padding'.repeat(9000) }] }];
+  const model = new FixedModel([
+    [{ type: 'finish', stopReason: 'error', rejectedToolHistory: true }],
+    [{ type: 'tool-call', call: { id: 'duplicate', name: 'read_file', args: { path: './a.txt', offset: 1, limit: 500 } } }, { type: 'tool-call', call: read('fresh', 'b.txt') },
+      { type: 'finish', stopReason: 'tool-calls' }],
+    [...delta('FIRST and SECOND'), { type: 'finish', stopReason: 'stop' }],
+  ]);
+  const started: string[] = [];
+  const result = await runAgentLoop(messages, { root, model: { id: 'ollama/test', stream: model.stream.bind(model) }, skills: false, registry: new ToolRegistry(defaultTools()),
+    signal: new AbortController().signal, approval: new RecordingGate([]), hooks: { onToolStart: c => started.push(c.id) } });
+  assert.equal(result.outcome, 'complete');
+  assert.deepEqual(started, ['fresh']);
+  for (const request of model.requests.slice(1)) {
+    assert.deepEqual(request.tools.map(t => t.name), ['read_file']);
+    assert.match(JSON.stringify(request.messages.at(-1)), /Read a.txt and b.txt/);
+    assert.ok(JSON.stringify(request.messages).length < 25000);
+  }
+  assert.deepEqual(messages.flatMap(m => m.role === 'tool' ? m.results.map(r => [r.callId, r.status]) : []),
+    [['original', 'ok'], ['duplicate', 'ok'], ['fresh', 'ok']]);
+});
+
+test('mixed Ollama history reuses command and GET receipts and runs the outstanding command once', async t => {
+  const root = tmpRoot();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const command = (id: string, command: string) => ({ id, name: 'run_command', args: { command } });
+  const get = (id: string) => ({ id, name: 'fetch_url', args: { url: 'http://127.0.0.1:1/fixture' } });
+  const prior = [command('c1', 'echo duplicate >> counter'), get('f1')];
+  const messages: AgentMessage[] = [{ role: 'user', content: 'Finish the local fixture' },
+    { role: 'assistant', content: '', toolCalls: prior },
+    { role: 'tool', results: prior.map(call => ({ callId: call.id, name: call.name, status: 'ok', output: call.id })) }];
+  const model = new FixedModel([
+    [{ type: 'finish', stopReason: 'error', rejectedToolHistory: true }],
+    [{ type: 'tool-call', call: command('c2', 'echo duplicate >> counter') }, { type: 'tool-call', call: get('f2') },
+      { type: 'tool-call', call: command('new', 'echo new >> counter') }, { type: 'finish', stopReason: 'tool-calls' }],
+    [...delta('done'), { type: 'finish', stopReason: 'stop' }],
+  ]);
+  const confirmed: string[] = [];
+  const result = await runAgentLoop(messages, { root, model: { id: 'ollama/local', stream: model.stream.bind(model) },
+    skills: false, registry: new ToolRegistry(defaultTools()), signal: new AbortController().signal,
+    approval: { approve: async () => false, confirmOnce: async request => { confirmed.push(request.detail); return true; } } });
+  assert.equal(result.outcome, 'complete');
+  assert.equal(fs.readFileSync(path.join(root, 'counter'), 'utf8'), 'new\n');
+  assert.equal(confirmed.length, 1);
+  assert.deepEqual(messages.flatMap(m => m.role === 'tool' ? m.results.filter(r => ['c2','f2'].includes(r.callId)).map(r => r.output) : []), ['c1','f1']);
+});

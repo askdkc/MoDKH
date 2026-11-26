@@ -95,7 +95,14 @@ export const runCommandTool: Tool = {
     + '制限時間に収まらない見込みの処理で使う。' + browserCapability(); },
   parameters: PARAMETERS,
   async execute(args, ctx) {
+    function checkStart() {
+      if (ctx.commandStartBlocked?.()) {
+        throw new ToolError('NOT_EXECUTED', 'New input arrived before the guarded command started.');
+      }
+    }
+    checkStart();
     const prepared = await authorize(args, ctx);
+    checkStart();
     if (args.run_in_background === true) {
       // A background job has no deadline: it runs until it exits or job_kill stops it.
       if (!ctx.jobs) throw new ToolError('INVALID_ARGS', 'バックグラウンド実行が有効でない');

@@ -589,6 +589,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         } } : {}),
         takeFollowups,
         followupSignal: () => followupWake.signal,
+        guardedEditCheck: process.env.MODKH_EXPERIMENT_GUARDED_EDIT_CHECK === '1',
         ...headChecks?.hooks,
         ...(workspaceCheck ? {
           beforeComplete: () => jobs.list().some(job => job.status === 'running' || job.status === 'stopping')

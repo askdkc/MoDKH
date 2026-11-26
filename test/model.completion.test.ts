@@ -75,3 +75,37 @@ test('Responses reports progress while the next tool call is still incomplete', 
   ]);
   assert.equal(result.at(-1)?.type, 'finish');
 });
+
+test('Ollama query rejection after tool results returns a report without rerunning tools', async t => {
+  const requests: { messages: { role: string; content: unknown }[]; tools?: unknown[] }[] = [];
+  const server = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requests.push(JSON.parse(Buffer.concat(chunks).toString()));
+    if (requests.length === 1) {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'no user query found in messages', type: 'api_error' } }));
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end('data: ' + JSON.stringify({ id: 'c', model: 'test', created: 1,
+      choices: [{ index: 0, delta: { content: 'Read failed. The task is incomplete.' }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  const model = resolveModel({ provider: 'ollama', model: 'test', baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1` });
+  const events: ModelEvent[] = [];
+  for await (const ev of model.stream({
+    messages: [{ role: 'user', content: 'Read the document' },
+      { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'read', args: {} }] },
+      { role: 'tool', results: [{ callId: 'c1', name: 'read', status: 'error', output: 'file missing' }] }],
+    tools: [{ name: 'read', description: 'read a document', parameters: { type: 'object' } }],
+  }, new AbortController().signal)) events.push(ev);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[1].messages.slice(0, -1), requests[0].messages);
+  assert.equal(requests[1].messages.at(-1)?.role, 'user');
+  assert.equal(requests[1].tools?.length ?? 0, 0);
+  assert.ok(events.some(e => e.type === 'finish' && e.errorMessage?.includes('Read failed')));
+  assert.equal(events.some(e => e.type === 'tool-call'), false);
+  assert.equal((events.at(-1) as { stopReason: string }).stopReason, 'error');
+});

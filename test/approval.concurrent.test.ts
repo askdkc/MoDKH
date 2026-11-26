@@ -49,3 +49,13 @@ test('each displayed approval gets three minutes and expiry releases its input',
   assert.equal(await second, false);
   assert.match(written.join(''), /3分.*拒否/);
 });
+
+test('an explicit recovery confirmation honors refusal under the all policy', async () => {
+  let prompts = 0;
+  const gate = new TerminalApprovalGate({ write() {}, ask: async () => { prompts++; return 'n'; } }, 'all');
+  const request = { kind: 'command' as const, title: 'Fixture command', detail: 'sh finish.sh' };
+  assert.equal(await gate.approve(request), true);
+  assert.equal(await gate.confirmOnce(request), false);
+  assert.equal(prompts, 1);
+  assert.equal(gate.currentPolicy(), 'all');
+});

@@ -1,4 +1,5 @@
 import {
+  APICallError,
   streamText,
   jsonSchema,
   tool,
@@ -128,6 +129,7 @@ export class AiSdkModel implements Model {
     let activity: 'reasoning' | 'tool-input' | undefined;
     let usage: TokenUsage | undefined;
     let errorMessage: string | undefined;
+    let rejectedToolHistory = false;
     let sawToolCall = false;
     const privateReasoning: string[] = [];
     let finishReason: 'stop' | 'tool-calls' | 'length' | undefined;
@@ -198,6 +200,8 @@ export class AiSdkModel implements Model {
             errorMessage = `モデル応答は未完了: ${part.finishReason}`;
           }
         } else if (part.type === 'error') {
+          rejectedToolHistory = APICallError.isInstance(part.error) && part.error.statusCode === 500
+            && part.error.message === 'no user query found in messages';
           errorMessage = (part.error as Error)?.message ?? String(part.error);
         }
       }
@@ -210,6 +214,19 @@ export class AiSdkModel implements Model {
     if (usage && (usage.input !== undefined || usage.output !== undefined)) yield { type: 'usage', ...usage };
     if (aborted) {
       yield { type: 'finish', stopReason: 'aborted' };
+    } else if (rejectedToolHistory && !timedOut && this.provider === 'ollama'
+      && req.messages.at(-1)?.role === 'tool' && req.messages.some(m => m.role === 'user' && m.content.trim())) {
+      if (req.recoverToolHistory) {
+        yield { type: 'finish', stopReason: 'error', errorMessage, rejectedToolHistory: true };
+        return;
+      }
+      // The endpoint rejected the continuation before streaming. Ask for a report only.
+      // The added prompt exists exclusively on the wire and cannot trigger a tool.
+      const report = yield* this.reportRejectedTurn(req, signal);
+      if (signal.aborted) yield { type: 'finish', stopReason: 'aborted' };
+      else yield { type: 'finish', stopReason: 'error', errorMessage:
+        'Ollama がツール結果を含む履歴を拒否しました (no user query found in messages)。'
+        + (report ? '\n' + report : '') };
     } else if (errorMessage !== undefined || finishReason === undefined ||
       (finishReason !== 'length' && (finishReason === 'tool-calls') !== sawToolCall)) {
       yield { type: 'finish', stopReason: 'error', errorMessage: replaysPrivate ? 'モデルの継続応答が未完了です (詳細非表示)'
@@ -220,5 +237,18 @@ export class AiSdkModel implements Model {
       }
       yield { type: 'finish', stopReason: finishReason };
     }
+  }
+
+  private async *reportRejectedTurn(req: ModelRequest, signal: AbortSignal): AsyncGenerator<ModelEvent, string> {
+    const messages: ModelRequest['messages'] = [...req.messages, { role: 'user', content:
+      'Summarize the results already obtained and what remains incomplete. Use the language of the original request. Do not request tools.' }];
+    let report = '';
+    for await (const event of this.stream({ ...req, messages, tools: [] }, signal)) {
+      if (event.type === 'usage') yield event;
+      if (event.type === 'text-delta') report += event.text;
+      if (event.type === 'tool-call') return '';
+      if (event.type === 'finish' && event.stopReason === 'stop') return report.trim();
+    }
+    return '';
   }
 }
