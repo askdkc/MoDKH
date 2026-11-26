@@ -10,15 +10,16 @@ export const listFilesTool: Tool = {
   readOnly: true,
   name: 'list_files',
   description:
-    'ディレクトリ直下のエントリを一覧する。path は作業ルート相対(省略時はルート)。再帰しない。',
+    'ディレクトリ直下のエントリを一覧する。path は作業ルート相対(省略または空文字ならルート)。再帰しない。',
   parameters: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: '一覧するディレクトリ(ルート相対)' },
+      path: { type: 'string', description: '一覧するディレクトリ(ルート相対、ルートは .)' },
     },
   },
   async execute(args, ctx) {
-    const dir = resolveInRoot(ctx.root, args.path ?? '.');
+    const requested = args.path ?? '';
+    const dir = resolveInRoot(ctx.root, requested === '' ? '.' : requested);
     assertRealInRoot(ctx.root, dir);
     let entries: fs.Dirent[];
     try {

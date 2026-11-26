@@ -9,21 +9,22 @@ import { spawn } from 'node:child_process';
 
 const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
-interface Run { output: string; requests: unknown[]; code: number | null }
+interface Run { output: string; requests: string[]; code: number | null }
 
 /** One chat turn against a stub model that keeps calling a tool for `steps` responses. */
-async function chat(home: string, config: object | null, limit: number): Promise<Run> {
+async function chat(home: string, config: object | null, limit: number, toolArgs = '{}'): Promise<Run> {
   const project = path.join(home, 'project');
   fs.mkdirSync(project, { recursive: true });
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify(config ?? {}));
-  const requests: unknown[] = [];
+  fs.writeFileSync(path.join(project, 'listing-marker.txt'), 'fixture');
+  const requests: string[] = [];
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', chunk => { raw += chunk; });
     req.on('end', () => {
       requests.push(raw);
       const call = requests.length <= limit
-        ? { tool_calls: [{ index: 0, id: `c${requests.length}`, type: 'function', function: { name: 'list_files', arguments: '{}' } }] }
+        ? { tool_calls: [{ index: 0, id: `c${requests.length}`, type: 'function', function: { name: 'list_files', arguments: toolArgs } }] }
         : { content: 'FINISHED_AFTER_LONG_WORK' };
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.end(`data: ${JSON.stringify({
@@ -84,5 +85,21 @@ test('an invalid maxTurns falls back to the default with a diagnostic', async ()
     assert.match(run.output, /設定の maxTurns が不正なため 500 を使用します/);
     // The default still lets the work finish.
     assert.match(run.output, /FINISHED_AFTER_LONG_WORK/);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+
+test('CLI sends the root listing back to the model after one empty-path tool call', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-list-cli-'));
+  try {
+    const run = await chat(home, null, 1, '{"path":""}');
+    assert.equal(run.code, 0, run.output);
+    assert.match(run.output, /FINISHED_AFTER_LONG_WORK/);
+    assert.equal(run.requests.length, 2);
+    const next = JSON.parse(run.requests[1]);
+    const toolMessages = next.messages.filter((message: { role: string }) => message.role === 'tool');
+    assert.equal(toolMessages.length, 1);
+    assert.match(JSON.stringify(toolMessages[0]), /listing-marker\.txt/);
+    assert.doesNotMatch(JSON.stringify(toolMessages[0]), /INVALID_PATH/);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

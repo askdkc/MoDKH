@@ -203,6 +203,42 @@ test('list / search / read が基本の読み取りを満たす', async () => {
   }
 });
 
+test('list_files treats an empty path as the root without widening the workspace boundary', async () => {
+  const parent = tmpRoot();
+  const root = path.join(parent, 'project');
+  const outside = path.join(parent, 'outside');
+  const gate = new FakeGate(false);
+  try {
+    fs.mkdirSync(root);
+    fs.mkdirSync(outside);
+    fs.mkdirSync(path.join(root, ' '));
+    fs.writeFileSync(path.join(root, 'root.txt'), 'root');
+    fs.writeFileSync(path.join(root, ' ', 'space.txt'), 'space');
+    fs.writeFileSync(path.join(outside, 'outside.txt'), 'outside');
+    fs.symlinkSync(outside, path.join(root, 'outside-link'), 'dir');
+    const dot = await run(root, gate, 'list_files', { path: '.' });
+    assert.equal(dot.status, 'ok');
+    assert.match(dot.output, /root\.txt/);
+    assert.doesNotMatch(dot.output, /outside\.txt/);
+    for (const args of [{}, { path: '' }]) {
+      const result = await run(root, gate, 'list_files', args);
+      assert.equal(result.status, 'ok', result.output);
+      assert.equal(result.output, dot.output);
+    }
+    const space = await run(root, gate, 'list_files', { path: ' ' });
+    assert.equal(space.status, 'ok');
+    assert.match(space.output, /space\.txt/);
+    assert.doesNotMatch(space.output, /root\.txt/);
+    await expectError(run(root, gate, 'list_files', { path: 0 }), 'INVALID_PATH');
+    for (const p of ['../outside', outside, 'outside-link']) {
+      await expectError(run(root, gate, 'list_files', { path: p }), 'OUT_OF_ROOT');
+    }
+    assert.equal(gate.requests.length, 0);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 test('abort 後の新規実行は not-executed になり実行しない', async () => {
   const root = tmpRoot();
   try {
