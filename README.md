@@ -28,6 +28,18 @@ modkh
 
 AgenticReplay を導入している環境では、モデル API の通信が記録されます。記録を止めて起動するには `MODKH_AGENTICREPLAY=0 modkh` を使います。
 
+## 前鬼・後鬼による形式検証（任意）
+
+<img src="./enno-oduno.png" alt="役小角と前鬼・後鬼" width="150">
+
+前鬼（Stateright）は有限状態モデルの反例を探し、後鬼（Lean）は定理の証明を検査します。前鬼を使うには、Rust と Cargo を用意して次を実行します。
+
+```sh
+modkh stateright install
+modkh stateright status
+modkh
+```
+
 ## ガイド
 
 - [モデルの接続とログイン](docs/models.md) · [画像・PDFを使った依頼](docs/input.md)
