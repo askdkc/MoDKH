@@ -66,7 +66,7 @@ test('a real TUI switches from welcome to a split conversation and shows provide
       }
     };
     await wait('何を調べますか');
-    assert.match(output, /\x1b\[48;5;\d+;1;39m 何を調べますか/);
+    assert.match(output, /\x1b\[49;1;39m 何を調べますか/);
     assert.doesNotMatch(stripVTControlCharacters(output), /│ トークン使用量/);
     const welcomeWidth = widest();
     assert.ok(welcomeWidth <= 80, `welcome stays compact: ${welcomeWidth}`);

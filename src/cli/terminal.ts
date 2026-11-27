@@ -104,7 +104,7 @@ const LOGO = [
 const logoForWidth = (width: number): readonly string[] =>
   width >= Math.max(...LOGO.map(textWidth)) ? LOGO : ['MoDKH'];
 const ACCENT = '34'; // Use the terminal theme's blue; NO_COLOR is respected by paint().
-/** The composer sits on a painted panel, so the theme blue can sink into it (dark) or glare (light). */
+/** The footer sits on a painted panel, so the theme blue can sink into it (dark) or glare (light). */
 const PANEL_ACCENT: Record<'dark' | 'light', string> = { dark: '38;5;117', light: '38;5;25' };
 /** Every term must appear in any order, so "seek deep" finds deepseek. Pinned rows always survive. */
 function matching(choices: readonly Choice[], query: string): Choice[] {
@@ -1399,10 +1399,10 @@ export class TerminalUI implements ChatTerminal {
     }
     const attachments = composer && this.images.length ? `画像${this.images.length}枚 (Ctrl+Xで削除)` : '';
     const status = this.inputNotice && !this.pending?.secret ? this.inputNotice : `MoDKH  ·  ${this.model ?? '未接続 — /connect'}`;
-    if (attachments) lines.push({ text: `│ ${attachments}`, style: this.panelAccent });
+    if (attachments) lines.push({ text: `│ ${attachments}`, style: ACCENT });
     const modelStatus = `│ ${status}`;
     // A notice is transient feedback, so it is emphasized beyond the standing status line.
-    lines.push({ text: modelStatus, style: this.inputNotice && !this.pending?.secret ? `${this.panelAccent};1` : this.panelAccent });
+    lines.push({ text: modelStatus, style: this.inputNotice && !this.pending?.secret ? `${ACCENT};1` : ACCENT });
     const busyHint = (this.activityPlacement === 'hint' && this.activityLabel()) || 'Ctrl+C 中止（入力は応答完了後）';
     const hints = editingFollowup ? 'Enter 追加の依頼を送信  Ctrl+V 画像  Ctrl+C 中止'
       : !this.pending ? busyHint : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
@@ -1425,7 +1425,7 @@ export class TerminalUI implements ChatTerminal {
       const fitted = fitText(row.text, maxWidth);
       if (row.text.startsWith('│ ')) {
         const padded = fitted + ' '.repeat(Math.max(0, maxWidth - textWidth(fitted)));
-        return this.paint('│', this.panelAccent) + this.paint(padded.slice(1), `${this.panelStyle}${row.style ? `;${row.style}` : ''}`);
+        return this.paint('│', ACCENT) + this.paint(padded.slice(1), `49${row.style ? `;${row.style}` : ''}`);
       }
       return this.paint(fitted, row.style);
     };

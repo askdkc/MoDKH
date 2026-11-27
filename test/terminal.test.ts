@@ -122,6 +122,21 @@ test('the OSC background reply never lands in the input box', async () => {
   } finally { t.finish(); t.ui.close(); }
 });
 
+test('a draft keeps the terminal default background after either startup theme is detected', async () => {
+  for (const rgb of ['ffff/ffff/ffff', '0000/0000/0000']) {
+    const t = ttyTerminal();
+    try {
+      const line = t.ui.next();
+      t.input.write(`\x1b]11;rgb:${rgb}\x07`);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      t.input.write('draft');
+      assert.match(t.screen(), /\x1b\[49m draft/);
+      t.key('return');
+      assert.equal(await line, 'draft');
+    } finally { t.finish(); t.ui.close(); }
+  }
+});
+
 test('secret prompt masks pasted credentials and does not retain them on screen', async () => {
   const t = terminal();
   try {
@@ -183,9 +198,7 @@ test('accent uses blue and NO_COLOR disables its styling', () => {
     delete process.env.NO_COLOR;
     const colored = terminal();
     try {
-      // The composer is drawn on a panel background, so it uses the panel accent
-      // rather than the bare theme blue that disappears on dark panels.
-      assert.match(colored.screen(), /\x1b\[38;5;117m/);
+      assert.match(colored.screen(), /\x1b\[34m│/);
       assert.doesNotMatch(colored.screen(), /\x1b\[35m/);
     } finally { colored.ui.close(); }
     process.env.NO_COLOR = '1';
@@ -195,18 +208,18 @@ test('accent uses blue and NO_COLOR disables its styling', () => {
   } finally { if (previous === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = previous; }
 });
 
-test('the composer status line and its notices stay readable on the painted panel', () => {
+test('the composer status line and its notices stay readable on the terminal background', () => {
   const previous = process.env.NO_COLOR;
   delete process.env.NO_COLOR;
   const t = terminal();
   try {
     t.ui.write('▶ You: 作業\n', 'user');
-    assert.match(t.screen(), /\x1b\[48;5;235;38;5;117m MoDKH  ·  /, 'the status line is drawn on the panel with the panel accent');
+    assert.match(t.screen(), /\x1b\[49;34m MoDKH  ·  /, 'the status line is drawn with the terminal background and accent');
     const finish = t.ui.beginFollowups(() => null);
     t.key('a', '続き');
     t.key('return');
     assert.match(t.text(), /追加の依頼を受け付けました/);
-    assert.match(t.screen(), /48;5;235;38;5;117;1m/, 'a notice is emphasized over the standing status');
+    assert.match(t.screen(), /49;34;1m/, 'a notice is emphasized over the standing status');
     finish([]);
   } finally {
     t.ui.close();
