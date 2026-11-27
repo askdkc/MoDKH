@@ -23,6 +23,7 @@ const HELP = `modkh ${VERSION} — MoDKH (Mixture of DKH)
   modkh language status | install [--detected] | retry <id> | update
 
 対話中のコマンド:
+  /compact                                     保存済みの履歴をローカルで圧縮
   /connect                                     検索できるプロバイダー一覧
   /connect openai                              ChatGPT OAuth / APIキーを選択
   /connect chatgpt                             ブラウザで ChatGPT 認証

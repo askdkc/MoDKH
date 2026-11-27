@@ -11,7 +11,7 @@ import {
   type ToolSet,
 } from 'ai';
 import { parsePdfs } from '../agent/documents.ts';
-import { toolContext } from './context.ts';
+import { isContextLimitError, toolContext } from './context.ts';
 import { harnessProfile, CODEX_62_DEFAULTS } from './harness-profile.ts';
 import { reasoningProviderOptions } from './reasoning.ts';
 import { parseImage, parseImages } from '../agent/images.ts';
@@ -215,7 +215,7 @@ export class AiSdkModel implements Model {
           }
           if (part.finishReason === 'stop' || part.finishReason === 'tool-calls' || part.finishReason === 'length') {
             finishReason = part.finishReason;
-          } else {
+          } else if (!isContextLimitError(errorMessage)) {
             errorMessage = `モデル応答は未完了: ${part.finishReason}`;
           }
         } else if (part.type === 'error') {
@@ -269,8 +269,8 @@ export class AiSdkModel implements Model {
         + (report ? '\n' + report : '') };
     } else if (errorMessage !== undefined || finishReason === undefined ||
       (finishReason !== 'length' && (finishReason === 'tool-calls') !== sawToolCall)) {
-      yield { type: 'finish', stopReason: 'error', errorMessage: replaysPrivate ? 'モデルの継続応答が未完了です (詳細非表示)'
-        : errorMessage ?? 'モデル終了イベントがない、またはツール要求と終了理由が不整合' };
+      if (replaysPrivate) errorMessage = isContextLimitError(errorMessage) ? 'context_length_exceeded' : 'モデルの継続応答が未完了です (詳細非表示)';
+      yield { type: 'finish', stopReason: 'error', errorMessage: errorMessage ?? 'モデル終了イベントがない、またはツール要求と終了理由が不整合' };
     } else {
       if (finishReason !== 'length' && privateReasoning.length) {
         yield { type: 'continuation', value: { kind: 'chat-reasoning', text: privateReasoning.join('') } };

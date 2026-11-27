@@ -182,7 +182,8 @@ export class Session {
       else if (ev.type === 'compaction') {
         // 妥当な index だけを受け入れる。壊れた記録は無視して全文送信へ戻す(安全側)。
         if (Number.isSafeInteger(ev.from) && ev.from > (session.compaction?.from ?? 0)
-            && ev.from < session.messages.length && typeof ev.summary === 'string' && ev.summary.trim()) {
+            && (ev.from < session.messages.length || (ev.keptTurns === 0 && ev.from === session.messages.length))
+            && typeof ev.summary === 'string' && ev.summary.trim()) {
           session.compaction = { summary: ev.summary.slice(0, MAX_SUMMARY_CHARS), from: ev.from };
         }
       } else if (ev.type === 'status') {

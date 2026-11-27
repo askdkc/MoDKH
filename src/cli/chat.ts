@@ -48,7 +48,8 @@ import { DEFAULT_POLICY, describePolicy, parsePermissionPolicy, POLICY_LEVELS } 
 import { DEFAULT_MAX_TURNS, MAX_TURNS_CEILING, parseMaxTurns } from './limits.ts';
 import { parseCompactionSettings } from './compaction-settings.ts';
 import { positiveTokenCount, readContextWindow } from '../model/context-window.ts';
-import { estimateRequestBytes, planCompaction, projectCompacted, summarizeCompaction } from '../agent/compaction.ts';
+import { isContextLimitError } from '../model/context.ts';
+import { compactLocally, estimateRequestBytes, planCompaction, projectCompacted, summarizeCompaction } from '../agent/compaction.ts';
 import { loadConfig, updateConfig, parseTimeoutMs, type LiteConfig } from './config.ts';
 import { loadResumedSession, selectInitialConnection } from './initial-connection.ts';
 import { keysPath, loadSavedKeys, saveKey, removeKey, savedKeyProviders, resolveApiKey, canonicalKeyProvider } from './keys.ts';
@@ -173,7 +174,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   if (args['resume']) {
     session = loadResumedSession(store, args['resume'], cwd);
     ui.write(`セッション ${session.id} を再開します(${session.messages.length}メッセージ)\n`);
-    if (session.lastError) ui.write(`前回のエラー: ${session.lastError}\n`);
+    if (session.lastError) ui.write(`${session.status === 'interrupted' ? '前回の中断理由' : '前回のエラー'}: ${session.lastError}\n`);
     const unfinished = session.delegations().filter(r => !r.result || r.result.status === 'unknown');
     if (unfinished.length) ui.write(`注意: 子の保存結果が不明な実行が${unfinished.length}件あります。自動では再実行しません。/head から list_subagent_runs / subagent_output で確認できます。\n`);
     const unknown = session.unknownToolResults();
@@ -395,6 +396,20 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   let contextWindow: number | undefined;
   let nextMetadataRead = 0;
   let failedCompaction: { model: Model; from: number; eligibleBytes: number } | undefined;
+  const saveLocalCompaction = () => {
+    const next = compactLocally(session.messages, session.compaction);
+    if (!next) return false;
+    session.persistFrom(0);
+    session.recordCompaction(next, 0);
+    lastInputTokens = undefined;
+    failedCompaction = undefined;
+    return true;
+  };
+  if (args.resume && configuredAutoBytes !== 0 && modelId && !/^(fixed|hermes)\//.test(modelId)
+    && session.status === 'error' && isContextLimitError(session.lastError)) {
+    if (saveLocalCompaction()) ui.write('(前回の入力上限エラーを受け、保存済みの履歴を圧縮しました。次の依頼を入力してください)\n');
+    else if (session.compaction?.from === session.messages.length) ui.write('(履歴は圧縮済みです。次の依頼を入力してください)\n');
+  }
   const workspaceCheckConfig = parseWorkspaceVerification(config.workspaceVerification);
   if (config.workspaceVerification !== undefined && !workspaceCheckConfig) ui.write('(workspaceVerification の設定が不正です。固定検証は実行しません)\n');
   const runTurn = async (input: string, activeModel: Model | null, direct?: DelegationRequest, images: ImageAttachment[] = [], documentText?: string, pdfs: PdfAttachment[] = []): Promise<void> => {
@@ -530,10 +545,15 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         if (guidance.selected.length) ui.write(`(参考手順: ${guidance.selected.join(', ')} / ${guidance.bytes} bytes)\n`);
         for (const warning of guidance.warnings) ui.write(`(スキル: ${warning})\n`);
       }
-      // Later tool results can trigger compaction, but the current turn and its follow-ups stay intact.
-      const plan = continueInChat && activeModel && configuredAutoBytes !== 0 && !/^(fixed|hermes)\//.test(activeModel.id)
-        ? planCompaction(session.messages, keepTurns, session.compaction) : null;
+      // Freeze the prefix for model summaries. The local checkpoint can close a longer tool turn.
+      const canAutoCompact = continueInChat && activeModel && configuredAutoBytes !== 0 && !/^(fixed|hermes)\//.test(activeModel.id);
+      const plan = canAutoCompact ? planCompaction(session.messages, keepTurns, session.compaction) : null;
       let attemptedCompaction = false;
+      const compactToolTurn = () => {
+        if (usedTools && session.messages.at(-1)?.role === 'tool' && !ac.signal.aborted && saveLocalCompaction()) {
+          return { outcome: 'interrupted' as const, errorMessage: '入力上限に備えてツール履歴を圧縮しました。次の依頼を入力してください' };
+        }
+      };
       const headChecks = continueInChat ? headCheckCompletion({
         config: lisp, input, session, registry, root: cwd, signal: ac.signal,
         approval, onToolCall: hooks.onToolCall, onToolResult: hooks.onToolResult,
@@ -553,8 +573,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         hooks,
         checkpoint,
         ...(session.compaction ? { compaction: session.compaction } : {}),
-        ...(plan && activeModel ? { autoCompact: async (outgoing) => {
-          if (attemptedCompaction) return;
+        ...(canAutoCompact ? { autoCompact: async (outgoing) => {
+          if ((!plan || attemptedCompaction) && !usedTools) return;
           if (configuredAutoBytes === undefined) {
             if (lastInputTokens === undefined) return;
             contextWindow ??= positiveTokenCount(config.modelContextWindows?.[activeModel.id]);
@@ -568,11 +588,12 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           }
           const before = estimateRequestBytes(outgoing);
           if (configuredAutoBytes !== undefined && before < configuredAutoBytes) return;
+          if (!plan || attemptedCompaction) return compactToolTurn();
           attemptedCompaction = true;
           const eligibleBytes = estimateRequestBytes(plan.messages);
           const previousFailure = failedCompaction?.model === activeModel
             && failedCompaction.from === (session.compaction?.from ?? 0) ? failedCompaction.eligibleBytes : 0;
-          if (eligibleBytes - previousFailure < (configuredAutoBytes ?? before) / 8) return;
+          if (eligibleBytes - previousFailure < (configuredAutoBytes ?? before) / 8) return compactToolTurn();
           failedCompaction = { model: activeModel, from: session.compaction?.from ?? 0, eligibleBytes };
           ui.setActivity?.('会話履歴を自動圧縮中… Ctrl+Cで中止');
           const signal = AbortSignal.any([ac.signal, AbortSignal.timeout(60_000)]);
@@ -580,11 +601,15 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           if (result.usage) onUsage(result.usage);
           if (ac.signal.aborted) return;
           if (signal.aborted || !result.ok || !result.summary) {
+            const stopped = compactToolTurn();
+            if (stopped) return stopped;
             ui.write('(会話履歴の自動圧縮に失敗しました。圧縮前の履歴で続けます)\n');
             return;
           }
           const next = { summary: result.summary, from: plan.from };
           if (estimateRequestBytes(projectCompacted(session.messages, next)) >= before) {
+            const stopped = compactToolTurn();
+            if (stopped) return stopped;
             ui.write('(会話履歴が短くならないため、自動圧縮を見送りました)\n');
             return;
           }
@@ -634,12 +659,15 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           else if (result === 'unknown') ui.write('(メモリ保存の結果が確認できません — 再送せず確認してください)\n');
         }
       } else if (outcome.outcome === 'interrupted') {
-        ui.write('\n\n(中断しました。セッションを保存済み。--resume で再開できます)\n');
+        ui.write(`\n\n(${outcome.errorMessage ?? '中断しました。セッションを保存済み。--resume で再開できます'})\n`);
       } else if (outcome.outcome === 'turn-limit') {
         // Not a dead end: the transcript is intact, so another message continues the work.
         ui.write(`\n\n(打ち切り: ${outcome.errorMessage}。続きは同じセッションで指示してください。上限は config.json の maxTurns で変更できます)\n`);
       } else {
         ui.write(`\n\n(エラー: ${outcome.errorMessage})\n`);
+        if (canAutoCompact && isContextLimitError(outcome.errorMessage) && saveLocalCompaction()) {
+          ui.write('(入力上限を超えた履歴を圧縮しました。次の依頼を入力してください)\n');
+        }
       }
 
     } finally {
@@ -826,6 +854,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ui.write(`\n${usageBreakdown(usageTotals)}\n\n`);
         continue;
       }
+      if (line === '/compact') {
+        ui.write(saveLocalCompaction() ? '会話履歴を圧縮しました。原文はセッションに保存されています。\n' : '短くできる履歴はありません。\n');
+        continue;
+      }
       if (line === '/tools' || line.startsWith('/tools ')) {
         ui.write(toolDisplay.details(line.slice('/tools'.length).trim()));
         continue;
@@ -881,6 +913,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ui.write('ローカルファイルを添付: @パス（↑↓ で候補を選択し、Tab で補完）\n');
         ui.write(`PDFの本文とページ画像を送信: ${pdfUsage}\n`);
         ui.write('/tools: ツール履歴  /tools <番号>: 引数と結果の全文\n');
+        ui.write('/compact: 保存済みの会話履歴をローカルで圧縮\n');
         ui.write(`\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /usage: トークン使用量  /allow: 承認ポリシー  /agents: 子の一覧・同時実行数  /agents limit <数>: 子の上限変更  /agents run [ID]: 子に依頼  /cyber: ローカル検査  /pstack on|off [--save]: pstack手順の常時注入  /exit: 終了\n`
           + 'macOS: 会話のテキストをドラッグして選択するとコピーします。画面の上端・下端までドラッグしたままにすると履歴を送り、複数ページをまとめて選べます。\n'
           + '/reasoning off|minimal|low|medium|high|max [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信（実行中の追加依頼にも画像を添付できます） / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');

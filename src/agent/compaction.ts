@@ -105,6 +105,48 @@ function clip(text: string, allowed: number): string {
   return utf8Prefix(text, Math.ceil(budget / 2)) + note + utf8Suffix(text, Math.floor(budget / 2));
 }
 
+/** A bounded local record for a closed exchange. No model request or tool is needed to make it. */
+export function compactLocally(messages: AgentMessage[], previous?: CompactionState): CompactionState | undefined {
+  const start = previous?.from ?? 0;
+  if (start >= messages.length) return;
+  const files = new Set<string>();
+  const counts = new Map<string, number>();
+  const fileTools = new Set(['list_files', 'search_files', 'read_file', 'view_image', 'create_file', 'edit_file']);
+  let earlierDialogue: string[] = [];
+  let turn: string[] = [];
+  for (const message of messages.slice(start)) {
+    if (message.role === 'user') {
+      earlierDialogue = [...earlierDialogue, ...turn].slice(-4);
+      turn = ['利用者: ' + clip(message.content.trim(), 600)];
+    } else if (message.role === 'tool') {
+      for (const result of message.results) {
+        // A command may exit zero after printing an application error. Keep the severity,
+        // without copying shell arguments or arbitrary output into a future instruction.
+        const severity = result.name === 'run_command' && /\[(critical|fatal|error)\]/i.exec(result.output)?.[1];
+        const key = result.name + ' (' + result.status + (severity ? ', 出力に[' + severity.toUpperCase() + ']' : '') + ')';
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    } else {
+      for (const call of message.toolCalls ?? []) {
+        if (!fileTools.has(call.name)) turn = [];
+        else if (typeof call.args.path === 'string') files.add(clip(JSON.stringify(call.args.path), 240));
+      }
+      if (turn.length && !message.toolCalls?.length && message.content.trim()) turn[1] = '応答: ' + clip(message.content.trim(), 600);
+    }
+  }
+  const summary = [
+    previous && clip(previous.summary, 1800),
+    '履歴の区間: ' + (start + 1) + '〜' + messages.length + '件目。原文はセッションに保存されています。',
+    [...earlierDialogue, ...turn].slice(-4).join('\n'),
+    files.size && 'ファイル参照: ' + [...files].slice(-8).join(', '),
+    counts.size && 'ツールの終了状態（依頼全体の成否は未判定）: '
+      + clip([...counts].map(([key, count]) => key + ' ×' + count).join(', '), 1200),
+  ].filter(Boolean).join('\n');
+  const next = { from: messages.length, summary };
+  const before = previous ? projectCompacted(messages, previous) : messages;
+  return estimateRequestBytes(projectCompacted(messages, next)) < estimateRequestBytes(before) ? next : undefined;
+}
+
 /** 要約の材料になる会話テキスト。順序と発話者を保ち、推論は含めない。 */
 export function renderTranscript(messages: AgentMessage[]): string {
   const parts: string[] = [];

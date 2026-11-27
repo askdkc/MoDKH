@@ -86,7 +86,7 @@ export interface AgentLoopOptions {
    */
   compaction?: CompactionState;
   /** Inspect the current projection between complete model/tool exchanges. */
-  autoCompact?(outgoing: AgentMessage[]): Promise<CompactionState | undefined>;
+  autoCompact?(outgoing: AgentMessage[]): Promise<CompactionState | { outcome: 'interrupted'; errorMessage: string } | undefined>;
 }
 
 interface OutputLimitRecovery {
@@ -238,7 +238,9 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     const scope = recoveryScope;
     recoveryScope = undefined;
     try {
-      if (opts.autoCompact) compaction = await opts.autoCompact(outgoing()) ?? compaction;
+      const next = await opts.autoCompact?.(outgoing());
+      if (next && 'outcome' in next) return next;
+      compaction = next ?? compaction;
       if (opts.signal.aborted) return { outcome: 'interrupted' };
       opts.hooks?.onModelRequest?.();
       const projected = requestMessages();

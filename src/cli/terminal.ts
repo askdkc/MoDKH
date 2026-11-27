@@ -77,6 +77,7 @@ export const COMMANDS: readonly Choice[] = [
   { value: '/cyber', label: '/cyber', detail: '作業ディレクトリのセキュリティ検査' },
   { value: '/pstack', label: '/pstack', detail: 'pstack手順の常時注入 (on/off/--save)' },
   { value: '/usage', label: '/usage', detail: 'トークン使用量の内訳' },
+  { value: '/compact', label: '/compact', detail: '会話履歴をローカルで圧縮' },
   { value: '/pdf', label: '/pdf', detail: 'PDFの本文と画像を送る · /pdf パス | 依頼文' },
   { value: '/tools', label: '/tools', detail: 'ツール履歴 · /tools <番号> で全文' },
   { value: '/allow', label: '/allow', detail: '承認ポリシー (all / workspace / none)' },
