@@ -1,3 +1,4 @@
+import { isConnectionLoss } from './reconnect.ts';
 import {
   APICallError,
   streamText,
@@ -143,6 +144,7 @@ export class AiSdkModel implements Model {
     let activity: 'reasoning' | 'tool-input' | undefined;
     let usage: TokenUsage | undefined;
     let errorMessage: string | undefined;
+    let connectionLost = false;
     let rejectedToolHistory = false;
     let rejectedImageInput = false;
     let responseStarted = false;
@@ -171,7 +173,7 @@ export class AiSdkModel implements Model {
         abortSignal: requestSignal,
         // fullStream below owns errors; the SDK default logs entire request bodies to stderr.
         onError: () => {},
-        maxRetries: 0, // A transport failure does not establish that the request was unsent.
+        maxRetries: 0, // The agent loop owns reconnects and discards partial tool calls.
         // providerOptions の実値はすべて JSON オブジェクト。SDK型は index signature が緩いため型の詰め替え。
         ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
         ...(thinking ? { maxOutputTokens: (thinkingBudget ?? 0) + 8192 } : {}),
@@ -219,6 +221,7 @@ export class AiSdkModel implements Model {
             errorMessage = `モデル応答は未完了: ${part.finishReason}`;
           }
         } else if (part.type === 'error') {
+          connectionLost ||= isConnectionLoss(part.error);
           rejectedImageInput = rejectsImageInput(part.error);
           rejectedToolHistory = APICallError.isInstance(part.error) && part.error.statusCode === 500
             && part.error.message === 'no user query found in messages';
@@ -229,6 +232,7 @@ export class AiSdkModel implements Model {
     } catch (e) {
       aborted = signal.aborted;
       if (!aborted) {
+        connectionLost ||= isConnectionLoss(e);
         rejectedImageInput = rejectsImageInput(e);
         errorMessage = (e as Error).message;
       }
@@ -270,7 +274,7 @@ export class AiSdkModel implements Model {
     } else if (errorMessage !== undefined || finishReason === undefined ||
       (finishReason !== 'length' && (finishReason === 'tool-calls') !== sawToolCall)) {
       if (replaysPrivate) errorMessage = isContextLimitError(errorMessage) ? 'context_length_exceeded' : 'モデルの継続応答が未完了です (詳細非表示)';
-      yield { type: 'finish', stopReason: 'error', errorMessage: errorMessage ?? 'モデル終了イベントがない、またはツール要求と終了理由が不整合' };
+      yield { type: 'finish', stopReason: 'error', ...(connectionLost && !timedOut ? { connectionLost: true } : {}), errorMessage: errorMessage ?? 'モデル終了イベントがない、またはツール要求と終了理由が不整合' };
     } else {
       if (finishReason !== 'length' && privateReasoning.length) {
         yield { type: 'continuation', value: { kind: 'chat-reasoning', text: privateReasoning.join('') } };

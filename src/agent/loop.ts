@@ -1,3 +1,4 @@
+import { streamWithReconnect } from '../model/reconnect.ts';
 import { projectToolImages, utf8Prefix, utf8Suffix } from '../model/context.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { modelInstructions } from '../model/harness-profile.ts';
@@ -16,6 +17,7 @@ export interface LoopHooks {
   onSkillContext?(context: SkillContext): void;
   /** Input passed to the adapter, not proof of provider receipt or memory application. */
   onModelRequest?(): void;
+  onReconnect?(delayMs: number): void;
   onModelActivity?(stage: Extract<ModelEvent, { type: 'activity' }>['stage'], toolName?: string): void;
   /** Provider-reported reasoning text, for display only; it never enters the transcript messages. */
   onReasoning?(delta: string): void;
@@ -247,11 +249,10 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
       if (next && 'outcome' in next) return next;
       compaction = next ?? compaction;
       if (opts.signal.aborted) return { outcome: 'interrupted' };
-      opts.hooks?.onModelRequest?.();
       const projected = requestMessages();
       const canRecoverHistory = !recoveredReceipts && !scope && task && opts.model.id.startsWith('ollama/')
         && recoveryTools.size > 0 && projected.at(-1)?.role === 'tool';
-      for await (const ev of opts.model.stream({
+      for await (const ev of streamWithReconnect(opts.model, {
         continueAfterImageRejection: true,
         messages: recoveredReceipts ? projectToolRecovery(projected, messages.slice(taskStart)
           .flatMap(m => m.role === 'user' ? [m.content] : [])) : projected,
@@ -264,7 +265,13 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
         tools: recoveredReceipts ? toolSpecs.filter(tool => recoveryTools.has(tool.name)) : scope ? toolSpecs.filter(tool => tool.name === scope.tool) : toolSpecs,
         system: scope?.system ?? system,
         ...(opts.reasoning ? { reasoning: opts.reasoning } : {}),
-      }, opts.signal)) {
+      }, opts.signal, delayMs => {
+        text = '';
+        receivedReasoning = false;
+        continuation = undefined;
+        calls.length = 0;
+        opts.hooks?.onReconnect?.(delayMs);
+      }, () => opts.hooks?.onModelRequest?.())) {
         if (opts.signal.aborted) break;
         if (ev.type === 'usage') {
           opts.hooks?.onUsage?.(ev);

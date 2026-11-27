@@ -1,3 +1,4 @@
+import { isConnectionLoss } from '../reconnect.ts';
 import type { AgentMessage, Model, ModelEvent, ModelRequest, TokenUsage } from '../../agent/types.ts';
 
 import { parsePdfs } from '../../agent/documents.ts';
@@ -122,6 +123,7 @@ export class ResponsesApiModel implements Model {
     const replaysPrivate = req.messages.some(m => req.continuation?.(m)?.kind === 'responses');
     let aborted = false;
     let errorMessage: string | undefined;
+    let connectionLost = false;
     let sawFunctionCall = false;
     let usage: TokenUsage | undefined;
     let completed = false;
@@ -228,13 +230,16 @@ export class ResponsesApiModel implements Model {
       aborted = signal.aborted;
     } catch (e) {
       aborted = signal.aborted;
-      if (!aborted) errorMessage = (e as Error).message;
+      if (!aborted) {
+        connectionLost = isConnectionLoss(e);
+        errorMessage = (e as Error).message;
+      }
     }
     if (usage && (usage.input !== undefined || usage.output !== undefined)) yield { type: 'usage', ...usage };
     if (aborted) {
       yield { type: 'finish', stopReason: 'aborted' };
     } else if (errorMessage !== undefined || !completed) {
-      yield { type: 'finish', stopReason: 'error', errorMessage: replaysPrivate ? 'Responses API の継続応答が未完了です (詳細非表示)'
+      yield { type: 'finish', stopReason: 'error', ...(connectionLost || (!completed && !errorMessage) ? { connectionLost: true } : {}), errorMessage: replaysPrivate ? 'Responses API の継続応答が未完了です (詳細非表示)'
         : errorMessage ?? 'Responses API の完了イベントがない' };
     } else {
       const items = req.continuation ? replayableOutput(output ?? streamed, calls, sawText) : undefined;

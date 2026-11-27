@@ -164,3 +164,27 @@ for (const { name, message, status, attachment, recover } of [
     assert.ok(events.some(e => e.type === 'finish' && e.errorMessage === message));
   }
 });
+
+for (const provider of ['chatgpt', 'compatible']) {
+  for (const stage of ['connect', 'stream', 'unauthorized']) {
+    test(`${provider} classifies VPN loss at ${stage}`, async t => {
+      const reset = new TypeError('fetch failed', { cause: Object.assign(new Error('reset'), { code: 'ECONNRESET' }) });
+      const fetchImpl: typeof fetch = async () => {
+        if (stage === 'connect') throw reset;
+        if (stage === 'unauthorized') return new Response('unauthorized', { status: 401 });
+        return new Response(new ReadableStream({ pull() { throw reset; } }), {
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      };
+      t.mock.method(globalThis, 'fetch', fetchImpl);
+      const model = provider === 'chatgpt' ? new ResponsesApiModel({ accessToken: 'test', model: 'test', fetchImpl })
+        : resolveModel({ provider, model: 'test', baseUrl: 'http://localhost/v1' });
+      const events = [];
+      for await (const event of model.stream({ messages: [{ role: 'user', content: 'hello' }], tools: [] },
+        new AbortController().signal)) events.push(event);
+      const finish = events.at(-1);
+      assert.ok(finish?.type === 'finish' && finish.stopReason === 'error');
+      assert.equal(!!finish.connectionLost, stage !== 'unauthorized', JSON.stringify(finish));
+    });
+  }
+}

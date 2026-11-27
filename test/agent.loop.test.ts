@@ -498,3 +498,34 @@ test('mixed Ollama history reuses command and GET receipts and runs the outstand
   assert.equal(confirmed.length, 1);
   assert.deepEqual(messages.flatMap(m => m.role === 'tool' ? m.results.filter(r => ['c2','f2'].includes(r.callId)).map(r => r.output) : []), ['c1','f1']);
 });
+
+test('VPN reconnect retries only the interrupted step and discards partial tool calls', async () => {
+  const model = new FixedModel([
+    [{ type: 'tool-call', call: { id: 'first', name: 'list_files', args: {} } }, { type: 'finish', stopReason: 'tool-calls' }],
+    [...delta('partial'), { type: 'tool-call', call: { id: 'discard', name: 'list_files', args: {} } },
+      { type: 'finish', stopReason: 'error', connectionLost: true }],
+    [...delta('recovered'), { type: 'finish', stopReason: 'stop' }],
+  ]);
+  const messages: AgentMessage[] = [{ role: 'user', content: 'list files' }];
+  const started: string[] = [];
+  const result = await runAgentLoop(messages, {
+    model, registry: new ToolRegistry(defaultTools()), root: process.cwd(), skills: false, maxTurns: 2,
+    signal: new AbortController().signal, approval: new RecordingGate([true]),
+    hooks: { onToolStart: call => started.push(call.id) },
+  });
+  assert.equal(result.outcome, 'complete');
+  assert.deepEqual(started, ['first']);
+  assert.deepEqual(model.requests[1].messages, model.requests[2].messages);
+  assert.deepEqual(messages.at(-1), { role: 'assistant', content: 'recovered' });
+});
+
+test('cancelling during VPN reconnect stops before another request', async () => {
+  const model = new FixedModel([[{ type: 'finish', stopReason: 'error', connectionLost: true }]]);
+  const controller = new AbortController();
+  const result = await runAgentLoop([{ role: 'user', content: 'hello' }], {
+    model, registry: new ToolRegistry([]), root: process.cwd(), skills: false,
+    signal: controller.signal, approval: new RecordingGate([]), hooks: { onReconnect: () => controller.abort() },
+  });
+  assert.equal(result.outcome, 'interrupted');
+  assert.equal(model.requests.length, 1);
+});

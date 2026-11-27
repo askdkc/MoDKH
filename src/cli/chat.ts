@@ -536,6 +536,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       let usedTools = false;
       const hooks = {
         onSubagentWait: () => ui.setActivity?.('独立作業を終え、子の完了を待機中… Ctrl+Cで中止'),
+        onReconnect: (delayMs: number) => {
+          ui.setReasoning?.(null);
+          ui.write(`\n(通信が途切れました。${delayMs / 1000}秒後にこの応答を再取得します。Ctrl+Cで中止)\n`);
+          ui.setActivity?.('モデルへの再接続を待機中… Ctrl+Cで中止');
+        },
         onModelRequest: () => {
           lastInputTokens = undefined;
           ui.setActivity?.(`モデル応答を待機中（${++requests}回目）… Ctrl+Cで中止`);

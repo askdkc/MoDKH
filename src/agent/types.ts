@@ -114,6 +114,7 @@ export type ModelEvent =
       type: 'finish';
       stopReason: 'stop' | 'tool-calls' | 'aborted' | 'error' | 'length';
       errorMessage?: string;
+      connectionLost?: true;
       rejectedToolHistory?: true;
     };
 
