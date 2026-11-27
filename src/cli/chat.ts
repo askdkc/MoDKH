@@ -485,6 +485,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           onUsage(reported);
         },
         onModelActivity: (stage: Extract<ModelEvent, { type: 'activity' }>['stage'], toolName?: string) => {
+          if (stage === 'tool-images-unavailable') {
+            ui.write('\n(このモデルは画像入力に対応していません。画像は未確認のまま、テキストの結果を使って作業を続けます。)\n');
+            ui.setActivity?.('テキストで作業を続行中… Ctrl+Cで中止');
+            return;
+          }
           const name = toolName && /^[a-zA-Z0-9_-]{1,64}$/.test(toolName) ? ` · ${toolName}` : '';
           const label = stage === 'accepted' ? 'サーバーが要求を受理、応答を待機中'
             : stage === 'reasoning' ? 'モデルが推論中' : `ツール要求を受信中${name}`;

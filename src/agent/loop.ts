@@ -245,6 +245,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
       const canRecoverHistory = !recoveredReceipts && !scope && task && opts.model.id.startsWith('ollama/')
         && recoveryTools.size > 0 && projected.at(-1)?.role === 'tool';
       for await (const ev of opts.model.stream({
+        continueAfterImageRejection: true,
         messages: recoveredReceipts ? projectToolRecovery(projected, messages.slice(taskStart)
           .flatMap(m => m.role === 'user' ? [m.content] : [])) : projected,
         ...(canRecoverHistory ? { recoverToolHistory: true } : {}),

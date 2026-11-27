@@ -134,7 +134,7 @@ browse status --json
 
 MoDKHの専用 `browse` ツールで開いたタブとポップアップは、応答の完了・エラー・中断時に自動で閉じます。既存のタブは閉じません。終了を確認できなかった場合は対象のグループ名を表示し、セッション終了時にも再確認します。
 
-`screenshot` の画像は `.modkh/browse/<tab>.png` に保存し、そのままモデルへ渡します。保存先は `.gitignore` の `.modkh/` 配下です。
+`screenshot` の画像は `.modkh/browse/<tab>.png` に保存し、そのままモデルへ渡します。保存先は `.gitignore` の `.modkh/` 配下です。接続先が画像入力に対応していない場合は、画像が未確認であることを表示し、テキストや他のツールを使って作業を続けます。`view_image` で開いた画像も同じ扱いです。
 
 `run_command` から直接 `browse` CLIを使う場合は自動終了の対象外です。開いたタブのIDを控え、作業後に `browse tabs close --tab <id>` で閉じてください。操作方法は `browse --help` で確認できます。
 

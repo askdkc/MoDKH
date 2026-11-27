@@ -31,7 +31,14 @@ export interface AiSdkModelOptions {
   replayChatReasoning?: boolean;
 }
 
-function toCoreMessages(req: ModelRequest, replayChatReasoning: boolean, rejectedImages: WeakSet<object>): ModelMessage[] {
+/** A capability rejection is safe to recover from. A bad image, an oversized request or a transport error is not. */
+function rejectsImageInput(error: unknown): boolean {
+  if (!APICallError.isInstance(error) || (error.statusCode !== 400 && error.statusCode !== 422)) return false;
+  return /\b(?:does not|doesn't|cannot|can't) (?:support|accept|read|process) (?:images?|image inputs?|multimodal (?:requests?|inputs?))(?: yet)?\s*(?:[.,;:!]|$)/i.test(error.message)
+    || /\b(?:images|image input|multimodal (?:requests|input)) (?:is|are) (?:not supported|unsupported)(?: (?:by|for) this model)?\s*(?:[.,;:!]|$)/i.test(error.message);
+}
+
+function toCoreMessages(req: ModelRequest, replayChatReasoning: boolean, omitToolImages: boolean): ModelMessage[] {
   const out: ModelMessage[] = [];
   // Chat Completions accepts images in user content. Keep each tool batch contiguous
   // and attach its observations only after all matching tool receipts.
@@ -71,9 +78,10 @@ function toCoreMessages(req: ModelRequest, replayChatReasoning: boolean, rejecte
       out.push({ role: 'tool', content: parts });
       for (const result of m.results) {
         if (!result.image) continue;
-        if (rejectedImages.has(result.image)) {
+        if (omitToolImages) {
           observations.push({ role: 'user', content: 'The image from tool call ' + JSON.stringify(result.callId)
-            + ' was not inspected because this endpoint rejected image input.' });
+            + ' was not inspected because this model rejected image input. Use the recorded text results and perform only outstanding work. '
+            + 'Report the saved path and leave visual details unverified.' });
           continue;
         }
         const image = parseImage(result.image);
@@ -107,7 +115,7 @@ function toAiSdkTools(specs: ToolSpec[]): ToolSet {
  */
 export class AiSdkModel implements Model {
   readonly id: string;
-  private readonly rejectedImages = new WeakSet<object>();
+  private toolImagesUnsupported = false;
   private readonly lm: LanguageModel;
   private readonly timeoutMs: number;
   private readonly provider?: string;
@@ -137,6 +145,8 @@ export class AiSdkModel implements Model {
     let errorMessage: string | undefined;
     let rejectedToolHistory = false;
     let rejectedImageInput = false;
+    let responseStarted = false;
+    const omitToolImages = this.toolImagesUnsupported;
     let sawToolCall = false;
     const privateReasoning: string[] = [];
     let finishReason: 'stop' | 'tool-calls' | 'length' | undefined;
@@ -155,9 +165,9 @@ export class AiSdkModel implements Model {
     try {
       const result = streamText({
         model: this.lm,
-        messages: toCoreMessages(req, this.replayChatReasoning, this.rejectedImages),
+        messages: toCoreMessages(req, this.replayChatReasoning, omitToolImages),
         system: req.system,
-        tools: toAiSdkTools(req.tools),
+        tools: toAiSdkTools(omitToolImages ? req.tools.filter(t => t.name !== 'view_image') : req.tools),
         abortSignal: requestSignal,
         // fullStream below owns errors; the SDK default logs entire request bodies to stderr.
         onError: () => {},
@@ -168,7 +178,9 @@ export class AiSdkModel implements Model {
       });
       for await (const part of result.fullStream) {
         arm(); // 受信が継続している間は制限時間を延ばす
-        if (part.type === 'reasoning-start' || part.type === 'reasoning-delta') {
+        if (part.type === 'start-step') {
+          responseStarted = true;
+        } else if (part.type === 'reasoning-start' || part.type === 'reasoning-delta') {
           if (activity !== 'reasoning') { activity = 'reasoning'; yield { type: 'activity', stage: activity }; }
           if (part.type === 'reasoning-delta' && part.text.length > 0) {
             if (req.continuation && this.replayChatReasoning) privateReasoning.push(part.text);
@@ -207,8 +219,7 @@ export class AiSdkModel implements Model {
             errorMessage = `モデル応答は未完了: ${part.finishReason}`;
           }
         } else if (part.type === 'error') {
-          rejectedImageInput = APICallError.isInstance(part.error) && part.error.statusCode === 400
-            && part.error.message === 'Multimodal data provided, but model does not support multimodal requests.';
+          rejectedImageInput = rejectsImageInput(part.error);
           rejectedToolHistory = APICallError.isInstance(part.error) && part.error.statusCode === 500
             && part.error.message === 'no user query found in messages';
           errorMessage = (part.error as Error)?.message ?? String(part.error);
@@ -217,19 +228,24 @@ export class AiSdkModel implements Model {
       aborted = signal.aborted;
     } catch (e) {
       aborted = signal.aborted;
-      if (!aborted) errorMessage = (e as Error).message;
+      if (!aborted) {
+        rejectedImageInput = rejectsImageInput(e);
+        errorMessage = (e as Error).message;
+      }
     } finally { clearTimeout(timer); }
     if (timedOut && !signal.aborted) errorMessage = `モデル応答が制限時間（${this.timeoutMs}ms）を超えるまで何も受信しませんでした。自動再送はしません。`;
     if (usage && (usage.input !== undefined || usage.output !== undefined)) yield { type: 'usage', ...usage };
     if (aborted) {
       yield { type: 'finish', stopReason: 'aborted' };
-    } else if (rejectedImageInput && !timedOut && !sawToolCall
+    } else if (rejectedImageInput && !timedOut && !responseStarted && !omitToolImages
       && !req.messages.some(m => m.role === 'user' && (m.images?.length || m.pdfs?.length))
-      && req.messages.some(m => m.role === 'tool' && m.results.some(r => r.image && !this.rejectedImages.has(r.image)))) {
-      for (const message of req.messages) {
-        if (message.role === 'tool') for (const result of message.results) {
-          if (result.image) this.rejectedImages.add(result.image);
-        }
+      && req.messages.some(m => m.role === 'tool' && m.results.some(r => r.image))) {
+      this.toolImagesUnsupported = true;
+      if (req.continueAfterImageRejection) {
+        yield { type: 'activity', stage: 'tool-images-unavailable' };
+        if (signal.aborted) yield { type: 'finish', stopReason: 'aborted' };
+        else yield* this.stream(req, signal);
+        return;
       }
       const report = yield* this.reportRejectedTurn(req, signal, 'Answer the original request using the text results already obtained. '
         + 'State that the tool image could not be inspected and give its saved path if available. Do not infer visual details.');

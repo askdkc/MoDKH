@@ -103,7 +103,7 @@ export interface TokenUsage {
 
 /** モデルストリームのイベント。 */
 export type ModelEvent =
-  | { type: 'activity'; stage: 'accepted' | 'reasoning' | 'tool-input'; toolName?: string }
+  | { type: 'activity'; stage: 'accepted' | 'reasoning' | 'tool-input' | 'tool-images-unavailable'; toolName?: string }
   | ({ type: 'usage' } & TokenUsage)
   | { type: 'text-delta'; text: string }
   /** Provider-reported reasoning. Shown to the human, never merged into assistant content. */
@@ -135,6 +135,8 @@ export type ProviderContinuation =
 
 export interface ModelRequest {
   recoverToolHistory?: boolean;
+  /** A tool runner can finish outstanding work after a rejected tool image. Standalone requests get a text report. */
+  continueAfterImageRejection?: boolean;
   continuation?(message: AgentMessage): ProviderContinuation | undefined;
   /** Stable session identity for providers supporting prompt-cache routing. */
   promptCacheKey?: string;

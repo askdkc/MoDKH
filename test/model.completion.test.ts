@@ -4,7 +4,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { ResponsesApiModel, toResponsesInput } from '../src/model/chatgpt/responses.ts';
 import { resolveModel } from '../src/model/factory.ts';
-import type { ModelEvent } from '../src/agent/types.ts';
+import type { ModelEvent, ModelRequest } from '../src/agent/types.ts';
 
 test('model input preserves structured tool status instead of only its prose', () => {
   const input = toResponsesInput([{ role: 'tool', results: [{ callId: 'c', name: 'effect', status: 'unknown', output: 'partial evidence' }] }]);
@@ -110,15 +110,25 @@ test('Ollama query rejection after tool results returns a report without rerunni
   assert.equal((events.at(-1) as { stopReason: string }).stopReason, 'error');
 });
 
-for (const userImage of [false, true]) test(`unsupported screenshot preserves tool receipts (user attachment: ${userImage})`, async t => {
+const multimodalRejection = 'Multimodal data provided, but model does not support multimodal requests.';
+for (const { name, message, status, attachment, recover } of [
+  { name: 'unsupported screenshot', message: multimodalRejection, status: 400, recover: true },
+  { name: 'unsupported image input (422)', message: 'Image input is not supported by this model.', status: 422, recover: true },
+  { name: 'explicit user image', message: multimodalRejection, status: 400, attachment: 'image' },
+  { name: 'explicit user PDF', message: multimodalRejection, status: 400, attachment: 'pdf' },
+  { name: 'image size restriction', message: 'This engine does not read images larger than 512 pixels.', status: 400 },
+  { name: 'invalid image bytes', message: 'Invalid image data.', status: 400 },
+  { name: 'unrelated request error', message: 'Unrecognized tool call ID.', status: 400 },
+  { name: 'rate limit', message: multimodalRejection, status: 429 },
+]) test(`tool image rejection preserves tool receipts: ${name}`, async t => {
   const image = { mediaType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==' };
   const requests: { messages: { role: string; content: unknown }[]; tools?: unknown[] }[] = [];
   t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
     const body = JSON.parse(String(init.body));
     requests.push(body);
     if (JSON.stringify(body.messages).includes('image_url')) return Response.json({ error: {
-      message: 'Multimodal data provided, but model does not support multimodal requests.', type: 'invalid_request_error',
-    } }, { status: 400 });
+      message, type: 'invalid_request_error',
+    } }, { status });
     const chunk = { id: 'x', model: 'test', created: 1, choices: [{ index: 0, delta: { content: 'fixture response' }, finish_reason: 'stop' }] };
     return new Response('data: ' + JSON.stringify(chunk) + '\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
   });
@@ -126,19 +136,31 @@ for (const userImage of [false, true]) test(`unsupported screenshot preserves to
   const results = [{ callId: 'a', name: 'browse', status: 'ok' as const, output: 'shot.png', image },
     { callId: 'b', name: 'run_command', status: 'ok' as const, output: 'fixture status 200' }];
   const events: ModelEvent[] = [];
-  for await (const ev of model.stream({
-    messages: [{ role: 'user', content: 'Check the fixture', ...(userImage ? { images: [image] } : {}) },
+  const request: ModelRequest = {
+    messages: [{ role: 'user', content: 'Check the fixture', ...(attachment === 'image' ? { images: [image] } : {}),
+      ...(attachment === 'pdf' ? { pdfs: [{ filename: 'fixture.pdf', data: Buffer.from('%PDF-1.4\n%%EOF').toString('base64') }] } : {}) },
       { role: 'assistant', content: '', toolCalls: results.map(r => ({ id: r.callId, name: r.name, args: {} })) },
       { role: 'tool', results }],
     tools: [{ name: 'browse', description: 'browse', parameters: { type: 'object' } }],
-  }, new AbortController().signal)) events.push(ev);
-  assert.equal(requests.length, userImage ? 1 : 2);
-  assert.equal((events.at(-1) as { stopReason: string }).stopReason, userImage ? 'error' : 'stop');
-  if (!userImage) {
+  };
+  for await (const ev of model.stream(request, new AbortController().signal)) events.push(ev);
+  assert.equal(requests.length, recover ? 2 : 1);
+  assert.equal((events.at(-1) as { stopReason: string }).stopReason, recover ? 'stop' : 'error');
+  if (recover) {
     assert.deepEqual(requests[1].messages.filter(m => m.role === 'tool'), requests[0].messages.filter(m => m.role === 'tool'));
     assert.ok(!JSON.stringify(requests[1].messages).includes(image.data));
     assert.equal(requests[1].tools?.length ?? 0, 0);
     assert.ok(events.some(e => e.type === 'text-delta' && e.text.includes('fixture response')));
     assert.equal(results[0].image, image);
+    // A reloaded receipt has a new JS identity. Only reconnecting should try its pixels again.
+    const reloaded = structuredClone(request);
+    for await (const _ of model.stream(reloaded, new AbortController().signal)) { /* consume */ }
+    assert.equal(requests.length, 3);
+    assert.ok(!JSON.stringify(requests[2].messages).includes(image.data));
+    const reconnected = resolveModel({ provider: 'ollama', model: 'test' });
+    for await (const _ of reconnected.stream(reloaded, new AbortController().signal)) { /* consume */ }
+    assert.ok(JSON.stringify(requests[3].messages).includes(image.data));
+  } else {
+    assert.ok(events.some(e => e.type === 'finish' && e.errorMessage === message));
   }
 });

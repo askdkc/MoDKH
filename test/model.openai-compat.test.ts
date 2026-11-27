@@ -43,7 +43,9 @@ interface RecordedRequest {
 }
 
 /** OpenAI互換の最小偽サーバ。1回目はツール要求、2回目は最終テキストを返す。 */
-async function startFakeServer(requestedTool = { name: 'read_file', arguments: '{"path":"a.txt"}' }): Promise<{ url: string; close(): Promise<void>; requests: RecordedRequest[] }> {
+async function startFakeServer(requestedTool = { name: 'read_file', arguments: '{"path":"a.txt"}' },
+  afterTool?: (body: Record<string, unknown>, res: http.ServerResponse) => void,
+): Promise<{ url: string; close(): Promise<void>; requests: RecordedRequest[] }> {
   const requests: RecordedRequest[] = [];
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -74,6 +76,8 @@ async function startFakeServer(requestedTool = { name: 'read_file', arguments: '
           },
           { delta: {}, finishReason: 'tool_calls' },
         ]);
+      } else if (afterTool) {
+        afterTool(body, res);
       } else {
         sse(res, [
           { delta: { role: 'assistant', content: 'hello world を確認した' }, finishReason: null },
@@ -89,6 +93,20 @@ async function startFakeServer(requestedTool = { name: 'read_file', arguments: '
     requests,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
+}
+
+async function chat(root: string, home: string, model: string, url: string, prompt: string) {
+  const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
+  const child = spawn(process.execPath, [entry, 'chat', '--cwd', root, '--model', model, '--base-url', url], {
+    env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' }, timeout: 20000,
+  });
+  let log = '';
+  child.stdout.on('data', chunk => { log += chunk; });
+  child.stderr.on('data', chunk => { log += chunk; });
+  const closed = once(child, 'close');
+  child.stdin.end(prompt + '\n/exit\n');
+  assert.equal((await closed)[0], 0, log);
+  return log;
 }
 
 test('OpenAI互換アダプターが偽SSEサーバでストリーミング+ツール往復を完走する', async () => {
@@ -212,16 +230,7 @@ for (const ext of ['png', 'jpg', 'jpeg']) test(`CLI sends a workspace ${ext} fra
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-render-home-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ language: { autoInstall: false } }));
-  const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
-  const child = spawn(process.execPath, [entry, 'chat', '--cwd', root, '--model', 'compatible/vision', '--base-url', fake.url], {
-    env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' }, timeout: 20000,
-  });
-  let log = '';
-  child.stdout.on('data', chunk => { log += chunk; });
-  child.stderr.on('data', chunk => { log += chunk; });
-  const closed = once(child, 'close');
-  child.stdin.end(`3Dゲームの ${frame} を見てカメラ位置を確認して\n/exit\n`);
-  assert.equal((await closed)[0], 0, log);
+  const log = await chat(root, home, 'compatible/vision', fake.url, `3Dゲームの ${frame} を見てカメラ位置を確認して`);
   assert.equal(fake.requests.length, 2, log);
   const specs = fake.requests[0].body.tools as { function: { name: string } }[];
   assert.ok(specs.some(tool => tool.function.name === 'view_image'));
@@ -240,4 +249,47 @@ for (const ext of ['png', 'jpg', 'jpeg']) test(`CLI sends a workspace ${ext} fra
     assert.deepEqual(await png.raw().toBuffer(), await sharp(original).autoOrient().raw().toBuffer());
   }
   assert.deepEqual(fs.readFileSync(path.join(root, frame)), original);
+});
+
+test('CLI finishes the requested file after a text-only engine rejects view_image', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-image-rejection-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, 'home');
+  fs.mkdirSync(home);
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ language: { autoInstall: false } }));
+  const frame = '.modkh/browse/fixture.png';
+  fs.mkdirSync(path.dirname(path.join(root, frame)), { recursive: true });
+  const data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==';
+  fs.writeFileSync(path.join(root, frame), Buffer.from(data, 'base64'));
+  const report = `画像は未確認です。保存先は ${frame} です。\n`;
+  const fake = await startFakeServer({ name: 'view_image', arguments: JSON.stringify({ path: frame }) }, (body, res) => {
+    const messages = body.messages as { role: string; tool_call_id?: string; content: unknown }[];
+    if (JSON.stringify(messages).includes(data)) {
+      res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { type: 'invalid_request_error',
+        message: 'this Inkling-2-Mini engine does not read images yet; update Strata or attach the Vision shard' } }));
+    } else if (messages.some(m => m.role === 'tool' && m.tool_call_id === 'write-report')) {
+      sse(res, [{ delta: { content: '記録しました。' }, finishReason: 'stop' }]);
+    } else {
+      sse(res, [{ delta: { tool_calls: [{ index: 0, id: 'write-report', type: 'function', function: {
+        name: 'create_file', arguments: JSON.stringify({ path: 'report.md', content: report }),
+      } }] }, finishReason: 'tool_calls' }]);
+    }
+  });
+  t.after(() => fake.close());
+  const log = await chat(root, home, 'compatible/inkling-2-mini-sq-15', fake.url, `${frame} の確認結果を report.md に保存して`);
+  assert.equal(fake.requests.length, 4, log);
+  assert.match(log, /画像.*未確認/);
+  assert.match(log, /記録しました。/);
+  for (const request of fake.requests.slice(2)) {
+    const messages = request.body.messages as { role: string; tool_call_id?: string; content: string }[];
+    const receipts = messages.filter(m => m.role === 'tool' && m.tool_call_id === 'call_1');
+    assert.deepEqual(receipts.map(m => JSON.parse(m.content)), [{ status: 'ok', output: frame }]);
+    assert.ok(messages.some(m => m.role === 'user' && m.content.includes('not inspected')));
+    assert.ok(!JSON.stringify(messages).includes(data));
+    const tools = (request.body.tools as { function: { name: string } }[]).map(t => t.function.name);
+    assert.ok(tools.includes('create_file'));
+    assert.ok(!tools.includes('view_image'));
+  }
+  assert.equal(fs.readFileSync(path.join(root, 'report.md'), 'utf8'), report);
+  assert.deepEqual(fs.readFileSync(path.join(root, frame)), Buffer.from(data, 'base64'));
 });

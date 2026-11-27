@@ -8,7 +8,7 @@ function brief(value: string, width = 76): string {
   return textWidth(text) > width ? `${fitText(text, width - 1)}…` : text;
 }
 const LABELS: Record<string, string> = {
-  view_image: '画像を確認', read_file: '読む', create_file: '作成', edit_file: '編集', list_files: 'ファイル一覧', search_files: '検索',
+  view_image: '画像を読み込む', read_file: '読む', create_file: '作成', edit_file: '編集', list_files: 'ファイル一覧', search_files: '検索',
   run_command: 'コマンド', read_skill: '手順を確認', list_skills: '手順一覧',
   list_subagents: '担当一覧', start_subagent: '子の起動を要求', run_subagent: '子を実行',
   subagent_output: '子の結果', list_subagent_runs: '子の状態',
