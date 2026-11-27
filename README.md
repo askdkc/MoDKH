@@ -45,4 +45,5 @@ modkh
 - [モデルの接続とログイン](docs/models.md) · [画像・PDFを使った依頼](docs/input.md)
 - [専門エージェントへの委譲](docs/subagents.md) · [Lisp プリセット](docs/presets.md)
 - [OS 別のセットアップ](docs/setup.md) · [言語解析](docs/languages.md) · [前鬼による形式検証](docs/stateright.md)
+- [脆弱性検査ツールのインストール](docs/features.md#cyber-用のツール任意)（Trivy、OSV-Scanner、Semgrep、Gitleaks、sqlmap、Nmap、Nuclei、Nikto）
 - [追加機能と設定](docs/features.md)（通信記録、MCP サーバー、ブラウザ検証など）
