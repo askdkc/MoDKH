@@ -7,6 +7,7 @@
  */
 import { projectToolImages, toolContext, utf8Prefix, utf8Suffix } from '../model/context.ts';
 import type { AgentMessage, Model, TokenUsage } from './types.ts';
+import { isUserRequest } from './types.ts';
 
 /** 要約メッセージの見出し。要約が新しい指示として解釈されないよう明示する。 */
 export const COMPACTION_MARKER =
@@ -24,6 +25,8 @@ const SUMMARY_INPUT_BYTES = 200_000;
 export interface CompactionState {
   summary: string;
   from: number;
+  /** A whole active turn handed to saved-result delivery. Idle /compact has no continuation. */
+  continueFrom?: number;
 }
 
 /** 生のまま残す直近ターン数の既定値。 */
@@ -81,7 +84,7 @@ export function planCompaction(
 ): CompactionPlan | null {
   if (!Number.isSafeInteger(keepTurns) || keepTurns < 1) return null;
   const userIndices: number[] = [];
-  for (const [index, message] of messages.entries()) if (message.role === 'user') userIndices.push(index);
+  for (const [index, message] of messages.entries()) if (isUserRequest(message)) userIndices.push(index);
   if (userIndices.length <= keepTurns) return null;
   const raw = userIndices[userIndices.length - keepTurns]!;
   const from = safeBoundary(messages, raw);
@@ -97,7 +100,7 @@ export function projectCompacted(messages: AgentMessage[], state: CompactionStat
 }
 
 /** 1メッセージを上限内に収める。中間は落とすが、先頭と末尾は残す。 */
-function clip(text: string, allowed: number): string {
+export function clip(text: string, allowed: number): string {
   const size = Buffer.byteLength(text);
   if (size <= allowed) return text;
   const note = `[…${size - allowed}バイト省略…]`;
@@ -106,9 +109,12 @@ function clip(text: string, allowed: number): string {
 }
 
 /** A bounded local record for a closed exchange. No model request or tool is needed to make it. */
-export function compactLocally(messages: AgentMessage[], previous?: CompactionState): CompactionState | undefined {
+export function compactLocally(messages: AgentMessage[], previous?: CompactionState, continueFrom?: number): CompactionState | undefined {
   const start = previous?.from ?? 0;
-  if (start >= messages.length) return;
+  if (start >= messages.length) {
+    if (previous && continueFrom !== undefined && start === messages.length) return { ...previous, continueFrom };
+    return;
+  }
   const files = new Set<string>();
   const counts = new Map<string, number>();
   const fileTools = new Set(['list_files', 'search_files', 'read_file', 'view_image', 'create_file', 'edit_file']);
@@ -142,9 +148,10 @@ export function compactLocally(messages: AgentMessage[], previous?: CompactionSt
     counts.size && 'ツールの終了状態（依頼全体の成否は未判定）: '
       + clip([...counts].map(([key, count]) => key + ' ×' + count).join(', '), 1200),
   ].filter(Boolean).join('\n');
-  const next = { from: messages.length, summary };
+  const next = { from: messages.length, summary, ...(continueFrom !== undefined ? { continueFrom } : {}) };
   const before = previous ? projectCompacted(messages, previous) : messages;
-  return estimateRequestBytes(projectCompacted(messages, next)) < estimateRequestBytes(before) ? next : undefined;
+  // A tool-free delivery also drops the system/tool schemas, even for a small transcript.
+  return continueFrom !== undefined || estimateRequestBytes(projectCompacted(messages, next)) < estimateRequestBytes(before) ? next : undefined;
 }
 
 /** 要約の材料になる会話テキスト。順序と発話者を保ち、推論は含めない。 */

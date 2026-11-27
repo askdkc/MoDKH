@@ -13,6 +13,7 @@ const HELP = `modkh ${VERSION} — MoDKH (Mixture of DKH)
   modkh [--model <provider>/<model>] [--cwd <dir>] [--resume <id>] [--base-url <url>]
       (対話ハーネスを開く。言語別の調査担当は /agents で確認)
   modkh chat --model <provider>/<model> [--cwd <dir>] [--resume <id>] [--base-url <url>]
+  modkh --resume <id> --saved-results            保存済みの資料から回答・レポートを仕上げる
   modkh chat --lisp-config agents.lisp --trust-lisp-sha256 SHA256 [--sbcl PATH] [--verification-isolation required|integrity-only]
       [--routing auto] [--lean PATH] [--stateright PATH]
       [--lean-contract FILE.lean --lean-theorem NAME]

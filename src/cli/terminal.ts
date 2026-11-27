@@ -40,6 +40,7 @@ export interface ChatTerminal {
   write(text: string, kind?: TranscriptKind): void;
   next(signal?: AbortSignal): Promise<string | null>;
   unread(line: string): void;
+  hasQueuedInput?(): boolean | Promise<boolean>;
   /** Restore a failed submission as editable text, without resubmitting it. */
   restoreDraft?(text: string): void;
   /** Offer text via Up without populating the empty composer. */
@@ -123,6 +124,7 @@ class PlainTerminal implements ChatTerminal {
   }
   next(signal?: AbortSignal): Promise<string | null> { return this.lines.next(signal); }
   unread(line: string): void { this.lines.unread(line); }
+  hasQueuedInput(): Promise<boolean> { return this.lines.hasQueuedInput(); }
   setModel(_model: string | null): void {}
   /** Line mode cannot update a status line, so reasoning is printed once when the step moves on. */
   setReasoning(delta: string | null): void {
@@ -687,6 +689,7 @@ export class TerminalUI implements ChatTerminal {
     return (this.output.writableLength ?? 0) > REASONING_OUTPUT_BUDGET;
   }
   unread(line: string): void { this.queued.unshift(line); }
+  hasQueuedInput(): boolean { return this.queued.length > 0; }
   rememberInput(text: string): void { this.previousInput = text; }
   restoreDraft(text: string): void {
     this.text = text;

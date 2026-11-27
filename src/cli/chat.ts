@@ -49,6 +49,9 @@ import { DEFAULT_MAX_TURNS, MAX_TURNS_CEILING, parseMaxTurns } from './limits.ts
 import { parseCompactionSettings } from './compaction-settings.ts';
 import { positiveTokenCount, readContextWindow } from '../model/context-window.ts';
 import { isContextLimitError } from '../model/context.ts';
+import { lastRequestIndex } from '../agent/saved-results.ts';
+import { reportMatches } from '../session/report-file.ts';
+import { finishCompactedTurn, LEGACY_COMPACT_PAUSE, WORKFLOW_COMPACT_PAUSE } from './compacted-turn.ts';
 import { compactLocally, estimateRequestBytes, planCompaction, projectCompacted, summarizeCompaction } from '../agent/compaction.ts';
 import { loadConfig, updateConfig, parseTimeoutMs, type LiteConfig } from './config.ts';
 import { loadResumedSession, selectInitialConnection } from './initial-connection.ts';
@@ -137,6 +140,7 @@ function summarizeArgs(args: Record<string, unknown>): string {
 
 export async function runChat(opts: ChatOptions): Promise<void> {
   const args = opts.args;
+  if (args['saved-results'] && !args.resume) throw new Error('--saved-results には --resume <id> が必要です');
   if (args.java || args['tla-jar']) throw new Error('Java/TLCは廃止しました。modkh stateright install とモデルJSONを使用してください');
   const verificationIsolation = args['verification-isolation'] ?? 'integrity-only';
   if (verificationIsolation !== 'required' && verificationIsolation !== 'integrity-only') throw new Error('--verification-isolation must be required or integrity-only');
@@ -396,8 +400,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   let contextWindow: number | undefined;
   let nextMetadataRead = 0;
   let failedCompaction: { model: Model; from: number; eligibleBytes: number } | undefined;
-  const saveLocalCompaction = () => {
-    const next = compactLocally(session.messages, session.compaction);
+  const saveLocalCompaction = (continueFrom?: number) => {
+    const next = compactLocally(session.messages, session.compaction, continueFrom);
     if (!next) return false;
     session.persistFrom(0);
     session.recordCompaction(next, 0);
@@ -405,20 +409,24 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     failedCompaction = undefined;
     return true;
   };
-  if (args.resume && configuredAutoBytes !== 0 && modelId && !/^(fixed|hermes)\//.test(modelId)
-    && session.status === 'error' && isContextLimitError(session.lastError)) {
-    if (saveLocalCompaction()) ui.write('(前回の入力上限エラーを受け、保存済みの履歴を圧縮しました。次の依頼を入力してください)\n');
-    else if (session.compaction?.from === session.messages.length) ui.write('(履歴は圧縮済みです。次の依頼を入力してください)\n');
-  }
   const workspaceCheckConfig = parseWorkspaceVerification(config.workspaceVerification);
   if (config.workspaceVerification !== undefined && !workspaceCheckConfig) ui.write('(workspaceVerification の設定が不正です。固定検証は実行しません)\n');
-  const runTurn = async (input: string, activeModel: Model | null, direct?: DelegationRequest, images: ImageAttachment[] = [], documentText?: string, pdfs: PdfAttachment[] = []): Promise<void> => {
+  const canDeliver = !lisp && !workspaceCheckConfig && !session.parentSessionId;
+  let releaseReportWriter: (() => Promise<void>) | undefined;
+  const releaseReport = async () => {
+    const release = releaseReportWriter;
+    releaseReportWriter = undefined;
+    if (release) await release();
+  };
+  const runTurn = async (submission: string | null, activeModel: Model | null, direct?: DelegationRequest, images: ImageAttachment[] = [], documentText?: string, pdfs: PdfAttachment[] = []): Promise<void> => {
+    const turnStart = submission === null ? session.compaction!.continueFrom! : session.messages.length;
+    const input = submission ?? '';
     turnToolCount = 0;
     ui.setTurnToolCount?.(turnToolCount);
     // Interactive PDF submissions are already visible while their pages are prepared.
-    if (!documentText || !ui.interactive) ui.write(`\n▶ You: ${input}${images.length ? ` [画像${images.length}枚]` : ''}\n`, 'user');
+    if (submission !== null && (!documentText || !ui.interactive)) ui.write(`\n▶ You: ${input}${images.length ? ` [画像${images.length}枚]` : ''}\n`, 'user');
     session.setStatus('active');
-    session.append({ role: 'user', content: documentText ? input + '\n\n' + documentText : input, ...(images.length ? { images } : {}), ...(pdfs.length ? { pdfs } : {}) });
+    if (submission !== null) session.append({ role: 'user', content: documentText ? input + '\n\n' + documentText : input, ...(images.length ? { images } : {}), ...(pdfs.length ? { pdfs } : {}) });
     activeUserRequest = direct ? undefined : input;
     const checkpoint = () => session.persistFrom(0);
     const ac = new AbortController();
@@ -457,7 +465,35 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       }
       return messages.map(message => message.content);
     };
+    let delivering = false;
+    const deliver = async () => {
+      releaseReportWriter ??= await session.claimReportWriter();
+      delivering = true;
+      ui.write('(保存済みの結果から回答を仕上げます)\n');
+      ui.setActivity?.('保存済みの資料から執筆中… Ctrl+Cで中止');
+      for (;;) {
+        const updates = takeFollowups();
+        for (const message of updates) session.append(message);
+        if (updates.length || session.compaction?.continueFrom !== turnStart) saveLocalCompaction(turnStart);
+        const result = await finishCompactedTurn({ session, model: activeModel, approval,
+          signal: AbortSignal.any([ac.signal, followupWake.signal]), reasoning: reasoningLevel,
+          onEvent: ev => {
+            if (ev.type === 'usage') onUsage(ev);
+            if (ev.type === 'reasoning-delta') ui.setReasoning?.(ev.text);
+            if (ev.type === 'activity' && ev.stage === 'tool-images-unavailable') ui.write('(画像を読み取れなかったため、保存済みのテキストを使います)\n');
+          },
+          write: text => { ui.setReasoning?.(null); ui.write(text + '\n', 'answer'); },
+        });
+        if (!followups.length || ac.signal.aborted) return result;
+      }
+    };
     try {
+      if (submission === null) {
+        const result = await deliver();
+        session.setStatus(result.outcome, result.errorMessage);
+        if (result.errorMessage) ui.write(`(${result.errorMessage})\n`);
+        return;
+      }
       // The existing Lisp head workflow retains authority when it defines its own checks.
       let workspaceCheck: ReturnType<typeof workspaceVerification> | undefined;
       if (!direct && !lisp?.headChecks && workspaceCheckConfig) {
@@ -549,16 +585,17 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const canAutoCompact = continueInChat && activeModel && configuredAutoBytes !== 0 && !/^(fixed|hermes)\//.test(activeModel.id);
       const plan = canAutoCompact ? planCompaction(session.messages, keepTurns, session.compaction) : null;
       let attemptedCompaction = false;
-      const compactToolTurn = () => {
-        if (usedTools && session.messages.at(-1)?.role === 'tool' && !ac.signal.aborted && saveLocalCompaction()) {
-          return { outcome: 'interrupted' as const, errorMessage: '入力上限に備えてツール履歴を圧縮しました。次の依頼を入力してください' };
+      const compactToolTurn = async () => {
+        if (usedTools && !ac.signal.aborted) {
+          if (canDeliver && !direct && !subagents.hasPending) return deliver();
+          if (saveLocalCompaction()) return { outcome: 'interrupted' as const, errorMessage: WORKFLOW_COMPACT_PAUSE };
         }
       };
       const headChecks = continueInChat ? headCheckCompletion({
         config: lisp, input, session, registry, root: cwd, signal: ac.signal,
         approval, onToolCall: hooks.onToolCall, onToolResult: hooks.onToolResult,
       }) : undefined;
-      const outcome = continueInChat ? await runAgentLoop(session.messages, {
+      let outcome = continueInChat ? await runAgentLoop(session.messages, {
         model: activeModel!,
         promptCacheKey: session.id,
         continuationState,
@@ -588,7 +625,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           }
           const before = estimateRequestBytes(outgoing);
           if (configuredAutoBytes !== undefined && before < configuredAutoBytes) return;
-          if (!plan || attemptedCompaction) return compactToolTurn();
+          if (!plan || attemptedCompaction || (usedTools && canDeliver && !direct && !subagents.hasPending)) return compactToolTurn();
           attemptedCompaction = true;
           const eligibleBytes = estimateRequestBytes(plan.messages);
           const previousFailure = failedCompaction?.model === activeModel
@@ -601,14 +638,14 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           if (result.usage) onUsage(result.usage);
           if (ac.signal.aborted) return;
           if (signal.aborted || !result.ok || !result.summary) {
-            const stopped = compactToolTurn();
+            const stopped = await compactToolTurn();
             if (stopped) return stopped;
             ui.write('(会話履歴の自動圧縮に失敗しました。圧縮前の履歴で続けます)\n');
             return;
           }
           const next = { summary: result.summary, from: plan.from };
           if (estimateRequestBytes(projectCompacted(session.messages, next)) >= before) {
-            const stopped = compactToolTurn();
+            const stopped = await compactToolTurn();
             if (stopped) return stopped;
             ui.write('(会話履歴が短くならないため、自動圧縮を見送りました)\n');
             return;
@@ -634,6 +671,13 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         jobs,
         ...(reasoningLevel ? { reasoning: reasoningLevel } : {}),
       }) : directOutcome;
+      if (!delivering && canAutoCompact && !ac.signal.aborted && outcome.outcome === 'error' && isContextLimitError(outcome.errorMessage)) {
+        if (canDeliver && !direct && !subagents.hasPending && session.messages.some(m => m.role === 'tool')) outcome = await deliver();
+        else if (saveLocalCompaction()) {
+          if (!canDeliver || direct || subagents.hasPending) outcome = { outcome: 'interrupted', errorMessage: WORKFLOW_COMPACT_PAUSE };
+          else ui.write('(入力上限を超えた履歴を圧縮しました)\n');
+        }
+      }
       restoreFollowups();
       // 本作業の証拠と状態を先に確定する。メモリ保存はこれを変更しない。
       ui.setReasoning?.(null);
@@ -644,10 +688,10 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ui.write(ui.interactive ? `\n\n${nextCompletionArt()}\n` : '\n\n(応答終了)\n');
         if (formal?.status === 'passed') ui.write(`${formal.message}\n`);
         else if (workspaceCheck?.verdict() === 'passed') ui.write(`設定された最終差分の固定検証は合格しました (SHA-256: ${workspaceCheck.verifiedDigest()})。\n`);
-        else if (workspaceCheck || direct || usedTools) ui.write('依頼全体の検証結果はありません。\n');
+        else if (!delivering && (workspaceCheck || direct || usedTools)) ui.write('依頼全体の検証結果はありません。\n');
         // 会話完了後、メモリ保存の提案(有効かつ書き込み可のときだけ)
         const lastAssistant = [...session.messages].reverse().find((m) => m.role === 'assistant');
-        if (config.memory.enabled && lastAssistant?.role === 'assistant' && lastAssistant.content) {
+        if (!delivering && config.memory.enabled && lastAssistant?.role === 'assistant' && lastAssistant.content) {
           const result = await memory.captureIfApproved(
             { title: lastAssistant.content.split('\n')[0].slice(0, 60), body: lastAssistant.content },
             async (display) => !ac.signal.aborted && approval.approve({ kind: 'edit', title: 'メモリ保存の提案', detail: display }),
@@ -665,9 +709,6 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ui.write(`\n\n(打ち切り: ${outcome.errorMessage}。続きは同じセッションで指示してください。上限は config.json の maxTurns で変更できます)\n`);
       } else {
         ui.write(`\n\n(エラー: ${outcome.errorMessage})\n`);
-        if (canAutoCompact && isContextLimitError(outcome.errorMessage) && saveLocalCompaction()) {
-          ui.write('(入力上限を超えた履歴を圧縮しました。次の依頼を入力してください)\n');
-        }
       }
 
     } finally {
@@ -678,8 +719,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       ui.setActivity?.(null);
       process.removeListener('SIGINT', onSigint);
       // 中断・エラー時も、その時点までの応答をセッションに残す
-      checkpoint();
-      saveWorkspaceRecord();
+      try { checkpoint(); saveWorkspaceRecord(); } finally { await releaseReport(); }
     }
   };
 
@@ -803,13 +843,48 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     await connectModel(parsed.ref, parsed.baseUrl);
   };
 
-  if (!ui.interactive) {
-    ui.write('/connect で認証、/models [検索語] でモデル選択、/agents で子の一覧、/exit で終了\n');
-    ui.write(model === null
-      ? '入力してください (/connect <provider>/<model> で接続、/exit で終了):\n'
-      : '入力してください (/exit で終了):\n');
-  }
   try {
+    if (args.resume) {
+      const state = session.compaction;
+      const tail = session.messages.slice(state?.from ?? 0);
+      const pending = state?.continueFrom !== undefined && (tail.length === 0
+        || (tail.length === 1 && tail[0].role === 'assistant' && !tail[0].toolCalls?.length));
+      const legacyPause = state?.from === session.messages.length && session.status === 'interrupted' && session.lastError === LEGACY_COMPACT_PAUSE;
+      const overflow = session.status === 'error' && isContextLimitError(session.lastError);
+      const recover = configuredAutoBytes !== 0 && (legacyPause || overflow || (pending && (session.status === 'active' || session.status === 'error')));
+      if (args['saved-results'] || (recover && !await ui.hasQueuedInput?.())) {
+        const start = lastRequestIndex(session.messages);
+        if (canDeliver && session.lastError !== WORKFLOW_COMPACT_PAUSE && start >= 0 && session.messages.some(m => m.role === 'tool')) {
+          releaseReportWriter = await session.claimReportWriter();
+          try {
+            const published = session.publishedReport;
+            if (published && published.messageCount === session.messages.length
+              && (!session.reportDraft || session.reportDraft.after === published.digest) && reportMatches(cwd, published)) {
+              if (session.status !== 'complete') session.setStatus('complete');
+              ui.write(`${published.path} を読み戻し、保存済みの原稿との一致を確認しました。\n`);
+              saveWorkspaceRecord();
+            } else if ((pending && session.reportDraft && session.status !== 'complete') || (model && !/^(fixed|hermes)\//.test(model.id))) {
+              if (!pending || session.status === 'complete') {
+                const previousFile = pending ? session.reportDraft?.path : undefined;
+                saveLocalCompaction(start);
+                if (previousFile) session.recordReportTarget(previousFile);
+              }
+              await runTurn(null, model);
+              if (args['saved-results'] && !ui.interactive && session.status !== 'complete') process.exitCode = session.status === 'interrupted' ? 130 : 1;
+            } else if (args['saved-results']) {
+              throw new Error('保存済み資料の執筆にはモデルの接続が必要です');
+            }
+          } finally { await releaseReport(); }
+        } else if (args['saved-results']) throw new Error('このセッションの保存済み結果を現在の接続・権限で仕上げることはできません');
+        else if (overflow) saveLocalCompaction();
+      } else if (recover && overflow && !pending) saveLocalCompaction();
+    }
+    if (!ui.interactive) {
+      ui.write('/connect で認証、/models [検索語] でモデル選択、/agents で子の一覧、/exit で終了\n');
+      ui.write(model === null
+        ? '入力してください (/connect <provider>/<model> で接続、/exit で終了):\n'
+        : '入力してください (/exit で終了):\n');
+    }
     for (;;) {
       const input = await lines.next();
       if (input === null) break;

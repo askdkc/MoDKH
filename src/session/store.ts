@@ -8,6 +8,7 @@ import type { AgentMessage, ToolCall, ToolResult } from '../agent/types.ts';
 import { safeBoundary, type CompactionState } from '../agent/compaction.ts';
 import type { DelegationRecord } from '../subagents/types.ts';
 import { parseDelegation, delegationDigest } from '../subagents/request.ts';
+import { lockReport } from './report-file.ts';
 
 export type SessionStatus = 'active' | 'complete' | 'interrupted' | 'error' | 'turn-limit';
 
@@ -34,6 +35,15 @@ export interface MemoryObservation {
   elapsedMs?: number;
 }
 
+/** Write intent and its pre/post digests, persisted before the file is published. */
+export interface ReportDraft {
+  path: string;
+  before: string | null;
+  after: string;
+  addition: string;
+  edits?: { first: number; last: number; text: string }[];
+}
+
 type SessionEvent =
   | SessionHeader
   | { type: 'connection'; model: string; baseUrl?: string }
@@ -42,7 +52,9 @@ type SessionEvent =
   | (MemoryObservation & { type: 'memory'; at: string })
   | { type: 'status'; status: SessionStatus; at: string; diagnostic?: string }
   /** 圧縮の記録。messages index の from 以降を生のまま送るという意味だけを持ち、原文は消さない。 */
-  | { type: 'compaction'; summary: string; from: number; at: string; keptTurns: number }
+  | (CompactionState & { type: 'compaction'; at: string; keptTurns: number })
+  | { type: 'report_target'; from: number; path: string | null }
+  | { type: 'report_draft'; from: number; draft: ReportDraft }
   | { type: 'message'; message: AgentMessage };
 
 export interface SessionSummary {
@@ -128,6 +140,9 @@ export class Session {
   lastError?: string;
   /** 直近の圧縮状態。未圧縮なら undefined。原文の messages は常に全文。 */
   compaction?: CompactionState;
+  reportTarget?: string | null;
+  reportDraft?: ReportDraft;
+  publishedReport?: { path: string; digest: string; messageCount: number };
   id: string;
   /** ヘッダの作成時刻(ワークスペース記録に使う)。古いファイルは作成時刻がない。 */
   createdAt = '';
@@ -181,14 +196,27 @@ export class Session {
       } else if (ev.type === 'delegation') session.acceptDelegation(ev.record);
       else if (ev.type === 'compaction') {
         // 妥当な index だけを受け入れる。壊れた記録は無視して全文送信へ戻す(安全側)。
-        if (Number.isSafeInteger(ev.from) && ev.from > (session.compaction?.from ?? 0)
+        const pending = ev.keptTurns === 0 && ev.from === session.messages.length && Number.isSafeInteger(ev.continueFrom)
+          && ev.continueFrom! >= 0 && ev.continueFrom! < ev.from && session.messages[ev.continueFrom!]?.role === 'user';
+        if (Number.isSafeInteger(ev.from) && (ev.from > (session.compaction?.from ?? 0) || (pending && ev.from === session.compaction?.from))
             && (ev.from < session.messages.length || (ev.keptTurns === 0 && ev.from === session.messages.length))
             && typeof ev.summary === 'string' && ev.summary.trim()) {
-          session.compaction = { summary: ev.summary.slice(0, MAX_SUMMARY_CHARS), from: ev.from };
+          session.compaction = { summary: ev.summary.slice(0, MAX_SUMMARY_CHARS), from: ev.from, ...(pending ? { continueFrom: ev.continueFrom } : {}) };
+          session.reportDraft = undefined;
+          session.reportTarget = undefined;
         }
+      } else if (ev.type === 'report_target') {
+        if (session.compaction?.continueFrom !== undefined && ev.from === session.compaction.from && ev.from === session.messages.length
+          && (ev.path === null || typeof ev.path === 'string')) session.reportTarget = ev.path;
+      } else if (ev.type === 'report_draft') {
+        if (session.compaction?.continueFrom !== undefined && ev.from === session.compaction.from
+          && ev.from === session.messages.length && typeof ev.draft?.path === 'string' && typeof ev.draft.addition === 'string'
+          && typeof ev.draft.after === 'string' && /^[a-f0-9]{64}$/.test(ev.draft.after)
+          && (ev.draft.before === null || (typeof ev.draft.before === 'string' && /^[a-f0-9]{64}$/.test(ev.draft.before)))) session.reportDraft = ev.draft;
       } else if (ev.type === 'status') {
         session.status = ev.status;
         session.lastError = typeof ev.diagnostic === 'string' ? ev.diagnostic.slice(0, 2048) : undefined;
+        session.rememberPublishedReport();
       }
       else if (ev.type === 'message') {
         if (ev.message.role === 'user' && ev.message.images !== undefined) ev.message.images = parseImages(ev.message.images);
@@ -261,8 +289,35 @@ export class Session {
    * 書き込みに失敗した場合はメモリ上の状態も戻し、保存と表示の不一致を作らない。
    */
   recordCompaction(state: CompactionState, keptTurns: number): void {
-    this.write({ type: 'compaction', summary: state.summary, from: state.from, keptTurns, at: new Date().toISOString() });
+    this.write({ type: 'compaction', ...state, keptTurns, at: new Date().toISOString() });
     this.compaction = { ...state };
+    this.reportDraft = undefined;
+    this.reportTarget = undefined;
+  }
+
+  recordReportTarget(target: string | null): void {
+    if (this.compaction?.continueFrom === undefined || this.compaction.from !== this.messages.length) throw new Error('レポートの保存対象ターンが変わりました');
+    this.write({ type: 'report_target', from: this.compaction.from, path: target });
+    this.reportTarget = target;
+  }
+
+  recordReportDraft(draft: ReportDraft): void {
+    if (this.compaction?.continueFrom === undefined || this.compaction.from !== this.messages.length) throw new Error('レポートの保存対象ターンが変わりました');
+    this.write({ type: 'report_draft', from: this.compaction.from, draft });
+    this.reportDraft = draft;
+  }
+
+  /** Two terminals resuming one checkpoint must not publish competing drafts or completion events. */
+  async claimReportWriter(): Promise<() => Promise<void>> {
+    const release = await lockReport(this.file, this.file + '.report.lock');
+    try {
+      const latest = Session.fromText(this.id, this.file, fs.readFileSync(this.file, 'utf8'));
+      if (latest.messages.length !== this.messages.length || latest.compaction?.from !== this.compaction?.from
+        || latest.reportDraft?.after !== this.reportDraft?.after || latest.status !== this.status) {
+        throw new Error('別のMoDKHがこのセッションを更新しました。保存済みの状態を保持します');
+      }
+      return release;
+    } catch (error) { await release(); throw error; }
   }
 
   setConnection(model: string, baseUrl?: string): void {
@@ -276,6 +331,15 @@ export class Session {
     const detail = diagnostic?.slice(0, 2048);
     this.write({ type: 'status', status, at: new Date().toISOString(), ...(detail ? { diagnostic: detail } : {}) });
     this.status = status; this.lastError = detail;
+    this.rememberPublishedReport();
+  }
+
+  private rememberPublishedReport(): void {
+    const { compaction, reportDraft } = this;
+    if (this.status === 'complete' && reportDraft && compaction?.continueFrom !== undefined
+      && compaction.from + 1 === this.messages.length && this.messages.at(-1)?.role === 'assistant') {
+      this.publishedReport = { path: reportDraft.path, digest: reportDraft.after, messageCount: this.messages.length };
+    }
   }
 
   get delegationCount(): number { return this.delegationLog.size; }

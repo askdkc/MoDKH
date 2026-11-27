@@ -9,6 +9,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { compactLocally } from '../src/agent/compaction.ts';
 import type { AgentMessage } from '../src/agent/types.ts';
+import { SessionStore } from '../src/session/store.ts';
 
 const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 interface Request {
@@ -17,7 +18,7 @@ interface Request {
 }
 
 for (const mode of ['success', 'disabled', 'failure', 'small-window', 'large-window', 'missing-usage', 'missing-window', 'configured-window', 'latest-usage', 'switch', 'override',
-  'long-tool-turn', 'input-overflow', 'stream-overflow', 'legacy-overflow', 'manual', 'unrelated-error'] as const) {
+  'long-tool-turn', 'command-checkpoint', 'process-loss', 'input-overflow', 'stream-overflow', 'legacy-overflow', 'manual', 'unrelated-error'] as const) {
   test(`CLI auto compaction: ${mode}`, async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-compact-'));
     const model = 'arbitrary-model';
@@ -25,7 +26,8 @@ for (const mode of ['success', 'disabled', 'failure', 'small-window', 'large-win
     const requests: Request[] = [];
     const summaryPositions: number[] = [];
     let summaries = 0;
-    const toolTurn = ['long-tool-turn', 'input-overflow', 'stream-overflow', 'legacy-overflow', 'manual', 'unrelated-error'].includes(mode);
+    const proactive = ['long-tool-turn', 'command-checkpoint', 'process-loss'].includes(mode);
+    const toolTurn = proactive || ['input-overflow', 'stream-overflow', 'legacy-overflow', 'manual', 'unrelated-error'].includes(mode);
     const backend = http.createServer(async (req, res) => {
       if (req.url === '/v1/models') {
         catalogReads++;
@@ -40,11 +42,14 @@ for (const mode of ['success', 'disabled', 'failure', 'small-window', 'large-win
       requests.push(request);
       if (toolTurn && requests.length === 1) {
         res.writeHead(200, { 'content-type': 'text/event-stream' });
-        const call = { index: 0, id: 'read-notes', type: 'function', function: { name: 'read_file', arguments: '{"path":"notes.txt"}' } };
+        const action = mode === 'command-checkpoint'
+          ? { name: 'run_command', arguments: JSON.stringify({ command: 'echo read >> invocations.txt && cat notes.txt' }) }
+          : { name: 'read_file', arguments: '{"path":"notes.txt"}' };
+        const call = { index: 0, id: 'read-notes', type: 'function', function: action };
         const chunk = { id: 'read', model, choices: [{ index: 0, delta: { tool_calls: [call] }, finish_reason: 'tool_calls' }] };
         res.write('data: ' + JSON.stringify(chunk) + '\n\n');
         res.end('data: ' + JSON.stringify({ id: 'usage', model, choices: [], usage: {
-          prompt_tokens: mode === 'long-tool-turn' ? 7800 : 50, completion_tokens: 1,
+          prompt_tokens: proactive ? 7800 : 50, completion_tokens: 1,
         } }) + '\n\ndata: [DONE]\n\n');
         return;
       }
@@ -62,7 +67,16 @@ for (const mode of ['success', 'disabled', 'failure', 'small-window', 'large-win
         summaries++;
         summaryPositions.push(requests.length);
       }
-      const content = summary ? (mode === 'failure' ? '' : `ROLLING_SUMMARY_${summaries}`) : 'NORMAL_ANSWER';
+      const selecting = request.messages.some(m => String(m.content).includes('MODKH delivery destination'));
+      const drafting = request.messages.some(m => String(m.content).includes('MODKH final response from saved results'));
+      if (selecting || drafting) assert.ok(!request.tools?.length, 'delivery must have no execution tools');
+      if (drafting) {
+        assert.match(JSON.stringify(request.messages), /RAW_NOTE_0/);
+        assert.match(JSON.stringify(request.messages), /editorial report/);
+      }
+      const existing = drafting && request.messages.some(m => String(m.content).includes('Current document, numbered lines:'));
+      const content = selecting ? 'editorial.md' : existing ? '{"unchanged":true}' : drafting ? '# Editorial report\n\nThe saved notes start at RAW_NOTE_0.'
+        : summary ? (mode === 'failure' ? '' : `ROLLING_SUMMARY_${summaries}`) : 'NORMAL_ANSWER';
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       for (const choice of [
         { index: 0, delta: { role: 'assistant', content }, finish_reason: null },
@@ -80,31 +94,54 @@ for (const mode of ['success', 'disabled', 'failure', 'small-window', 'large-win
       res.end('data: [DONE]\n\n');
     });
     await new Promise<void>(resolve => backend.listen(0, '127.0.0.1', resolve));
-    const chat = async (inputs: string[], resume?: string) => {
+    const chat = async (inputs: string[], resume?: string, savedResultsOnly = false) => {
       const child = spawn(process.execPath, [entry, 'chat', '--cwd', home,
         '--model', `compatible/${model}`, '--base-url', `http://127.0.0.1:${(backend.address() as AddressInfo).port}/v1`,
-        ...(resume ? ['--resume', resume] : [])],
-      { env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+        ...(resume ? ['--resume', resume] : []), ...(savedResultsOnly ? ['--saved-results'] : [])],
+      { env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1', ...(mode === 'process-loss' ? { MODKH_AGENTICREPLAY: '0' } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
       let output = '';
-      child.stdout.on('data', chunk => { output += chunk; });
+      const crash = mode === 'process-loss' && !resume;
+      let answered = false;
+      child.stdout.on('data', chunk => {
+        output += chunk;
+        if (mode === 'process-loss' && !answered && output.includes('レポートを保存 editorial.md')) {
+          answered = true;
+          if (crash) child.kill('SIGKILL');
+          else child.stdin.end('y\n/exit\n');
+        }
+      });
       child.stderr.on('data', chunk => { output += chunk; });
       const timeout = setTimeout(() => child.kill('SIGKILL'), 15000);
-      child.stdin.end([...inputs, '/exit', ''].join('\n'));
-      try { assert.equal((await once(child, 'close'))[0], 0, output.slice(-2000)); }
+      if (mode === 'process-loss' && (!resume || !fs.existsSync(path.join(home, 'editorial.md')))) {
+        if (inputs.length) child.stdin.write(inputs.join('\n') + '\n');
+      } else child.stdin.end(inputs.length ? [...inputs, '/exit', ''].join('\n') : '');
+      try {
+        const [code, signal] = await once(child, 'close');
+        if (crash) { assert.equal(signal, 'SIGKILL'); assert.equal(answered, true); }
+        else assert.equal(code, 0, output.slice(-2000));
+      }
       finally { clearTimeout(timeout); }
       return output;
     };
 
     try {
       fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
+        ...(mode === 'process-loss' ? { permissions: 'none' } : {}),
         ...(mode === 'configured-window' ? { modelContextWindows: { ['compatible/' + model]: 100000 } } : {}),
         compactionKeepTurns: 1, ...(['success', 'failure', 'override'].includes(mode) ? { compactionAutoBytes: 32768 } : {}), ...(['disabled', 'legacy-overflow'].includes(mode) ? { compactionAutoBytes: 0 } : {}),
       }));
       if (toolTurn) {
         fs.writeFileSync(path.join(home, 'notes.txt'), Array.from({ length: 180 }, (_, i) => 'RAW_NOTE_' + i + ' ' + 'x'.repeat(50)).join('\n'));
-        const out = await chat(['Read notes.txt for the editorial report.', ...(mode === 'manual' ? ['/compact', '/compact'] : [])]);
+        const out = await chat(['Read notes.txt for the editorial report and save it to editorial.md.', ...(mode === 'manual' ? ['/compact', '/compact'] : [])]);
         const [file] = fs.readdirSync(path.join(home, 'sessions'));
         const journal = () => fs.readFileSync(path.join(home, 'sessions', file), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        if (mode === 'process-loss') {
+          assert.equal(fs.existsSync(path.join(home, 'editorial.md')), false);
+          assert.equal(journal().at(-1).type, 'report_draft');
+          const calls = requests.length;
+          await chat([], path.basename(file, '.jsonl'));
+          assert.equal(requests.length, calls, 'the approved file operation can resume from its draft without a model call');
+        }
         if (mode === 'legacy-overflow') {
           assert.ok(journal().every(r => r.type !== 'compaction'), 'automatic compaction is explicitly off');
           fs.writeFileSync(path.join(home, 'config.json'), '{}');
@@ -115,21 +152,59 @@ for (const mode of ['success', 'disabled', 'failure', 'small-window', 'large-win
         if (mode === 'unrelated-error') {
           assert.equal(checkpoints.length, 0);
           assert.match(out, /Invalid input format/);
+          const previousRequests = requests.length;
+          await chat([], path.basename(file, '.jsonl'));
+          assert.equal(requests.length, previousRequests);
           return;
         }
         assert.equal(checkpoints.length, 1, out.slice(-1000));
-        assert.equal(requests.length, mode === 'long-tool-turn' ? 1 : 2, 'compaction must not replay the tool turn');
+        const delivered = mode !== 'manual';
+        assert.equal(requests.filter(r => r.tools?.length).length, proactive ? 1 : 2, 'compaction must not replay the tool turn');
+        assert.equal(fs.existsSync(path.join(home, 'editorial.md')), delivered, 'automatic delivery uses the original request');
+        if (delivered) {
+          assert.match(fs.readFileSync(path.join(home, 'editorial.md'), 'utf8'), /^# Editorial report\n\nThe saved notes start at RAW_NOTE_0\./);
+          assert.equal(records.filter(r => r.type === 'status').at(-1).status, 'complete');
+          const previousRequests = requests.length;
+          await chat([], path.basename(file, '.jsonl'));
+          assert.equal(requests.length, previousRequests, 'a completed delivery must stay complete on resume');
+        }
         assert.ok(records.some(r => r.message?.results?.some((result: { output: string }) => result.output.includes('RAW_NOTE_150'))));
         const state = checkpoints[0];
-        assert.match(state.summary, /notes\.txt/);
+        assert.match(state.summary, mode === 'command-checkpoint' ? /run_command/ : /notes\.txt/);
         assert.doesNotMatch(state.summary, /RAW_NOTE_/);
-        assert.equal(state.from, records.filter(r => r.type === 'message').length);
+        assert.equal(state.from, records.filter(r => r.type === 'message').length - (delivered ? 1 : 0));
+        if (mode === 'long-tool-turn') {
+          const store = new SessionStore(path.join(home, 'sessions'));
+          const old = store.create(home, 'compatible/' + model);
+          for (const { message } of records.filter(r => r.type === 'message').slice(0, state.from)) old.append(message);
+          old.recordCompaction({ from: state.from, summary: state.summary }, 0);
+          old.setStatus('interrupted', '入力上限に備えてツール履歴を圧縮しました。次の依頼を入力してください');
+          const before = requests.length;
+          await chat([], old.id);
+          assert.equal(store.load(old.id).status, 'complete');
+          assert.ok(requests.slice(before).every(request => !request.tools?.length));
+          assert.equal(fs.readFileSync(path.join(home, 'editorial.md'), 'utf8').match(/# Editorial report/g)?.length, 1);
+          const finished = requests.length;
+          const verified = await chat([], old.id, true);
+          assert.match(verified, /保存済みの原稿との一致/);
+          const completed = store.load(old.id);
+          completed.recordCompaction(compactLocally(completed.messages, completed.compaction, 0)!, 0);
+          completed.setStatus('error', 'Cannot connect to API: Headers Timeout Error');
+          await chat([], old.id);
+          assert.equal(requests.length, finished, 'a failed recheck of a verified file needs no new inference');
+          assert.equal(store.load(old.id).status, 'complete');
+          old.setStatus('interrupted', 'ユーザーが中断しました');
+          const stopped = requests.length;
+          await chat([], old.id);
+          assert.equal(requests.length, stopped);
+        }
         await chat(['Summarize the recorded outcome.'], path.basename(file, '.jsonl'));
         const next = requests.at(-1)!.messages;
         assert.ok(next.some(m => String(m.content).includes(state.summary)));
         assert.doesNotMatch(JSON.stringify(next), /RAW_NOTE_/);
         assert.equal(next.at(-1)?.content, 'Summarize the recorded outcome.');
         assert.equal(journal().filter(r => r.message?.results?.length).length, 1);
+        if (mode === 'command-checkpoint') assert.equal(fs.readFileSync(path.join(home, 'invocations.txt'), 'utf8'), 'read\n');
         return;
       }
       if (mode === 'latest-usage') {

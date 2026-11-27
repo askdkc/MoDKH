@@ -34,6 +34,12 @@ export class LineSource {
   /** メニュー中のコマンドを通常入力へ戻す。 */
   unread(line: string): void { this.queue.unshift(line); }
 
+  /** Let already-readable stdin arrive without waiting for someone to type a new line. */
+  async hasQueuedInput(): Promise<boolean> {
+    if (!this.queue.length && !this.closed) await new Promise<void>(resolve => setImmediate(resolve));
+    return this.queue.length > 0;
+  }
+
   /** 次の1行。入力終端なら null。 */
   next(signal?: AbortSignal): Promise<string | null> {
     // Stop must not consume a queued instruction belonging to the next turn.

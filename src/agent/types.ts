@@ -119,9 +119,15 @@ export type ModelEvent =
 
 /** 会話メッセージ。tool メッセージは1つのアシスタント応答に対する結果群を保持する。 */
 export type AgentMessage =
-  | { role: 'user'; content: string; images?: ImageAttachment[]; pdfs?: import('./documents.ts').PdfAttachment[] }
+  | { role: 'user'; content: string; origin?: 'host'; images?: ImageAttachment[]; pdfs?: import('./documents.ts').PdfAttachment[] }
   | { role: 'assistant'; content: string; toolCalls?: ToolCall[]; origin?: 'manual' }
   | { role: 'tool'; results: ToolResult[] };
+
+/** Older journals stored completion notices as untagged user-role messages. */
+export function isUserRequest(message: AgentMessage): message is Extract<AgentMessage, { role: 'user' }> & { origin?: undefined } {
+  return message.role === 'user' && message.origin !== 'host'
+    && !/^(?:\((?:バックグラウンドジョブの完了通知|子エージェントの完了通知)|The response contained no final answer\. Give the user the answer)/u.test(message.content);
+}
 
 /**
  * 推論レベル。off は「明示的に止めたい」意志であり、その対応はプロバイダーごとに置く。
