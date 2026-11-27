@@ -29,3 +29,11 @@ test('help / version はどの位置にあっても優先される', () => {
   assert.equal(parseInvocation(['--version']).args['version'], 'true');
   assert.equal(parseInvocation(['-v']).args['version'], 'true');
 });
+
+test('--apikey accepts separate and attached values and rejects missing keys', () => {
+  assert.equal(parseInvocation(['--apikey', 'a=b']).args.apikey, 'a=b');
+  assert.equal(parseInvocation(['chat', '--apikey=a=b']).args.apikey, 'a=b');
+  for (const args of [['--apikey'], ['--apikey', '--model', 'local-llm/m'], ['--apikey=']]) {
+    assert.throws(() => parseInvocation(args), /--apikey/);
+  }
+});

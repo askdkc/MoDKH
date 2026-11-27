@@ -40,6 +40,16 @@ modkh
 
 `/pdf ~/Downloads/仕様書.pdf` のようにルート外のPDFを明示すると、追加確認なしで選んだページの本文と画像をモデルに送信します。ルート内のパスがシンボリックリンク経由でルート外を指す場合は、送信前に確認します。ファイルが見つからない場合、似た名前があればエラーに候補を表示します。
 
+## Local LLM に接続する
+
+`/connect` で **Local LLM** を選び、OpenAI 互換 API のベース URL と API キーを入力してモデルを選びます。キーが不要な場合は空欄のまま Enter を押します。
+
+モデル ID が分かっていれば、起動時に直接接続できます。次の例では、URL とモデル ID を接続先に合わせ、環境変数 `LOCAL_LLM_API_KEY` に用意したキーを渡します。認証が不要なら `--apikey "$LOCAL_LLM_API_KEY"` を省略します。
+
+```sh
+modkh --model local-llm/inkling-2-mini-sq-10 --base-url http://localhost:8888/v1 --apikey "$LOCAL_LLM_API_KEY"
+```
+
 ## macOS の依存ツール（任意）
 
 Lisp プリセット・前鬼（Stateright）・Rust 解析を使う場合だけ用意します。Node.js と npm は[インストール](#インストール)の手順で導入済みとします。

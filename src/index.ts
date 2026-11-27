@@ -10,9 +10,9 @@ const VERSION = APP_VERSION;
 const HELP = `modkh ${VERSION} — MoDKH (Mixture of DKH)
 
 使い方:
-  modkh [--model <provider>/<model>] [--cwd <dir>] [--resume <id>] [--base-url <url>]
+  modkh [--model <provider>/<model>] [--cwd <dir>] [--resume <id>] [--base-url <url>] [--apikey <key>]
       (対話ハーネスを開く。言語別の調査担当は /agents で確認)
-  modkh chat --model <provider>/<model> [--cwd <dir>] [--resume <id>] [--base-url <url>]
+  modkh chat --model <provider>/<model> [--cwd <dir>] [--resume <id>] [--base-url <url>] [--apikey <key>]
   modkh --resume <id> --saved-results            保存済みの資料から回答・レポートを仕上げる
   modkh chat --lisp-config agents.lisp --trust-lisp-sha256 SHA256 [--sbcl PATH] [--verification-isolation required|integrity-only]
       [--routing auto] [--lean PATH] [--stateright PATH]
@@ -30,6 +30,7 @@ const HELP = `modkh ${VERSION} — MoDKH (Mixture of DKH)
   /connect chatgpt                             ブラウザで ChatGPT 認証
   /connect opencode                            OpenCode Zen のモデル選択
   /connect opencode-go                         OpenCode Go のモデル選択(同じ OPENCODE_API_KEY)
+  /connect local-llm                           Local LLM のURL・任意のAPIキーを入力
   /connect ollama                              Ollama Local のモデル選択
   /connect ollama-cloud                        Ollama Cloud の認証・モデル選択
   /agents                                      子エージェント一覧
@@ -51,7 +52,7 @@ const HELP = `modkh ${VERSION} — MoDKH (Mixture of DKH)
 モデル一覧は固定値を持たず、/connect と /models のたびに各プロバイダーの一覧APIから取得する。
 取得できないときは理由を表示し、モデルIDの直接入力を案内する(古い一覧へのフォールバックはしない)。
 
-キーは環境変数から読む(例: OPENAI_API_KEY, ANTHROPIC_API_KEY,
+--apikey <key> は起動時の接続先に使う。省略すると保存済みキーや環境変数から読む(例: OPENAI_API_KEY, ANTHROPIC_API_KEY,
 GOOGLE_GENERATIVE_AI_API_KEY, DEEPSEEK_API_KEY, OPENCODE_API_KEY, OPENROUTER_API_KEY,
 INFRON_API_KEY, HERMES_API_KEY, OLLAMA_API_KEY, GROQ_API_KEY, XAI_API_KEY)。
 OPENCODE_API_KEY は OpenCode Zen と Go の両方で使う(片方の入力で両方に接続できる)。
@@ -83,6 +84,12 @@ export function parseInvocation(argv: readonly string[]): ParsedInvocation {
       args['help'] = 'true';
     } else if (a === '--version' || a === '-v') {
       args['version'] = 'true';
+    } else if (a === '--apikey' || a?.startsWith('--apikey=')) {
+      const key = a === '--apikey' ? argv[++i] : a.slice('--apikey='.length);
+      if (!key?.trim() || (a === '--apikey' && key.startsWith('--'))) {
+        throw new Error('--apikey に API キーを指定してください');
+      }
+      args.apikey = key.trim();
     } else if (a?.startsWith('--')) {
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith('--')) {
@@ -102,7 +109,14 @@ export function parseInvocation(argv: readonly string[]): ParsedInvocation {
 }
 
 export function main(argv: readonly string[]): void {
-  const { cmd, args } = parseInvocation(argv);
+  let invocation: ParsedInvocation;
+  try { invocation = parseInvocation(argv); }
+  catch (e) {
+    process.stderr.write(`エラー: ${(e as Error).message}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const { cmd, args } = invocation;
   if (args['help'] === 'true') {
     process.stdout.write(HELP);
     return;
@@ -118,6 +132,10 @@ async function dispatch(cmd: string, args: Record<string, string | undefined>, a
   try {
     if (cmd === 'chat') {
       const { recordChat, formatRecordingDiagnostic } = await import('./cli/agenticreplay.ts');
+      if (process.env.MODKH_AGENTICREPLAY_LAUNCH_CWD && process.env.MODKH_AGENTICREPLAY_APIKEY) {
+        args.apikey ??= process.env.MODKH_AGENTICREPLAY_APIKEY;
+        delete process.env.MODKH_AGENTICREPLAY_APIKEY;
+      }
       const recorded = await recordChat(fileURLToPath(import.meta.url), argv, args);
       if (recorded !== undefined) {
         process.exitCode = recorded.exitCode;

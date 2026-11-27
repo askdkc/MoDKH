@@ -1,5 +1,6 @@
 import { planAccessToken } from '../model/chatgpt/login.ts';
 import { hasChatGptConnection } from '../model/chatgpt/tokens.ts';
+import type { ModelListConnection } from './model-catalog.ts';
 import { resolveApiKey } from './keys.ts';
 
 export type OfficialProvider = 'openai' | 'chatgpt';
@@ -9,17 +10,17 @@ export function hasModelCredentials(provider: OfficialProvider): boolean {
 }
 
 /** Fetch afresh for each picker; never substitute a baked-in list or persist account entitlements. */
-export async function fetchOfficialModels(provider: OfficialProvider, signal: AbortSignal): Promise<string[]> {
+export async function fetchOfficialModels(provider: OfficialProvider, signal: AbortSignal, connection?: ModelListConnection): Promise<string[]> {
   const headers: Record<string, string> = { accept: 'application/json' };
   let endpoint: string;
   if (provider === 'chatgpt') {
     headers.authorization = `Bearer ${await planAccessToken(signal)}`;
     endpoint = 'https://api.openai.com/v1/models';
   } else {
-    const key = resolveApiKey('openai', process.env, 'OPENAI_API_KEY');
+    const key = connection?.apiKey ?? resolveApiKey('openai', process.env, 'OPENAI_API_KEY');
     if (!key) throw new Error('OPENAI_API_KEY が未設定です。/connect openai で認証してください');
     headers.authorization = `Bearer ${key}`;
-    endpoint = 'https://api.openai.com/v1/models';
+    endpoint = (connection?.baseUrl ?? 'https://api.openai.com/v1').replace(/\/$/, '') + '/models';
   }
   const response = await fetch(endpoint, { headers, signal, redirect: 'error' });
   if (!response.ok) throw new Error(`公式モデル一覧の取得に失敗しました: HTTP ${response.status}`);
@@ -41,14 +42,14 @@ export async function fetchOfficialModels(provider: OfficialProvider, signal: Ab
 }
 
 /** Own cancellation and diagnostics, keeping failed retrieval distinct from an empty catalogue. */
-export async function officialModelChoices(provider: OfficialProvider, write: (text: string) => void, signal?: AbortSignal): Promise<string[] | null> {
+export async function officialModelChoices(provider: OfficialProvider, write: (text: string) => void, signal?: AbortSignal, connection?: ModelListConnection): Promise<string[] | null> {
   const controller = new AbortController();
   const cancel = () => controller.abort();
   if (!signal) process.on('SIGINT', cancel);
   const activeSignal = signal ?? controller.signal;
   write(`${provider}: 公式モデル一覧を取得中…（Ctrl+Cで中止）\n`);
   try {
-    const models = await fetchOfficialModels(provider, AbortSignal.any([activeSignal, AbortSignal.timeout(10_000)]));
+    const models = await fetchOfficialModels(provider, AbortSignal.any([activeSignal, AbortSignal.timeout(10_000)]), connection);
     write(`${provider}: 公式モデル一覧 ${models.length}件\n`);
     return models;
   } catch (error) {

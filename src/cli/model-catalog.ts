@@ -13,6 +13,11 @@ import { resolveApiKey } from './keys.ts';
 /** 一覧取得の待ち時間。応答が遅いプロバイダーでも操作を止めすぎない。 */
 const MODELS_TIMEOUT_MS = 10_000;
 
+export interface ModelListConnection {
+  baseUrl?: string;
+  apiKey?: string;
+}
+
 export interface ModelListResult {
   /** 取得できたモデルID(接頭辞なし)。 */
   ids: string[];
@@ -49,15 +54,16 @@ export async function fetchProviderModels(
   provider: string,
   signal: AbortSignal,
   env: NodeJS.ProcessEnv = process.env,
+  connection?: ModelListConnection,
 ): Promise<ModelListResult> {
   const definition = providerDefinition(provider);
   if (!definition) return { ids: [], note: '未知のプロバイダー' };
   if (!supportsLiveModels(provider) || !definition.modelsPath) {
     return { ids: [], note: '一覧APIが未定義。モデルIDを直接入力する' };
   }
-  const base = (modelBaseUrl(provider, undefined, env) ?? definition.baseURL)?.replace(/\/$/, '');
+  const base = (modelBaseUrl(provider, connection?.baseUrl, env) ?? definition.baseURL)?.replace(/\/$/, '');
   if (!base) return { ids: [], note: '接続先URLが未設定' };
-  const key = resolveApiKey(provider, env, definition.env);
+  const key = connection ? connection.apiKey : resolveApiKey(provider, env, definition.env);
   if (definition.env && !key) {
     return { ids: [], note: `環境変数 ${definition.env} が未設定` };
   }
@@ -106,6 +112,7 @@ export async function providerModelChoices(
   write: (text: string) => void,
   env: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
+  connection?: ModelListConnection,
 ): Promise<ModelListResult | null> {
   const controller = new AbortController();
   const cancel = () => controller.abort();
@@ -113,7 +120,7 @@ export async function providerModelChoices(
   const activeSignal = signal ?? controller.signal;
   write(`${provider}: モデル一覧を取得中…（Ctrl+Cで中止）\n`);
   try {
-    const result = await fetchProviderModels(provider, activeSignal, env);
+    const result = await fetchProviderModels(provider, activeSignal, env, connection);
     if (activeSignal.aborted) {
       write(`(${provider}: 取得を中止しました。モデルIDの直接入力も使えます)\n`);
       return null;

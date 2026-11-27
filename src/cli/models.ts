@@ -1,7 +1,7 @@
 import type { ChatTerminal, Choice } from './terminal.ts';
 import { toRefs, SEARCH_ROW_VALUE, LOCAL_MODEL_REFS } from './catalog.ts';
 import { hasModelCredentials, officialModelChoices } from './official-models.ts';
-import { providerModelChoices } from './model-catalog.ts';
+import { providerModelChoices, type ModelListConnection } from './model-catalog.ts';
 import { knownProviders, providerDefinition, supportsLiveModels } from '../model/providers.ts';
 import { resolveApiKey } from './keys.ts';
 
@@ -14,11 +14,11 @@ export function listsModels(provider: string): boolean {
  * `/models` の候補。固定リストは持たず、指定または接続済みのプロバイダーから毎回取得する。
  * 取得できなければ空のまま「一覧外は直接指定」を案内する。
  */
-async function liveSuggestions(provider: string, write: (text: string) => void, signal: AbortSignal): Promise<string[] | null> {
+async function liveSuggestions(provider: string, write: (text: string) => void, signal: AbortSignal, connection?: ModelListConnection): Promise<string[] | null> {
   if (provider === 'openai' || provider === 'chatgpt') {
-    return await officialModelChoices(provider, write, signal);
+    return await officialModelChoices(provider, write, signal, connection);
   }
-  const result = await providerModelChoices(provider, write, process.env, signal);
+  const result = await providerModelChoices(provider, write, process.env, signal, connection);
   return result === null ? null : toRefs(provider, result.ids);
 }
 
@@ -26,7 +26,7 @@ function entries(refs: readonly string[], current: string | null): Choice[] {
   return refs.map(ref => ({ value: ref, label: ref, ...(ref === current ? { detail: '選択中' } : {}) }));
 }
 
-export async function selectModel(lines: ChatTerminal, query: string, current: string | null): Promise<string | null> {
+export async function selectModel(lines: ChatTerminal, query: string, current: string | null, connection?: ModelListConnection): Promise<string | null> {
   const requested = query.trim().split(/[\s/]/)[0];
   const currentProvider = current?.split('/')[0];
   const providers = requested && listsModels(requested) ? [requested]
@@ -43,7 +43,7 @@ export async function selectModel(lines: ChatTerminal, query: string, current: s
   let fetched: string[];
   try {
     const results = await Promise.all(providers.map(provider =>
-      liveSuggestions(provider, text => lines.write(text), controller.signal)));
+      liveSuggestions(provider, text => lines.write(text), controller.signal, provider === currentProvider ? connection : undefined)));
     if (controller.signal.aborted) return null;
     fetched = results.flatMap(refs => refs ?? []);
   } finally { process.removeListener('SIGINT', cancel); }

@@ -35,6 +35,7 @@ export const CONNECT_PROVIDERS: readonly ConnectProvider[] = [
   { value: 'openai', label: 'OpenAI', detail: 'ChatGPT OAuth (chatgpt) / OPENAI_API_KEY', key: 'OPENAI_API_KEY' },
   { value: 'opencode', label: 'OpenCode Zen', detail: 'Console · OPENCODE_API_KEY', key: 'OPENCODE_API_KEY' },
   { value: 'opencode-go', label: 'OpenCode Go', detail: 'Console · 同じ OPENCODE_API_KEY', key: 'OPENCODE_API_KEY' },
+  { value: 'local-llm', label: 'Local LLM', detail: 'OpenAI互換 URL · APIキーは任意', key: null },
   { value: 'ollama', label: 'Ollama Local', detail: 'ローカル · OLLAMA_BASE_URL', key: null },
   { value: 'llama-server', label: 'llama.cpp Local', detail: 'ローカル · LLAMA_SERVER_BASE_URL', key: null },
   { value: 'ollama-cloud', label: 'Ollama Cloud', detail: 'ollama.com · OLLAMA_API_KEY', key: 'OLLAMA_API_KEY' },

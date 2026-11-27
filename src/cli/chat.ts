@@ -32,6 +32,7 @@ import { JobRegistry } from '../tools/jobs.ts';
 import { runAgentLoop } from '../agent/loop.ts';
 import { prepareSkillContext, mergeSkillContext, removeSkillSection, type SkillContext } from '../agent/skills.ts';
 import { parseModelRef, providerKeyEnv, modelBaseUrl as modelBaseUrlFor } from '../model/factory.ts';
+import { createHash } from 'node:crypto';
 import { selectModel } from './models.ts';
 import { loginChatGpt, type LoginOptions } from '../model/chatgpt/login.ts';
 import { hasChatGptConnection } from '../model/chatgpt/tokens.ts';
@@ -196,6 +197,18 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   const toolDisplay = new ToolDisplay(session.messages);
   const { model: candidate, baseUrl } = selectInitialConnection(args, config, args['resume'] ? session : undefined);
   let connectionBaseUrl = baseUrl;
+  // Local LLM URLs are user-defined. Scope each saved credential to its endpoint.
+  const localKeyName = (url: string) => 'local-llm-' + createHash('sha256').update(url).digest('hex').slice(0, 48);
+  let launchKey = args.apikey;
+  const launchProvider = candidate?.split('/')[0];
+  if (launchKey && !candidate) throw new Error('--apikey の接続先を --model で指定してください');
+  const connectionKey = (provider: string, url?: string) => {
+    if (launchKey && provider === launchProvider && modelBaseUrlFor(provider, url) === modelBaseUrlFor(provider, baseUrl)) {
+      return launchKey;
+    }
+    if (provider === 'local-llm') return url ? sessionKeys.get(localKeyName(url)) : undefined;
+    return resolveApiKey(provider, process.env, providerKeyEnv(provider)) ?? sessionKeys.get(canonicalKeyProvider(provider));
+  };
   let modelId: string | null = null;
   let model: Model | null = null;
   // A persisted offline fixture must never become an implicit coding model.
@@ -203,7 +216,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     try {
       model = makeModel(candidate, connectionBaseUrl,
         session.messages.filter(m => m.role === 'assistant' && m.origin !== 'manual').length,
-        resolveApiKey(parseModelRef(candidate).provider), { timeoutMs });
+        connectionKey(parseModelRef(candidate).provider, connectionBaseUrl), { timeoutMs });
       modelId = candidate;
     } catch (e) {
       if (args['model']) throw e;
@@ -317,7 +330,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       if (!ref) throw new Error('/connect でモデルを接続してください');
       const provider = parseModelRef(ref).provider;
       const baseUrl = ref === modelId ? connectionBaseUrl : undefined;
-      const key = sessionKeys.get(canonicalKeyProvider(provider));
+      const key = connectionKey(provider, baseUrl);
       return { ref, create: () => makeModel(ref, baseUrl, 0, key, { timeoutMs }) };
     },
     progress: message => ui.write(`${ui.interactive ? message.replace(/^(\[[^\]]+\]) 子を実行: .+$/, '$1 子を実行中') : message}\n`),
@@ -619,7 +632,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
               nextMetadataRead = Date.now() + 300_000;
               const { provider } = parseModelRef(activeModel.id);
               contextWindow = await readContextWindow(activeModel.id, connectionBaseUrl,
-                resolveApiKey(provider) ?? sessionKeys.get(canonicalKeyProvider(provider)) ?? process.env[providerKeyEnv(provider) ?? ''], ac.signal);
+                connectionKey(provider, connectionBaseUrl), ac.signal);
             }
             if (!contextWindow || lastInputTokens < contextWindow * 0.75 || ac.signal.aborted) return;
           }
@@ -749,7 +762,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ? session.messages.filter((m) => m.role === 'assistant' && m.origin !== 'manual').length : 0;
       const provider = parseModelRef(ref).provider;
       const nextModel = makeModel(ref, baseUrl, fixedSkip,
-        resolveApiKey(provider, process.env, providerKeyEnv(provider)) ?? sessionKeys.get(canonicalKeyProvider(provider)), { timeoutMs });
+        connectionKey(provider, baseUrl), { timeoutMs });
       session.setConnection(ref, baseUrl);
       model = nextModel;
       lastInputTokens = undefined;
@@ -784,6 +797,31 @@ export async function runChat(opts: ChatOptions): Promise<void> {
     const provider = CONNECT_PROVIDERS.find(p => p.value === rest);
     if (provider) {
       let target: string = provider.value;
+      if (target === 'local-llm') {
+        const input = (await ui.ask('OpenAI互換 API のベースURL（例: http://localhost:1234/v1）'))?.trim();
+        if (!input || input === '/cancel') return;
+        if (input.startsWith('/')) { ui.unread(input); return; }
+        const url = URL.parse(input);
+        if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+          ui.write('認証情報・クエリ・フラグメントを含まない HTTP(S) のベースURLを入力してください。\n');
+          return;
+        }
+        const baseUrl = url.href.replace(/\/+$/, '');
+        const key = (await ui.ask('APIキー（不要なら空行 / /cancelで戻る）', undefined, true))?.trim();
+        if (key === undefined || key === '/cancel') return;
+        const selected = await chooseProviderModel(ui, target, { baseUrl, apiKey: key || undefined });
+        if (!selected) return;
+        launchKey = undefined;
+        const name = localKeyName(baseUrl);
+        if (key) sessionKeys.set(name, key);
+        else sessionKeys.delete(name);
+        try {
+          if (key) saveKey(name, key);
+          else removeKey(name);
+        } catch (e) { ui.write(`(キー設定を保存できません: ${(e as Error).message})\n`); }
+        await connectModel(selected, baseUrl);
+        return;
+      }
       if (target === 'openai') {
         const method = await ui.choose('OpenAI — 認証方法', [
           { value: 'chatgpt', label: 'ChatGPT', detail: 'ブラウザでOAuth認証' },
@@ -1048,8 +1086,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         continue;
       }
       if (line === '/models' || line.startsWith('/models ')) {
-        const selected = await selectModel(lines, line.slice('/models'.length).trim(), modelId);
-        if (selected) await connectModel(selected);
+        const currentProvider = modelId?.split('/')[0];
+        const connection = currentProvider && (launchKey || currentProvider === 'local-llm')
+          ? { baseUrl: modelBaseUrlFor(currentProvider, connectionBaseUrl), apiKey: connectionKey(currentProvider, connectionBaseUrl) } : undefined;
+        const selected = await selectModel(lines, line.slice('/models'.length).trim(), modelId, connection);
+        if (selected) await connectModel(selected, selected.split('/')[0] === currentProvider ? connectionBaseUrl : undefined);
         continue;
       }
       if (line === '/reasoning' || line.startsWith('/reasoning ')) {

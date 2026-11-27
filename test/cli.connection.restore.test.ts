@@ -139,3 +139,55 @@ test('public interactive startup omits the redundant session instructions', asyn
   assert.match(output, /何を調べますか/);
   assert.doesNotMatch(output, /を開始します|入力してください|\/connect で認証/);
 });
+
+test('Local LLM uses the entered URL and optional key for discovery, chat and restore', async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-local-llm-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(home, 'transport.mjs'), `
+    import fs from 'node:fs'; import path from 'node:path';
+    globalThis.fetch = async (url, init) => {
+      const auth = new Headers(init.headers).get('authorization');
+      fs.appendFileSync(path.join(process.env.MODKH_HOME, 'requests'), JSON.stringify([url, auth]) + '\\n');
+      if (url.endsWith('/models')) return Response.json({ data: [{ id: 'my-model' }] });
+      return new Response('data: [DONE]\\n\\n', { headers: { 'content-type': 'text/event-stream' } });
+    };
+  `);
+  const url = 'https://local-llm.fixture.invalid/v1';
+  const requests = path.join(home, 'requests');
+  for (const key of ['test-local-secret', '']) {
+    fs.writeFileSync(requests, '');
+    const out = await launch(home, [], ['/connect', 'local-llm', url, key, 'local-llm/my-model', 'hello', '/exit', ''].join('\n'));
+    assert.match(out, /接続しました: local-llm\/my-model/);
+    assert.doesNotMatch(out, /test-local-secret/);
+    await launch(home, [], 'hello after restart\n/exit\n');
+    const auth = key ? 'Bearer ' + key : null;
+    const calls = fs.readFileSync(requests, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.deepEqual(calls[0], [url + '/models', auth]);
+    assert.deepEqual(calls.filter(([target]) => target.endsWith('/chat/completions')), [
+      [url + '/chat/completions', auth], [url + '/chat/completions', auth],
+    ]);
+  }
+});
+
+test('--apikey overrides saved credentials only for the launch endpoint and is not saved', async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cli-apikey-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const keysPath = path.join(home, 'keys.json');
+  fs.writeFileSync(keysPath, JSON.stringify({ compatible: 'saved-key' }));
+  fs.writeFileSync(path.join(home, 'transport.mjs'), `
+    import fs from 'node:fs'; import path from 'node:path';
+    globalThis.fetch = async (url, init) => {
+      fs.appendFileSync(path.join(process.env.MODKH_HOME, 'requests'), JSON.stringify([url, new Headers(init.headers).get('authorization')]) + '\\n');
+      return new Response('data: [DONE]\\n\\n', { headers: { 'content-type': 'text/event-stream' } });
+    };
+  `);
+  const first = 'https://first.fixture.invalid/v1';
+  const second = 'https://second.fixture.invalid/v1';
+  const output = await launch(home, ['--model', 'compatible/a', '--base-url', first, '--apikey', 'launch-key'],
+    `hello\n/connect compatible/a --base-url ${second}\nhello again\n/exit\n`);
+  assert.doesNotMatch(output, /launch-key/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(keysPath, 'utf8')), { compatible: 'saved-key' });
+  assert.doesNotMatch(fs.readFileSync(path.join(home, 'config.json'), 'utf8'), /launch-key/);
+  const requests = fs.readFileSync(path.join(home, 'requests'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(requests, [[first + '/chat/completions', 'Bearer launch-key'], [second + '/chat/completions', 'Bearer saved-key']]);
+});

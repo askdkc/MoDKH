@@ -86,6 +86,7 @@ export const PROVIDERS: Readonly<Record<string, ProviderDefinition>> = {
   'llama-server': { env: null, baseURL: 'http://127.0.0.1:8080/v1', baseURLVar: 'LLAMA_SERVER_BASE_URL', modelsPath: '/models', localReasoningField: 'reasoning_content' },
   'ollama-cloud': { env: 'OLLAMA_API_KEY', baseURL: 'https://ollama.com/v1', baseURLVar: 'OLLAMA_CLOUD_BASE_URL', modelsPath: '/models' },
   lmstudio: { env: null, baseURL: 'http://127.0.0.1:1234/v1', baseURLVar: 'LMSTUDIO_BASE_URL', modelsPath: '/models' },
+  'local-llm': { env: null, modelsPath: '/models' },
   compatible: { env: null },
 };
 

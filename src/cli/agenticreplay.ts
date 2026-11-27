@@ -305,11 +305,15 @@ export async function recordChat(
   } catch { /* 会話側が改めて試し、失敗すればそこで報告する */ }
   const receipt = path.join(tmpdir(), `modkh-receipt-${process.pid}-${Date.now().toString(36)}.json`);
   try {
+    // The recorder can retain the child command line. Transfer the key outside its argv.
+    const childArgs = argv.filter((arg, i) =>
+      arg !== '--apikey' && !arg.startsWith('--apikey=') && argv[i - 1] !== '--apikey');
     const child = spawn('agenticreplay', [
       'record', 'exec', '--tls-intercept', ...tlsHosts, '--no-fs', '--no-shell', '--no-agent-spans', '--',
-      process.execPath, ...process.execArgv, entry, ...argv,
+      process.execPath, ...process.execArgv, entry, ...childArgs,
     ], { cwd, stdio: 'inherit', env: {
-      ...process.env, AGENTICREPLAY_CONTINUE_ON_STORAGE_LIMIT: '1', MODKH_AGENTICREPLAY_LAUNCH_CWD: process.cwd(), MODKH_AGENTICREPLAY_RECEIPT: receipt,
+      ...process.env, ...(args.apikey ? { MODKH_AGENTICREPLAY_APIKEY: args.apikey } : {}),
+      AGENTICREPLAY_CONTINUE_ON_STORAGE_LIMIT: '1', MODKH_AGENTICREPLAY_LAUNCH_CWD: process.cwd(), MODKH_AGENTICREPLAY_RECEIPT: receipt,
     } });
 
     const forwardInterrupt = () => child.kill('SIGINT');

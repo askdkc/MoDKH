@@ -2,7 +2,7 @@
 
 ## モデル参照と選択画面
 
-`modkh` を起動し、`/connect` で OpenAI / OpenCode Zen / OpenCode Go / Ollama Local / llama.cpp Local / Ollama Cloud / OpenRouter / Infron / Hermes Agent を選ぶ。
+`modkh` を起動し、`/connect` で OpenAI / OpenCode Zen / OpenCode Go / Local LLM / Ollama Local / llama.cpp Local / Ollama Cloud / OpenRouter / Infron / Hermes Agent を選ぶ。
 TTYでは入力で検索、↑↓で選択、Enterで決定、Escで戻る。OpenAIではChatGPT OAuthとAPIキーを選べる。
 APIキーは環境変数を優先し、未設定ならTTYで伏せ字入力できる。入力したキーは `keys.json`(0600)に保存し、次回起動時に再利用する。
 OpenAIのモデル一覧は選択画面を開くたびに公式から取得する。APIキーでは `https://api.openai.com/v1/models`、
@@ -17,6 +17,14 @@ AIプロバイダーはモデルの追加・廃止が多いため、組み込み
 
 `chat --model <provider>/<model>`、または `/connect <provider>/<model> [--base-url <url>]` で直接指定もできる。
 接続に失敗しても別の接続先へ自動で切り替えない。モデルの選択だけではAPI到達や利用権限は検証されない。
+
+起動時にAPIキーを渡すには `--apikey` を使う。たとえば次のコマンドで、Local LLM に接続できる。
+
+```sh
+modkh --model local-llm/my-model --base-url http://localhost:1234/v1 --apikey "$LOCAL_LLM_API_KEY"
+```
+
+`--apikey` は起動時の接続先で環境変数や保存済みキーより優先され、その起動中だけ有効になる。キーが不要な場合はオプションを省略する。
 
 ## 選んだモデルの保存と次回起動
 
@@ -36,6 +44,7 @@ AIプロバイダーはモデルの追加・廃止が多いため、組み込み
 | `openai` | `OPENAI_API_KEY` | OpenAI API |
 | `opencode` | `OPENCODE_API_KEY` | `https://opencode.ai/zen/v1` / `OPENCODE_BASE_URL` |
 | `opencode-go` | `OPENCODE_API_KEY`(Zenと共通) | `https://opencode.ai/zen/go/v1` / `OPENCODE_GO_BASE_URL` |
+| `local-llm` | 任意のAPIキー | `/connect local-llm` でベースURL（例 `http://localhost:1234/v1`）を入力 |
 | `ollama`（Local） | 不要 | `http://127.0.0.1:11434/v1` / `OLLAMA_BASE_URL` |
 | `llama-server`（Local） | 不要 | `http://127.0.0.1:8080/v1` / `LLAMA_SERVER_BASE_URL` |
 | `ollama-cloud` | `OLLAMA_API_KEY` | `https://ollama.com/v1` / `OLLAMA_CLOUD_BASE_URL` |
@@ -50,6 +59,8 @@ AIプロバイダーはモデルの追加・廃止が多いため、組み込み
 HermesはモデルAPIではなく、サーバー側でツールを実行する別エージェント。
 Hermes側の `API_SERVER_KEY` をMODKHの `HERMES_API_KEY` に指定する。
 MODKHの個別承認やStopでリモートの副作用を制御・停止できる保証はないため、接続時に確認画面を出す。
+
+Local LLM はOpenAI互換APIに接続する。APIキーが不要なら空欄のままEnterを押し、モデルを選ぶ。キーは接続先URLごとに保存され、同じURLに空欄で接続し直すと削除される。
 
 ## Ollama Local / Cloud
 

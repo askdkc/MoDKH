@@ -84,8 +84,8 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
     );
   }
   const baseUrl = modelBaseUrl(spec.provider, spec.baseUrl, env);
-  if (spec.provider === 'compatible' && !baseUrl) {
-    throw new Error('compatible プロバイダーには --base-url で互換APIのURLが必要');
+  if ((spec.provider === 'compatible' || spec.provider === 'local-llm') && !baseUrl) {
+    throw new Error(`${spec.provider} プロバイダーには --base-url で互換APIのURLが必要`);
   }
   const key = spec.apiKey ?? (preset.env ? env[preset.env] : undefined);
 

@@ -1,7 +1,7 @@
 import type { ChatTerminal, Choice } from './terminal.ts';
 import { modelProviders, toRefs, SEARCH_ROW_VALUE, CONNECT_PROVIDERS, LOCAL_MODEL_REFS } from './catalog.ts';
 import { officialModelChoices } from './official-models.ts';
-import { providerModelChoices } from './model-catalog.ts';
+import { providerModelChoices, type ModelListConnection } from './model-catalog.ts';
 import { knownProviders, supportsLiveModels } from '../model/providers.ts';
 
 export { CONNECT_PROVIDERS, modelProviders };
@@ -23,7 +23,7 @@ export async function confirmRemoteAgent(ui: ChatTerminal): Promise<boolean> {
  * プロバイダーのモデルを選ぶ。一覧は開くたびにプロバイダーから取得し、固定値は使わない。
  * 取得できなくても「モデルIDを直接入力」で先へ進める。
  */
-export async function chooseProviderModel(ui: ChatTerminal, provider: string): Promise<string | null> {
+export async function chooseProviderModel(ui: ChatTerminal, provider: string, connection?: ModelListConnection): Promise<string | null> {
   let refs: string[];
   if (provider === 'openai' || provider === 'chatgpt') {
     const official = await officialModelChoices(provider, text => ui.write(text));
@@ -33,7 +33,7 @@ export async function chooseProviderModel(ui: ChatTerminal, provider: string): P
     // プロバイダーが公開する一覧が無い擬似接続先。IDは直接入力してもらう。
     refs = LOCAL_MODEL_REFS.filter(ref => ref.startsWith(`${provider}/`));
   } else if (knownProviders().includes(provider) && supportsLiveModels(provider)) {
-    const result = await providerModelChoices(provider, text => ui.write(text));
+    const result = await providerModelChoices(provider, text => ui.write(text), process.env, undefined, connection);
     if (result === null) return null;
     refs = toRefs(provider, result.ids);
   } else {
