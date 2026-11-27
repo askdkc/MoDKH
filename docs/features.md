@@ -50,25 +50,47 @@ Rust の解析だけが必要なら `brew install rust-analyzer` でも構いま
 
 ## `/cyber` 用のツール（任意）
 
-`modkh` の入力欄で `/cyber https://example.com/app` を実行すると、Nmap が対象ホストの IP アドレスを1つ使って URL の TCP ポートを検査し、`open`、`closed` などの状態を表示します。ポートを省略した場合は HTTP で80、HTTPS で443を使います。続いて `curl` が指定した URL に HEAD リクエストを1回送ります。結果には HTTP ステータスとセキュリティヘッダーの有無が表示されます。HTTPS では TLS 証明書も検証します。URL がリダイレクトを返した場合は、その応答を表示します。
+`modkh` の入力欄で `/cyber https://example.com/app` を実行すると、承認後に次の順で点検します。承認画面にはクエリを伏せた URL、接続するポート、実行する検査、起動しない検査を表示します。接続先は指定したホストだけで、リダイレクトは追跡しません。
 
-`/cyber tools <URL>` でも同じ検査ができます。URL の検査には PATH 上の `nmap` と `curl` を使います。引数なしの `/cyber` で作業ディレクトリを点検するには、次のツールをインストールします。
+1. **DNS**: A/AAAA、SPF、DMARC、CAA。SPF と DMARC がない場合は指摘します。
+2. **Nmap**: URL のポート1つと、代表的な16ポートの公開状態。データストアのポートが公開されていれば指摘します。
+3. **TLS**（HTTPS）: `openssl` で証明書チェーン、有効期限、SAN、TLS バージョンを確認します。
+4. **HTTP**: `curl` で GET・HEAD・OPTIONS を送り、セキュリティヘッダー、Cookie の属性、CORS、許可メソッド、公開されない前提の固定パス4件、混在コンテンツ、例外の露出を確認します。Cookie の値と URL のクエリは表示しません。
+5. **nuclei**: 導入とテンプレートがある場合だけ、中〜重大のテンプレート検査を実行します。未導入なら「未実行」と表示し、他の検査は続けます。
+
+`/cyber https://example.com/app --source .` は、URL の検査に加えてそのディレクトリを点検します。`.` はそのサイトに対応すると利用者が指定したチェックアウトです。パスはワークスペース内の実在するディレクトリに限り、存在しない場合やシンボリックリンクで外を指す場合は検査を開始しません。空白を含むパスも指定できます。
+
+| ツール | 確認する内容 |
+| --- | --- |
+| Trivy | 依存パッケージの既知の脆弱性 |
+| OSV-Scanner | ロックファイルなどのパッケージと OSV の勧告 |
+| Semgrep | p/default のルールに該当するファイルと行 |
+| Gitleaks | 秘密情報の候補。値は伏せ、位置とルール名だけを表示 |
+
+Trivy と OSV-Scanner が同じ勧告を指摘したときは出典を併記し、1件として数えます。`--sqlmap-summary <JSON>` は、`{"target": "...", "date": "...", "verdict": "..."}` の形の外部診断の要約を、対象 URL が一致するときだけ表示します。MoDKH は sqlmap を起動しません。
+
+各検査は「検出あり」「検出なし」「未実行」「失敗」「中断」を分けて表示します。ツール未導入は「未実行」であり「検出なし」ではありません。Ctrl-C は実行中のプロセスにも伝え、残りの検査を開始しません。
+
+URL の検査には PATH 上の `nmap`、`curl`、`openssl` を使います。`nuclei` を導入するとテンプレート検査も加わります。Nikto と sqlmap は単独で使うツールで、`/cyber` は起動しません。引数なしの `/cyber` で作業ディレクトリを点検するには、次のツールをインストールします。
 
 **macOS（Homebrew）**
 
 ```sh
-brew install trivy osv-scanner semgrep gitleaks sqlmap nmap
+brew install trivy osv-scanner semgrep gitleaks sqlmap nmap nuclei nikto
+nuclei -update-templates
 ```
 
 **Arch Linux**
 
 ```sh
-sudo pacman -Syu --needed trivy osv-scanner gitleaks sqlmap nmap python-pipx
+sudo pacman -Syu --needed trivy osv-scanner gitleaks sqlmap nmap nikto python-pipx
 pipx install semgrep
 pipx ensurepath
 ```
 
-インストール後、新しいターミナルで `modkh` を起動し、`/cyber tools` で各ツールのバージョンを確認します。
+Arch Linux で Nuclei を導入するには、CPU に合う Linux 版を展開し、`nuclei` を PATH の通ったディレクトリに置きます。[Nuclei 公式リリース](https://github.com/projectdiscovery/nuclei/releases)
+
+インストール後は、新しいターミナルで `command -v nuclei nikto` を実行すると両方の配置先を確認できます。MoDKH が呼び出すツールのバージョンは `/cyber tools` で確認できます。
 
 ## プロジェクトの MCP サーバー
 

@@ -75,7 +75,7 @@ export const COMMANDS: readonly Choice[] = [
   { value: '/reasoning', label: '/reasoning', detail: '推論レベル (off/minimal/low/medium/high/max)' },
   { value: '/annimation', label: '/annimation', detail: '待機アニメーション (on/off)' },
   { value: '/agents', label: '/agents', detail: '子の一覧・委譲・同時実行数' },
-  { value: '/cyber', label: '/cyber', detail: '/cyber <URL> で TCP ポートと応答ヘッダーを検査（引数なしでローカル検査）' },
+  { value: '/cyber', label: '/cyber', detail: '/cyber <URL> [--source パス] で URL とソースを点検（引数なしでローカル検査）' },
   { value: '/pstack', label: '/pstack', detail: 'pstack手順の常時注入 (on/off/--save)' },
   { value: '/usage', label: '/usage', detail: 'トークン使用量の内訳' },
   { value: '/compact', label: '/compact', detail: '会話履歴をローカルで圧縮' },

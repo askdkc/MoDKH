@@ -5,7 +5,7 @@
       "directory": "cyber",
       "description": "URL の TCP ポート・応答ヘッダーと、ローカルの依存関係・コード・秘密情報を検査する。",
       "files": {
-        "SKILL.md": "6f9a2682bb560d3787a1205bedc6bf9eac416c4a7960055965548f055bfe8475"
+        "SKILL.md": "0db14e06ed8608c744a43b2c126ca701d822dd869bcaaefb95354be3d92bbe43"
       }
     }
   ]
