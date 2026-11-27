@@ -135,7 +135,8 @@ test('edit guard: a started verification keeps running as a job at its deadline'
           yield { type: 'tool-call', call: { id: 'e', name: 'edit_file', args: {
             path: 'state.txt', old_string: 'before', new_string: 'after' } } };
           yield { type: 'tool-call', call: { id: 'c', name: 'run_command', args: {
-            command: 'sleep 2; printf VERIFIED_AFTER_DEADLINE', timeoutMs: 200, if_edit_succeeds: true } } };
+            command: 'printf READY; while [ ! -f finish ]; do sleep 0.05; done; printf VERIFIED_AFTER_DEADLINE',
+            timeoutMs: 200, if_edit_succeeds: true } } };
           yield { type: 'finish', stopReason: 'tool-calls' };
         } else {
           yield { type: 'text-delta', text: 'done' };
@@ -154,13 +155,19 @@ test('edit guard: a started verification keeps running as a job at its deadline'
     assert.equal(outcome.outcome, 'complete');
     // The command keeps running after the call returned; poll the registry the way job_output does.
     let read: ReturnType<JobRegistry['read']> | undefined;
+    let stdout = '';
     for (let attempt = 0; attempt < 100; attempt++) {
       read = jobs.read(view.id);
+      stdout += read.stdout;
+      if (read.stdout && stdout === 'READY') {
+        assert.equal(read.job.status, 'running');
+        fs.writeFileSync(path.join(root, 'finish'), '');
+      }
       if (read.job.status !== 'running') break;
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     assert.equal(read?.job.status, 'completed', JSON.stringify(read?.job));
-    assert.match(read?.stdout ?? '', /VERIFIED_AFTER_DEADLINE/);
+    assert.equal(stdout, 'READYVERIFIED_AFTER_DEADLINE');
   } finally {
     await jobs.close?.();
     fs.rmSync(root, { recursive: true, force: true });
