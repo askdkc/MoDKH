@@ -1,0 +1,12 @@
+{
+  "skills": [
+    {
+      "name": "cyber",
+      "directory": "cyber",
+      "description": "コマンドラインでローカルの依存関係・コード・秘密情報を検査する。",
+      "files": {
+        "SKILL.md": "934c1c30670a0de5094fadba0c327c0a7a214f208fb94782648d135ceab08570"
+      }
+    }
+  ]
+}

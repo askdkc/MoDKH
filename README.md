@@ -66,6 +66,24 @@ Rust の解析だけが必要なら `brew install rust-analyzer` でも構いま
 
 `modkh language install` は SBCL と Rust toolchain を自動導入しません。他のOS向けの手順は[依存パッケージ](docs/setup.md)にあります。
 
+## `/cyber` 用のツール（任意）
+
+**macOS（Homebrew）**
+
+```sh
+brew install trivy osv-scanner semgrep gitleaks sqlmap nmap
+```
+
+**Arch Linux**
+
+```sh
+sudo pacman -Syu --needed trivy osv-scanner gitleaks sqlmap nmap python-pipx
+pipx install semgrep
+pipx ensurepath
+```
+
+インストール後、新しいターミナルで `modkh` を起動し、`/cyber tools` で6ツールのバージョンを確認します。
+
 ## プロジェクトの MCP サーバー
 
 プロジェクトのルートで `modkh` を起動すると、通常のチャットで次の stdio サーバーを使えます。Svelte と Laravel Boost は検出時に起動し、最初の依頼を待たずに接続します。どちらも MoDKH 自身が決めた固定の起動コマンドを作業ルートで実行するため、`permissions` の既定値 `workspace` でも起動時の確認は出ません。`permissions` を `none` にすると、この接続も含めて毎回確認します。接続中のサーバーはサイドバーに表示され、チャット終了時に切断します。

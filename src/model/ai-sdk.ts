@@ -31,7 +31,7 @@ export interface AiSdkModelOptions {
   replayChatReasoning?: boolean;
 }
 
-function toCoreMessages(req: ModelRequest, replayChatReasoning: boolean): ModelMessage[] {
+function toCoreMessages(req: ModelRequest, replayChatReasoning: boolean, rejectedImages: WeakSet<object>): ModelMessage[] {
   const out: ModelMessage[] = [];
   // Chat Completions accepts images in user content. Keep each tool batch contiguous
   // and attach its observations only after all matching tool receipts.
@@ -71,6 +71,11 @@ function toCoreMessages(req: ModelRequest, replayChatReasoning: boolean): ModelM
       out.push({ role: 'tool', content: parts });
       for (const result of m.results) {
         if (!result.image) continue;
+        if (rejectedImages.has(result.image)) {
+          observations.push({ role: 'user', content: 'The image from tool call ' + JSON.stringify(result.callId)
+            + ' was not inspected because this endpoint rejected image input.' });
+          continue;
+        }
         const image = parseImage(result.image);
         observations.push({ role: 'user', content: [
           { type: 'text', text: `Image returned by tool call ${JSON.stringify(result.callId)} (observation).` },
@@ -102,6 +107,7 @@ function toAiSdkTools(specs: ToolSpec[]): ToolSet {
  */
 export class AiSdkModel implements Model {
   readonly id: string;
+  private readonly rejectedImages = new WeakSet<object>();
   private readonly lm: LanguageModel;
   private readonly timeoutMs: number;
   private readonly provider?: string;
@@ -130,6 +136,7 @@ export class AiSdkModel implements Model {
     let usage: TokenUsage | undefined;
     let errorMessage: string | undefined;
     let rejectedToolHistory = false;
+    let rejectedImageInput = false;
     let sawToolCall = false;
     const privateReasoning: string[] = [];
     let finishReason: 'stop' | 'tool-calls' | 'length' | undefined;
@@ -148,7 +155,7 @@ export class AiSdkModel implements Model {
     try {
       const result = streamText({
         model: this.lm,
-        messages: toCoreMessages(req, this.replayChatReasoning),
+        messages: toCoreMessages(req, this.replayChatReasoning, this.rejectedImages),
         system: req.system,
         tools: toAiSdkTools(req.tools),
         abortSignal: requestSignal,
@@ -200,6 +207,8 @@ export class AiSdkModel implements Model {
             errorMessage = `モデル応答は未完了: ${part.finishReason}`;
           }
         } else if (part.type === 'error') {
+          rejectedImageInput = APICallError.isInstance(part.error) && part.error.statusCode === 400
+            && part.error.message === 'Multimodal data provided, but model does not support multimodal requests.';
           rejectedToolHistory = APICallError.isInstance(part.error) && part.error.statusCode === 500
             && part.error.message === 'no user query found in messages';
           errorMessage = (part.error as Error)?.message ?? String(part.error);
@@ -214,6 +223,21 @@ export class AiSdkModel implements Model {
     if (usage && (usage.input !== undefined || usage.output !== undefined)) yield { type: 'usage', ...usage };
     if (aborted) {
       yield { type: 'finish', stopReason: 'aborted' };
+    } else if (rejectedImageInput && !timedOut && !sawToolCall
+      && !req.messages.some(m => m.role === 'user' && (m.images?.length || m.pdfs?.length))
+      && req.messages.some(m => m.role === 'tool' && m.results.some(r => r.image && !this.rejectedImages.has(r.image)))) {
+      for (const message of req.messages) {
+        if (message.role === 'tool') for (const result of message.results) {
+          if (result.image) this.rejectedImages.add(result.image);
+        }
+      }
+      const report = yield* this.reportRejectedTurn(req, signal, 'Answer the original request using the text results already obtained. '
+        + 'State that the tool image could not be inspected and give its saved path if available. Do not infer visual details.');
+      if (signal.aborted) yield { type: 'finish', stopReason: 'aborted' };
+      else if (report) {
+        yield { type: 'text-delta', text: report };
+        yield { type: 'finish', stopReason: 'stop' };
+      } else yield { type: 'finish', stopReason: 'error', errorMessage: '画像入力が拒否され、テキスト結果からも回答を取得できませんでした。' };
     } else if (rejectedToolHistory && !timedOut && this.provider === 'ollama'
       && req.messages.at(-1)?.role === 'tool' && req.messages.some(m => m.role === 'user' && m.content.trim())) {
       if (req.recoverToolHistory) {
@@ -239,9 +263,10 @@ export class AiSdkModel implements Model {
     }
   }
 
-  private async *reportRejectedTurn(req: ModelRequest, signal: AbortSignal): AsyncGenerator<ModelEvent, string> {
-    const messages: ModelRequest['messages'] = [...req.messages, { role: 'user', content:
-      'Summarize the results already obtained and what remains incomplete. Use the language of the original request. Do not request tools.' }];
+  private async *reportRejectedTurn(req: ModelRequest, signal: AbortSignal,
+    instruction = 'Summarize the results already obtained and what remains incomplete. Use the language of the original request. Do not request tools.',
+  ): AsyncGenerator<ModelEvent, string> {
+    const messages: ModelRequest['messages'] = [...req.messages, { role: 'user', content: instruction }];
     let report = '';
     for await (const event of this.stream({ ...req, messages, tools: [] }, signal)) {
       if (event.type === 'usage') yield event;

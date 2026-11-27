@@ -109,3 +109,36 @@ test('Ollama query rejection after tool results returns a report without rerunni
   assert.equal(events.some(e => e.type === 'tool-call'), false);
   assert.equal((events.at(-1) as { stopReason: string }).stopReason, 'error');
 });
+
+for (const userImage of [false, true]) test(`unsupported screenshot preserves tool receipts (user attachment: ${userImage})`, async t => {
+  const image = { mediaType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==' };
+  const requests: { messages: { role: string; content: unknown }[]; tools?: unknown[] }[] = [];
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
+    const body = JSON.parse(String(init.body));
+    requests.push(body);
+    if (JSON.stringify(body.messages).includes('image_url')) return Response.json({ error: {
+      message: 'Multimodal data provided, but model does not support multimodal requests.', type: 'invalid_request_error',
+    } }, { status: 400 });
+    const chunk = { id: 'x', model: 'test', created: 1, choices: [{ index: 0, delta: { content: 'fixture response' }, finish_reason: 'stop' }] };
+    return new Response('data: ' + JSON.stringify(chunk) + '\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
+  });
+  const model = resolveModel({ provider: 'ollama', model: 'test' });
+  const results = [{ callId: 'a', name: 'browse', status: 'ok' as const, output: 'shot.png', image },
+    { callId: 'b', name: 'run_command', status: 'ok' as const, output: 'fixture status 200' }];
+  const events: ModelEvent[] = [];
+  for await (const ev of model.stream({
+    messages: [{ role: 'user', content: 'Check the fixture', ...(userImage ? { images: [image] } : {}) },
+      { role: 'assistant', content: '', toolCalls: results.map(r => ({ id: r.callId, name: r.name, args: {} })) },
+      { role: 'tool', results }],
+    tools: [{ name: 'browse', description: 'browse', parameters: { type: 'object' } }],
+  }, new AbortController().signal)) events.push(ev);
+  assert.equal(requests.length, userImage ? 1 : 2);
+  assert.equal((events.at(-1) as { stopReason: string }).stopReason, userImage ? 'error' : 'stop');
+  if (!userImage) {
+    assert.deepEqual(requests[1].messages.filter(m => m.role === 'tool'), requests[0].messages.filter(m => m.role === 'tool'));
+    assert.ok(!JSON.stringify(requests[1].messages).includes(image.data));
+    assert.equal(requests[1].tools?.length ?? 0, 0);
+    assert.ok(events.some(e => e.type === 'text-delta' && e.text.includes('fixture response')));
+    assert.equal(results[0].image, image);
+  }
+});

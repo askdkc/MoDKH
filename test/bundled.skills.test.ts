@@ -23,12 +23,12 @@ const expectedNames = [
   'kiokuko-simple-work', 'kiokuko-single-purpose-functions', 'kiokuko-skill-authoring',
   'kiokuko-soul', 'kiokuko-technical-writing', 'kiokuko-ui-design-soul',
   'kiokuko-verification', 'memory-reasoning', 'one-shot-software-completion', 'pstack',
-  'veteran-programmer-skill',
+  'veteran-programmer-skill', 'cyber',
 ];
-test('all 18 source skills and 112 resources are present and digest-verified', () => {
+test('all 19 source skills and 113 resources are present and digest-verified', () => {
   verifyBundledSkills();
   assert.deepEqual(bundledSkills().map(s => s.name).sort(), expectedNames.sort());
-  assert.equal(bundledSkills().reduce((n, s) => n + Object.keys(s.files).length, 0), 112);
+  assert.equal(bundledSkills().reduce((n, s) => n + Object.keys(s.files).length, 0), 113);
   for (const name of expectedNames) {
     const context = prepareSkillContext(`$${name}`, process.cwd());
     assert.ok(context.selected.includes(name), `explicit ${name} omitted`);
@@ -54,7 +54,7 @@ test('public tool reads every packaged reference, supports paging and rejects un
   const ctx = { root: process.cwd(), approval: { approve: async () => false } };
   const listing = await registry.executeOne({ id: 'list', name: 'list_skills', args: {} }, ctx);
   assert.equal(listing.status, 'ok');
-  assert.equal(JSON.parse(listing.output).length, 18);
+  assert.equal(JSON.parse(listing.output).length, 19);
   for (const skill of bundledSkills()) {
     for (const resource of Object.keys(skill.files)) {
       let startLine = 1;

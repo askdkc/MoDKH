@@ -259,7 +259,14 @@ test('the active child uses a right-hand pane and does not move into the editor 
   } finally { t.ui.close(); }
 });
 
-test('waiting decoration has a padded divider and yields to connected server status on resize', () => {
+for (const color of [true, false]) test(`waiting decoration yields to connected server status on resize (color: ${color})`, context => {
+  const previous = process.env.NO_COLOR;
+  context.after(() => {
+    if (previous === undefined) delete process.env.NO_COLOR;
+    else process.env.NO_COLOR = previous;
+  });
+  if (color) delete process.env.NO_COLOR;
+  else process.env.NO_COLOR = '1';
   const t = terminal(110, 30);
   try {
     t.ui.write('▶ You: 調査\n', 'user');
@@ -271,10 +278,12 @@ test('waiting decoration has a padded divider and yields to connected server sta
     const status = rows.findIndex(row => /│ MCP 1接続中 +│$/.test(row));
     assert.ok(status > 0);
     assert.match(rows[status + 1], /│ +svelte +│$/);
-    assert.ok(whale >= status + 5);
-    assert.match(rows[whale - 3], /│ +│$/);
-    assert.match(rows[whale - 2], /│ ─+ +│$/);
-    assert.match(rows[whale - 1], /│ +│$/);
+    if (color) {
+      assert.ok(whale >= status + 5);
+      assert.match(rows[whale - 3], /│ +│$/);
+      assert.match(rows[whale - 2], /│ ─+ +│$/);
+      assert.match(rows[whale - 1], /│ +│$/);
+    } else assert.equal(whale, -1);
     t.output.rows = 9; t.output.emit('resize');
     const compact = screenFrom(t.raw(), 9).join('\n');
     assert.match(compact, /│ MCP 1接続中 +│\n[^\n]*│ +svelte +│/);
