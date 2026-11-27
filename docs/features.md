@@ -50,6 +50,10 @@ Rust の解析だけが必要なら `brew install rust-analyzer` でも構いま
 
 ## `/cyber` 用のツール（任意）
 
+`modkh` の入力欄で `/cyber https://example.com/app` を実行すると、Nmap が対象ホストの IP アドレスを1つ使って URL の TCP ポートを検査し、`open`、`closed` などの状態を表示します。ポートを省略した場合は HTTP で80、HTTPS で443を使います。続いて `curl` が指定した URL に HEAD リクエストを1回送ります。結果には HTTP ステータスとセキュリティヘッダーの有無が表示されます。HTTPS では TLS 証明書も検証します。URL がリダイレクトを返した場合は、その応答を表示します。
+
+`/cyber tools <URL>` でも同じ検査ができます。URL の検査には PATH 上の `nmap` と `curl` を使います。引数なしの `/cyber` で作業ディレクトリを点検するには、次のツールをインストールします。
+
 **macOS（Homebrew）**
 
 ```sh
@@ -64,7 +68,7 @@ pipx install semgrep
 pipx ensurepath
 ```
 
-インストール後、新しいターミナルで `modkh` を起動し、`/cyber tools` で6ツールのバージョンを確認します。
+インストール後、新しいターミナルで `modkh` を起動し、`/cyber tools` で各ツールのバージョンを確認します。
 
 ## プロジェクトの MCP サーバー
 

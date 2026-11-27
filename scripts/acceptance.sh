@@ -160,7 +160,7 @@ MODKH_TEST_FIXED="$WORK/install/node_modules/modkh/dist/model/fixed.js" MODKH_TE
   node --test --test-reporter=tap \
   "$ROOT/test/stateright.install.test.ts" "$ROOT/test/cli.interactive.test.ts" "$ROOT/test/cli.safety.test.ts" \
   "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.compaction.test.ts" "$ROOT/test/cli.memory.test.ts" "$ROOT/test/cli.tui.test.ts" \
-  "$ROOT/test/cli.agenticreplay.test.ts" "$ROOT/test/terminal.drag-copy.test.ts" \
+  "$ROOT/test/cli.agenticreplay.test.ts" "$ROOT/test/cli.cyber.test.ts" "$ROOT/test/terminal.drag-copy.test.ts" \
   "$ROOT/test/plugins.entry.test.ts" "$ROOT/test/subagents.cli.test.ts" "$ROOT/test/composer.flow.test.ts" "$ROOT/test/pdf.cli.test.ts" "$ROOT/test/cli.harness.test.ts" \
   "$ROOT/test/model.openai-compat.test.ts"
 

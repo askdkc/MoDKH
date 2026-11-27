@@ -3,9 +3,9 @@
     {
       "name": "cyber",
       "directory": "cyber",
-      "description": "コマンドラインでローカルの依存関係・コード・秘密情報を検査する。",
+      "description": "URL の TCP ポート・応答ヘッダーと、ローカルの依存関係・コード・秘密情報を検査する。",
       "files": {
-        "SKILL.md": "934c1c30670a0de5094fadba0c327c0a7a214f208fb94782648d135ceab08570"
+        "SKILL.md": "6f9a2682bb560d3787a1205bedc6bf9eac416c4a7960055965548f055bfe8475"
       }
     }
   ]

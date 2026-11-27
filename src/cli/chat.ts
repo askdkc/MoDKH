@@ -1032,7 +1032,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         ui.write(`PDFの本文とページ画像を送信: ${pdfUsage}\n`);
         ui.write('/tools: ツール履歴  /tools <番号>: 引数と結果の全文\n');
         ui.write('/compact: 保存済みの会話履歴をローカルで圧縮\n');
-        ui.write(`\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /usage: トークン使用量  /allow: 承認ポリシー  /agents: 子の一覧・同時実行数  /agents limit <数>: 子の上限変更  /agents run [ID]: 子に依頼  /cyber: ローカル検査  /pstack on|off [--save]: pstack手順の常時注入  /exit: 終了\n`
+        ui.write(`\n/connect: プロバイダー選択  /models: モデル選択  /reasoning: 推論レベル  /keys: 保存済みキー  /usage: トークン使用量  /allow: 承認ポリシー  /agents: 子の一覧・同時実行数  /agents limit <数>: 子の上限変更  /agents run [ID]: 子に依頼  /cyber [URL]: URL の TCP ポートと応答ヘッダーを検査（引数なしでローカル検査）  /pstack on|off [--save]: pstack手順の常時注入  /exit: 終了\n`
           + 'macOS: 会話のテキストをドラッグして選択するとコピーします。画面の上端・下端までドラッグしたままにすると履歴を送り、複数ページをまとめて選べます。\n'
           + '/reasoning off|minimal|low|medium|high|max [--save]: モデルの推論レベルを変える(端末: マウスホイール/PgUpで履歴)\n↑↓ と Enter: 選択  Esc: 戻る  Ctrl+C: 中止\n入力: Enter 送信（実行中の追加依頼にも画像を添付できます） / Ctrl+J 改行 / Mac: Cmd+V テキスト、Ctrl+V 画像 / Ctrl+X 添付削除\nDKH_PLAIN=1 modkh: スクリーンリーダー・行入力モード\n');
         continue;
