@@ -1,5 +1,5 @@
 import { streamWithReconnect } from '../model/reconnect.ts';
-import { projectToolImages, utf8Prefix, utf8Suffix } from '../model/context.ts';
+import { isContextLimitError, projectToolImages, utf8Prefix, utf8Suffix } from '../model/context.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { modelInstructions } from '../model/harness-profile.ts';
 import type { AgentMessage, Model, ModelEvent, ProviderContinuation, TokenUsage, Tool, ToolCall, ToolResult, ToolSpec } from './types.ts';
@@ -53,6 +53,8 @@ export interface AgentLoopOptions {
   transientContext?: string | undefined;
   /** Attach workspace hints to the initiating request, before its subsequent tool results. */
   taskContext?: string;
+  /** Original user request when continuing a previously checkpointed turn. */
+  taskStart?: number;
   /** このターンでの推論レベル(/reasoning で指定)。省略はプロバイダーの初期値。 */
   reasoning?: import('./types.ts').ReasoningLevel;
   signal: AbortSignal;
@@ -87,6 +89,8 @@ export interface AgentLoopOptions {
    * `messages` 自体(保存・監査・再実行防止の台帳)は全文のまま維持する。
    */
   compaction?: CompactionState;
+  /** Return a strictly shorter projection for a request rejected before any tool call. */
+  recoverContextLimit?(): CompactionState | undefined;
   /** Inspect the current projection between complete model/tool exchanges. */
   autoCompact?(outgoing: AgentMessage[]): Promise<CompactionState | TurnResult | undefined>;
 }
@@ -123,6 +127,16 @@ function previousCalls(messages: AgentMessage[]): Map<string, { call: ToolCall; 
     }
   }
   return ledger;
+}
+
+/** An advisory progress signal only. Shell and browser inspections still use normal approval and execution. */
+function isInspection(call: ToolCall, registry: ToolRegistry): boolean {
+  if (registry.get(call.name)?.readOnly) return true;
+  if (call.name === 'browse') return ['status', 'snapshot', 'screenshot', 'list'].includes(String(call.args.action));
+  if (call.name !== 'run_command' || typeof call.args.command !== 'string') return false;
+  const command = call.args.command.replace(/\s+2>&1\b/gu, '');
+  if (/^\s*browse\s+(?:eval|execute|snapshot|console)\b/u.test(command)) return true;
+  return !/[>;&\n]/u.test(command) && /^\s*(?:cat|ls|rg|grep|head|tail|sed\s+-n|git\s+(?:status|diff|show|log))\b/u.test(command);
 }
 
 function receiptKey(root: string, call: ToolCall): string | undefined {
@@ -183,7 +197,8 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     } : spec);
   const ledger = previousCalls(messages);
   if (opts.signal.aborted) return { outcome: 'interrupted' };
-  const task = messages.findLast(message => message.role === 'user');
+  const initial = opts.taskStart === undefined ? messages.findLast(message => message.role === 'user') : messages[opts.taskStart];
+  const task = initial?.role === 'user' ? initial : undefined;
   const skills = opts.skills === false ? undefined : (opts.skillContext ?? prepareSkillContext(task?.content ?? '', opts.root));
   if (skills) opts.hooks?.onSkillContext?.(skills);
   const guidance = modelInstructions(opts.model.id) + (skills?.text ?? '');
@@ -194,6 +209,8 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
   const recoveryTools = new Set([readFileTool, ...(opts.approval.confirmOnce ? [runCommandTool, fetchUrlTool] : [])]
     .filter(isNative).map(tool => tool.name));
   let recoveredReceipts: Map<string, ToolResult> | undefined;
+  const canEdit = toolSpecs.some(t => t.name === 'edit_file');
+  let inspectionRounds = 0;
   let requestedVisibleAnswer = false;
   let truncatedResponse: AgentMessage | undefined;
   let recoveryScope: OutputLimitRecovery['scope'];
@@ -234,7 +251,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     }
     const notices = opts.jobs?.takeNotices() ?? [];
     if (notices.length > 0) appendNotice(`(バックグラウンドジョブの完了通知)\n${notices.join('\n\n')}`);
-    appendFollowups();
+    if (appendFollowups()) inspectionRounds = 0;
     let text = '';
     let receivedReasoning = false;
     let continuation: ProviderContinuation | undefined;
@@ -308,6 +325,11 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
         if (key && result.status !== 'not-executed') recoveredReceipts.set(key, result);
       }
       continue;
+    }
+    if (!opts.signal.aborted && stopReason === 'error' && !calls.length && !text && !scope && !recoveredReceipts
+      && turn + 1 < maxTurns && isContextLimitError(errorMessage)) {
+      const shorter = opts.recoverContextLimit?.();
+      if (shorter) { compaction = shorter; continue; }
     }
     const response: AgentMessage = { role: 'assistant', content: text, ...(calls.length ? { toolCalls: calls } : {}) };
     append(response);
@@ -465,6 +487,13 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     if (opts.signal.aborted) return { outcome: 'interrupted' };
     if (decision && 'continueWith' in decision) appendNotice(decision.continueWith);
     else if (decision) return decision;
+    if (!decision && canEdit && !scope && !recoveredReceipts) {
+      inspectionRounds = calls.every(call => isInspection(call, opts.registry)) ? inspectionRounds + 1 : 0;
+      if (inspectionRounds === 6) {
+        appendNotice('Repeated inspections: use the evidence already collected. If the user requested a change and the cause is known, make the smallest authorized edit now and verify it. If one fact is missing, check that fact. For an investigation-only request, answer from the evidence. Respect denied operations.');
+        inspectionRounds = 0;
+      }
+    }
   }
   return { outcome: 'turn-limit', errorMessage: `ツール往復が上限(${maxTurns}回)に達した。ここまでの実行と結果は保存済み` };
 }

@@ -2,6 +2,7 @@ import path from 'node:path';
 import { clip } from '../agent/compaction.ts';
 import type { TurnResult } from '../agent/loop.ts';
 import { savedResults, savedText } from '../agent/saved-results.ts';
+import { isUserRequest, type AgentMessage } from '../agent/types.ts';
 import type { ApprovalGate, Model, ModelEvent, ModelRequest, ReasoningLevel } from '../agent/types.ts';
 import { prepareReport, publishReport, readReport, reportExcerpt, reportFile, reviseReport } from '../session/report-file.ts';
 import type { ReportDraft, Session } from '../session/store.ts';
@@ -17,6 +18,27 @@ interface DeliveryOptions {
   reasoning: ReasoningLevel | null;
   onEvent(event: ModelEvent): void;
   write(text: string): void;
+}
+
+/** Tool-free publication is only an automatic shortcut for an explicit writing request.
+ * Ambiguous or mixed tasks keep their normal tools and can still write a document there. */
+export function requestsSavedReport(messages: AgentMessage[], start: number): boolean {
+  const turn = messages.slice(start);
+  if (turn.some(m => m.role === 'assistant' && m.toolCalls?.some(call =>
+    (call.name === 'create_file' || call.name === 'edit_file') && !/\.(md|txt)$/iu.test(String(call.args.path))))) return false;
+  const requests = turn.filter(isUserRequest);
+  // Recognize a direct document deliverable, not a report mentioned as input or as a feature.
+  // Everything else can still deliver a document through the ordinary tools.
+  const report = /^(?:(?:please\s+)?(?:write|save|revise|finish|update|prepare|summarize)\s+(?:the\s+|an?\s+)?(?:[^.!?\n]{0,80}\s)?(?:report|summary)\b|(?:[^。\n]{0,80}の)?(?:報告書|レポート|原稿)(?:を|に)|(?:[^\s。]+\.(?:md|txt))\s*(?:に|を))/iu;
+  const savePath = /^(?:please\s+)?(?:save|write|append|update|revise)\s+[^.!?\n]{0,100}\.(?:md|txt)\b/iu;
+  const codeChange = /\b(?:implement|refactor|debug|fix|add|build|replace|generate|generator|script|function|feature)\b|実装|コード|追加して|機能|作り直|処理を|ツールを作/iu;
+  return requests.length > 0 && requests.every(message => {
+    const text = message.content.split('\n添付ファイル（')[0].trim();
+    if (codeChange.test(text)) return false;
+    // “Read notes.txt for the editorial report and save it to editorial.md.”
+    const directive = text.replace(/^(?:read|review|inspect)\b[^\n]{0,240}?\s+and\s+(?=save|write)/iu, '');
+    return report.test(directive) || savePath.test(directive);
+  });
 }
 
 function namedByUser(requests: ReturnType<typeof savedResults>['taskMessages'], relative: string, root: string): boolean {

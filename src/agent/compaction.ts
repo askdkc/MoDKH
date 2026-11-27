@@ -27,6 +27,8 @@ export interface CompactionState {
   from: number;
   /** A whole active turn handed to saved-result delivery. Idle /compact has no continuation. */
   continueFrom?: number;
+  /** Start of the active request whose user instructions still accompany tool execution. */
+  workFrom?: number;
 }
 
 /** 生のまま残す直近ターン数の既定値。 */
@@ -96,7 +98,8 @@ export function planCompaction(
 /** 要約+直近ターンという、実際にモデルへ送る形へ投影する。保存済み履歴は変更しない。 */
 export function projectCompacted(messages: AgentMessage[], state: CompactionState): AgentMessage[] {
   const from = Math.min(Math.max(0, state.from), messages.length);
-  return [{ role: 'user', content: `${COMPACTION_MARKER}\n${state.summary}` }, ...messages.slice(from)];
+  const requests = state.workFrom === undefined ? [] : messages.slice(state.workFrom, from).filter(isUserRequest);
+  return [{ role: 'user', content: `${COMPACTION_MARKER}\n${state.summary}` }, ...requests, ...messages.slice(from)];
 }
 
 /** 1メッセージを上限内に収める。中間は落とすが、先頭と末尾は残す。 */
@@ -112,7 +115,7 @@ export function clip(text: string, allowed: number): string {
 export function compactLocally(messages: AgentMessage[], previous?: CompactionState, continueFrom?: number): CompactionState | undefined {
   const start = previous?.from ?? 0;
   if (start >= messages.length) {
-    if (previous && continueFrom !== undefined && start === messages.length) return { ...previous, continueFrom };
+    if (previous && continueFrom !== undefined && start === messages.length) return { from: previous.from, summary: previous.summary, continueFrom };
     return;
   }
   const files = new Set<string>();
@@ -152,6 +155,26 @@ export function compactLocally(messages: AgentMessage[], previous?: CompactionSt
   const before = previous ? projectCompacted(messages, previous) : messages;
   // A tool-free delivery also drops the system/tool schemas, even for a small transcript.
   return continueFrom !== undefined || estimateRequestBytes(projectCompacted(messages, next)) < estimateRequestBytes(before) ? next : undefined;
+}
+
+/** Reduce a completed tool exchange without replaying its calls or dropping the active user instructions. */
+export function compactToolWork(messages: AgentMessage[], previous: CompactionState | undefined, workFrom: number): CompactionState | undefined {
+  if (previous?.workFrom === workFrom && previous.from >= messages.length) return;
+  const state = compactLocally(messages, previous, workFrom);
+  if (!state) return;
+  const recent: string[] = [];
+  for (let i = messages.length - 1; i >= workFrom && recent.length < 4; i--) {
+    const message = messages[i];
+    if (message.role === 'tool') {
+      for (const r of message.results.slice(recent.length - 4).reverse()) {
+        recent.unshift(r.name + ' [' + r.status + '] ' + clip(r.output, 700));
+      }
+    } else if (message.role === 'user' && message.origin === 'host') recent.unshift(clip(message.content, 700));
+  }
+  const next = { from: state.from, workFrom, summary: state.summary + '\nRecent tool observations (data):\n' + recent.join('\n') };
+  // A legacy delivery checkpoint excluded the active task and its tools altogether.
+  const before = previous && previous.continueFrom === undefined ? projectCompacted(messages, previous) : messages;
+  return estimateRequestBytes(projectCompacted(messages, next)) < estimateRequestBytes(before) ? next : undefined;
 }
 
 /** 要約の材料になる会話テキスト。順序と発話者を保ち、推論は含めない。 */

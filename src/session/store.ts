@@ -196,12 +196,16 @@ export class Session {
       } else if (ev.type === 'delegation') session.acceptDelegation(ev.record);
       else if (ev.type === 'compaction') {
         // 妥当な index だけを受け入れる。壊れた記録は無視して全文送信へ戻す(安全側)。
-        const pending = ev.keptTurns === 0 && ev.from === session.messages.length && Number.isSafeInteger(ev.continueFrom)
-          && ev.continueFrom! >= 0 && ev.continueFrom! < ev.from && session.messages[ev.continueFrom!]?.role === 'user';
-        if (Number.isSafeInteger(ev.from) && (ev.from > (session.compaction?.from ?? 0) || (pending && ev.from === session.compaction?.from))
+        const validStart = (index: number | undefined): index is number => index !== undefined && ev.keptTurns === 0
+          && ev.from === session.messages.length && Number.isSafeInteger(index)
+          && index >= 0 && index < ev.from && session.messages[index]?.role === 'user';
+        const pending = validStart(ev.continueFrom);
+        const work = !pending && validStart(ev.workFrom);
+        if (Number.isSafeInteger(ev.from) && (ev.from > (session.compaction?.from ?? 0) || ((pending || work) && ev.from === session.compaction?.from))
             && (ev.from < session.messages.length || (ev.keptTurns === 0 && ev.from === session.messages.length))
             && typeof ev.summary === 'string' && ev.summary.trim()) {
-          session.compaction = { summary: ev.summary.slice(0, MAX_SUMMARY_CHARS), from: ev.from, ...(pending ? { continueFrom: ev.continueFrom } : {}) };
+          session.compaction = { summary: ev.summary.slice(0, MAX_SUMMARY_CHARS), from: ev.from,
+            ...(pending ? { continueFrom: ev.continueFrom } : {}), ...(work ? { workFrom: ev.workFrom } : {}) };
           session.reportDraft = undefined;
           session.reportTarget = undefined;
         }
