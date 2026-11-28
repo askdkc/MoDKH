@@ -1,12 +1,13 @@
 /**
- * One /cyber check result. The status is the verdict a reader needs first:
- * 検出あり (evidence found), 検出なし (ran, nothing found), 未実行 (did not run),
- * 失敗 (ran but could not produce a verdict), 中断 (stopped), 情報 (observation
- * without a security verdict, e.g. resolved addresses or an open port).
+ * One check result. The status is the verdict a reader needs first:
+ * 検出あり (evidence found), 検出なし (ran, nothing found), 対象なし (nothing to
+ * inspect), 一部未確認 (partial coverage), 未実行 (did not run), 失敗 (ran but
+ * produced no verdict), 中断 (stopped), 情報 (observation without a verdict).
  */
-export type CheckStatus = '検出あり' | '検出なし' | '未実行' | '失敗' | '中断' | '情報' | '対象なし' | '一部未確認';
+export type CheckStatus =
+  | '検出あり' | '検出なし' | '対象なし' | '一部未確認' | '未実行' | '失敗' | '中断' | '情報';
 
-export interface CheckResult {
+export interface Check {
   /** Tool or check name shown in brackets. */
   name: string;
   status: CheckStatus;
@@ -15,10 +16,10 @@ export interface CheckResult {
   lines: string[];
 }
 
-export function writeCheck(write: (text: string) => void, result: CheckResult): void {
-  const count = result.status === '検出あり' && result.count ? `（${result.count}件）` : '';
-  write(`[${result.name}] ${result.status}${count}\n`);
-  for (const line of result.lines) write(`  ${line}\n`);
+export function writeCheck(write: (text: string) => void, check: Check): void {
+  const count = check.status === '検出あり' && check.count ? `（${check.count}件）` : '';
+  write(`[${check.name}] ${check.status}${count}\n`);
+  for (const line of check.lines) write(`  ${line}\n`);
 }
 
 /** Keep tool-controlled text on one line and inside a readable width. */

@@ -13,7 +13,7 @@ import type { AddressInfo } from 'node:net';
 
 const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
-async function trial(record: boolean, maxTurns: number, mode: 'normal' | 'broken' | 'replay' | 'crash' | 'lost-click' | 'denied' | 'job' | 'interrupt' | 'disconnect' = 'normal',
+async function trial(record: boolean, maxTurns: number, mode: 'normal' | 'broken' | 'replay' | 'crash' | 'lost-click' | 'denied' | 'job' | 'interrupt' | 'disconnect' | 'foreground-child' | 'background-child' = 'normal',
   provider = 'compatible', route: 'direct' | 'saved' | 'resume' | 'connect' | 'https-connect' = 'direct') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-tool-record-'));
   const project = path.join(root, 'project');
@@ -22,10 +22,26 @@ async function trial(record: boolean, maxTurns: number, mode: 'normal' | 'broken
   let posts = 0;
   const crash = mode === 'crash';
   const lostClick = mode === 'lost-click';
-  const replay = ['replay', 'lost-click', 'denied', 'job', 'interrupt', 'disconnect'].includes(mode);
-  const command = crash ? 'printf x >> marker; sleep 3' : mode === 'job' ? 'echo $$ > job.pid; printf x >> marker' : 'printf x >> marker';
+  const childProbe = mode === 'foreground-child' || mode === 'background-child';
+  const background = mode === 'job' || mode === 'background-child';
+  const replay = childProbe || ['replay', 'lost-click', 'denied', 'job', 'interrupt', 'disconnect'].includes(mode);
+  if (childProbe) {
+    // Model a nested tool recorder that emits a final receipt if it inherits a transport.
+    fs.writeFileSync(path.join(project, 'child.cjs'), `const fs = require('node:fs');
+const destination = process.env.AGENTICREPLAY_MODKH_FRAMES;
+if (destination) {
+  const frame = { session: 'nested', turn: 0, attempt: require('node:crypto').randomUUID(), ordinal: 1,
+    callId: 'nested-call', state: 'completed', reason: 'command_exited' };
+  fs.appendFileSync(destination, JSON.stringify(frame) + '\\n');
+}
+fs.appendFileSync('marker', 'x');
+`);
+  }
+  let command = childProbe ? 'node child.cjs' : 'printf x >> marker';
+  if (background) command = 'echo $$ > job.pid; ' + command;
+  if (crash) command += '; sleep 3';
   const action = lostClick ? { name: 'browse', arguments: JSON.stringify({ action: 'click', tab: 7, ref: 'e11' }) }
-    : { name: 'run_command', arguments: JSON.stringify({ command, ...(mode === 'job' && { run_in_background: true }) }) };
+    : { name: 'run_command', arguments: JSON.stringify({ command, ...(background && { run_in_background: true }) }) };
   const fixtureKey = 'fixture-local-key';
   const tls = route === 'https-connect';
   const serve: http.RequestListener = async (req, res) => {
@@ -95,7 +111,7 @@ async function trial(record: boolean, maxTurns: number, mode: 'normal' | 'broken
       const closed = once(child, 'close');
       const deadline = setTimeout(() => child.kill('SIGKILL'), 60000);
       let killedAfterStart = false;
-      const watch = mode === 'job' ? setInterval(() => {
+      const watch = background ? setInterval(() => {
         const pidFile = path.join(project, 'job.pid');
         if (!fs.existsSync(pidFile)) return;
         const pid = Number(fs.readFileSync(pidFile, 'utf8').trim());
@@ -112,7 +128,7 @@ async function trial(record: boolean, maxTurns: number, mode: 'normal' | 'broken
             fs.readFileSync(log, 'utf8').includes('"reason":"command_started"')) killedAfterStart = child.kill('SIGKILL');
       }, 10) : undefined;
       if (route === 'connect' || tls) child.stdin.write('/connect ' + model + ' --base-url ' + baseUrl + '\n');
-      if (mode === 'interrupt' || mode === 'job') child.stdin.write('Run the fixture.\ny\n');
+      if (mode === 'interrupt' || background) child.stdin.write('Run the fixture.\ny\n');
       else if (initialize) child.stdin.end('/exit\n');
       else if (crash && resume) child.stdin.end('Continue the fixture.\n/exit\n');
       else if (lostClick) child.stdin.end('Click once.\n/exit\n');
@@ -254,3 +270,23 @@ test('real AgenticReplay automatically records an unacknowledged click once', { 
   assert.equal(results[0].attrs.state, 'unknown');
   assert.ok(!events.some(e => e.attrs?.rule === 'unresolved_tool_calls'));
 });
+
+for (const kind of ['foreground', 'background'] as const) {
+  test(`real AgenticReplay isolates ${kind} child receipts`, { skip: !realReplay }, async () => {
+    const { events, behavior, output } = await trial(false, 1, `${kind}-child`);
+    assert.equal(behavior.marker, 'x', output);
+    const calls = events.filter(e => e.type === 'tool.call');
+    const results = events.filter(e => e.type === 'tool.result');
+    assert.equal(calls.length, 1);
+    assert.equal(results.length, 1);
+    assert.deepEqual(results[0].causes, [calls[0].seq]);
+    assert.equal(results[0].attrs.state, kind === 'foreground' ? 'completed' : 'accepted');
+    if (kind === 'background') {
+      const settled = events.filter(e => e.attrs?.reason === 'command_exited');
+      assert.equal(settled.length, 1);
+      assert.ok(results[0].attrs.job_id);
+      assert.equal(settled[0].attrs.job_id, results[0].attrs.job_id);
+      assert.deepEqual(settled[0].causes, [results[0].seq]);
+    }
+  });
+}

@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { constants, devNull, tmpdir } from 'node:os';
 import path from 'node:path';
+import { adoptAgenticReplayToolTransport } from '../agent/tool-recording.ts';
 import { configureHttpModelRecording } from '../model/record-fetch.ts';
 import { isLocalModelProvider } from '../model/providers.ts';
 import { SessionStore } from '../session/store.ts';
@@ -294,7 +295,7 @@ export async function recordChat(
       else if (previous === 'empty') process.env.MODKH_TOOL_RECORD_FILE = '';
     }
     reportReceipt(process.env.AGENTICREPLAY_TLS_CA);
-    if (!process.env.AGENTICREPLAY_MODKH_FRAMES) {
+    if (!adoptAgenticReplayToolTransport()) {
       localRecordingNotice = '(記録: ツール状態を記録できません。AgenticReplay から状態通知の保存先が渡されませんでした)\n';
     }
     if (!process.env.AGENTICREPLAY_TLS_CA) return undefined;
@@ -304,6 +305,7 @@ export async function recordChat(
     configureHttpModelRecording(process.env.HTTPS_PROXY);
     return undefined;
   }
+  adoptAgenticReplayToolTransport();
   if (process.env.MODKH_AGENTICREPLAY === '0' ||
       process.env.AGENTICREPLAY_TLS_CA || process.env.AGENTICREPLAY_PROXY_URL) return undefined;
 

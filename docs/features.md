@@ -60,38 +60,37 @@ Rust の解析だけが必要なら `brew install rust-analyzer` でも構いま
 
 `modkh language install` は SBCL と Rust toolchain を自動導入しません。他のOS向けの手順は[依存パッケージ](setup.md)にあります。
 
-## `/cyber` 用のツール（任意）
+## `/cyber` で点検する（任意のツール）
 
-`modkh` の入力欄で `/cyber https://example.com/app` を実行すると、承認後に次の順で点検します。承認画面にはクエリを伏せた URL、接続するポート、実行する検査、起動しない検査を表示します。接続先は指定したホストだけで、リダイレクトは追跡しません。
+`modkh` の入力欄で `/cyber https://example.com/app` を実行すると、承認後に [skills/cyber/cyber/SKILL.md](../skills/cyber/cyber/SKILL.md) の手順をそのまま実行します。承認画面にはクエリを伏せた URL、接続するポート、実行する検査、起動しない検査を表示します。接続先は指定したホストだけで、リダイレクトは追跡しません。結果はリポジトリ外（ホーム直下の `security-audit.*`、ディレクトリ 0700・ファイル 0600）に保存します。
 
-1. **DNS**: A/AAAA、SPF、DMARC、CAA。SPF と DMARC がない場合は指摘します。
-2. **Nmap**: URL のポート1つと、代表的な16ポートの公開状態。データストアのポートが公開されていれば指摘します。
-3. **TLS**（HTTPS）: `openssl` で証明書チェーン、有効期限、SAN、TLS バージョンを確認します。
-4. **HTTP**: `curl` で GET・HEAD・OPTIONS を送り、セキュリティヘッダー、Cookie の属性、CORS、許可メソッド、公開されない前提の固定パス4件、混在コンテンツ、例外の露出を確認します。Cookie の値と URL のクエリは表示しません。
-5. **nuclei**: 導入とテンプレートがある場合だけ、中〜重大のテンプレート検査を実行します。未導入なら「未実行」と表示し、他の検査は続けます。
-
-モデル接続時は、GET 応答のステータス、HTTPS の有無、セキュリティヘッダーの有無、Cookie 属性の集計を接続中の言語モデルに送り、設定の根拠と修正案を表示します。送信内容とモデル名は承認画面で確認できます。URL、本文、Cookie の名前や値はモデルに送りません。GET やモデルへの接続に失敗した場合も、取得できた検査結果を表示します。
-
-`/cyber https://example.com/app --source .` は、URL の検査に加えてそのディレクトリを点検します。`.` はそのサイトに対応すると利用者が指定したチェックアウトです。パスはワークスペース内の実在するディレクトリに限り、存在しない場合やシンボリックリンクで外を指す場合は検査を開始しません。空白を含むパスも指定できます。
+1. **ソース・依存関係・秘密情報**: `trivy fs --scanners vuln,misconfig`、`osv-scanner scan source -r`、`semgrep --config p/php --config p/javascript`、`gitleaks git` と `gitleaks dir` を、チェックアウトのルートで順に実行します。既定は現在のワークスペースで、`--source <パス>` で別のチェックアウトを指定できます。
+2. **公開ポート**: サーバー上なら `ss -lntup` で待ち受けを確認し、続けて `nmap -n -Pn -sT -p- --max-rate 50 --reason` で1台だけを外部から走査します。`--quick-ports` で代表的な17ポートに絞れます。`--udp-ports 53,443` を付けると UDP も確認します。`open|filtered` は開いていると確定した扱いにしません。
+3. **Web 設定と SQL**: `nikto -Tuning 2 -Pause 1 -maxtime 5m` で設定不備とデフォルトファイルだけを確認し、URL にクエリがあるときは `sqlmap --batch --smart --level 1 --risk 1` を稼働先に対して実行します。URL にクエリがなければ sqlmap は「未実行」です。
+4. **記録**: 対象、接続元、日時、デプロイ版を書く欄、検出内容、再検査手順を `record.md` に残します。
 
 | ツール | 確認する内容 |
 | --- | --- |
-| Trivy | 依存パッケージの既知の脆弱性 |
+| Trivy | 依存パッケージの既知の脆弱性と、Dockerfile などの設定不備 |
 | OSV-Scanner | ロックファイルなどのパッケージと OSV の勧告 |
-| Semgrep | p/default のルールに該当するファイルと行 |
-| Gitleaks | 秘密情報の候補。値は伏せ、位置とルール名だけを表示 |
+| Semgrep | p/php・p/javascript のルールに該当するファイルと行 |
+| Gitleaks | 秘密情報の候補。値・一致文字列・前後の行は保存も表示もしない |
+| Nmap | 外部から到達できる TCP ポート（既定は全ポート） |
+| Nikto | Web サーバーの設定不備とデフォルトファイル |
+| sqlmap | クエリ付き URL の SQL インジェクション |
 
-Trivy と OSV-Scanner が同じ勧告を指摘したときは出典を併記し、1件として数えます。`--sqlmap-summary <JSON>` は、`{"target": "...", "date": "...", "verdict": "..."}` の形の外部診断の要約を、対象 URL が一致するときだけ表示します。MoDKH は sqlmap を起動しません。
+オプションは `--no-source`、`--no-nmap`、`--no-nikto`、`--no-sqlmap`、`--quick-ports`、`--udp-ports <一覧>`、`--source <パス>` です。`/cyber help` に一覧が出ます。
 
-各検査は「検出あり」「検出なし」「対象なし」「一部未確認」「未実行」「失敗」「中断」を分けて表示します。ツール未導入は「未実行」であり「検出なし」ではありません。Ctrl-C は実行中のプロセスにも伝え、残りの検査を開始しません。
+各検査は「検出あり」「検出なし」「対象なし」「一部未確認」「未実行」「失敗」「中断」を分けて表示します。ツール未導入は「未実行」であり「検出なし」ではありません。中断した場合は以降の検査を開始しません。検出ゼロとスキャン失敗を混同しないため、終了コードと出力の欠落も確認してください。
 
-URL の検査には PATH 上の `nmap`、`curl`、`openssl` を使います。`nuclei` を導入するとテンプレート検査も加わります。Nikto と sqlmap は単独で使うツールで、`/cyber` は起動しません。引数なしの `/cyber` で作業ディレクトリを点検するには、次のツールをインストールします。
+`ss` はそのホストの待ち受けを読むため、手元の Mac で実行すると手元の待ち受けが出ます。サーバーの待ち受けは、そのサーバー上で `/cyber` を実行するか、`ss -lntup` の出力を確認してください。外部からの到達性は、公開側・VPN・LAN の各経路から別々に走査します。共有 CDN のアドレスはオリジンの代わりに検査しません。
+
+次のツールを PATH に用意します。
 
 **macOS（Homebrew）**
 
 ```sh
-brew install trivy osv-scanner semgrep gitleaks sqlmap nmap nuclei nikto
-nuclei -update-templates
+brew install trivy osv-scanner semgrep gitleaks sqlmap nmap nikto
 ```
 
 **Arch Linux**
@@ -102,9 +101,7 @@ pipx install semgrep
 pipx ensurepath
 ```
 
-Arch Linux で Nuclei を導入するには、CPU に合う Linux 版を展開し、`nuclei` を PATH の通ったディレクトリに置きます。[Nuclei 公式リリース](https://github.com/projectdiscovery/nuclei/releases)
-
-インストール後は、新しいターミナルで `command -v nuclei nikto` を実行すると両方の配置先を確認できます。MoDKH が呼び出すツールのバージョンは `/cyber tools` で確認できます。
+`ss` は Linux の iproute2 に含まれます。macOS にはないため「未実行」と表示します。インストール後は、新しいターミナルで `command -v trivy osv-scanner semgrep gitleaks nmap nikto sqlmap` を実行すると配置先を確認できます。
 
 ## プロジェクトの MCP サーバー
 

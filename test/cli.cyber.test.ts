@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -10,21 +8,27 @@ import { promisify } from 'node:util';
 
 const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 
+/** Run the CLI against a fixture root; HOME stays inside it so audit reports are removable. */
 async function chat(root: string, input: string, env: NodeJS.ProcessEnv = {}, args: string[] = []) {
   const run = promisify(execFile)(process.execPath, [entry, '--cwd', root, ...args], {
-    encoding: 'utf8', timeout: 60_000,
-    env: { ...process.env, PATH: root + path.delimiter + process.env.PATH, MODKH_HOME: root, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '0', ...env },
+    encoding: 'utf8', timeout: 120_000,
+    env: {
+      ...process.env, PATH: root + path.delimiter + process.env.PATH,
+      HOME: root, MODKH_HOME: root, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '0', ...env,
+    },
   });
   run.child.stdin!.end(input);
   return (await run).stdout;
 }
 
-/** Fake tools that log their argv and cwd, then emit the given structured output. */
+function tempDir(t: { after(fn: () => void): void }, prefix: string): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  return root;
+}
+
+/** Fake scanners that log their argv and cwd, then emit the given structured output. */
 function fakeTools(root: string, scripts: Record<string, string>) {
-  // URL tests inspect local fixtures without running host-installed network scanners.
-  for (const name of ['nmap', 'nuclei']) {
-    fs.writeFileSync(path.join(root, name), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-  }
   const log = path.join(root, 'calls');
   for (const [name, body] of Object.entries(scripts)) {
     // The absolute log path matters: source scanners run with the source directory as their cwd.
@@ -36,206 +40,242 @@ function fakeTools(root: string, scripts: Record<string, string>) {
   return { calls };
 }
 
+/** Every audit directory the command created under the fixture HOME. */
+function reportDirs(root: string): string[] {
+  return fs.readdirSync(root).filter(name => name.startsWith('security-audit.'))
+    .map(name => path.join(root, name)).sort();
+}
+
 const trivyJson = JSON.stringify({
   Results: [{
-    Target: 'package-lock.json', Packages: [{ ID: 'lodash@4.17.20' }],
+    Target: 'package-lock.json',
+    Packages: [{ ID: 'lodash@4.17.20' }],
     Vulnerabilities: [{
-      VulnerabilityID: 'CVE-2021-23337', VendorIDs: ['GHSA-35jh-r3h4-6jhm'], PkgName: 'lodash',
-      InstalledVersion: '4.17.20', FixedVersion: '4.17.21', Severity: 'HIGH',
-      PkgIdentifier: { PURL: 'pkg:npm/lodash@4.17.20' },
+      VulnerabilityID: 'CVE-2021-23337', PkgName: 'lodash', InstalledVersion: '4.17.20',
+      FixedVersion: '4.17.21', Severity: 'HIGH', PkgIdentifier: { PURL: 'pkg:npm/lodash@4.17.20' },
     }],
+    Misconfigurations: [{ ID: 'DS002', Title: 'root user', Severity: 'HIGH', Location: { Filename: 'Dockerfile', StartLine: 1 } }],
   }],
 });
 
 const osvJson = JSON.stringify({
   results: [{
-    source: { path: '/src/checkout/package-lock.json', type: 'lockfile' },
+    source: { path: '/src/package-lock.json', type: 'lockfile' },
     packages: [{
-      package: { name: 'lodash', version: '4.17.20', purl: 'pkg:npm/lodash@4.17.20?source=PUBLIC_REGISTRY' },
-      groups: [{ ids: ['GHSA-35jh-r3h4-6jhm'], aliases: ['CVE-2021-23337', 'GHSA-35jh-r3h4-6jhm'], max_severity: '7.2' }],
+      package: { name: 'lodash', version: '4.17.20', purl: 'pkg:npm/lodash@4.17.20' },
+      groups: [{ ids: ['GHSA-35jh-r3h4-6jhm'], aliases: ['CVE-2021-23337'], max_severity: '7.2' }],
     }],
   }],
 });
 
-test('/cyber keeps the direct-check modes and never asks a model', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const { calls } = fakeTools(root, Object.fromEntries(
-    ['trivy', 'osv-scanner', 'semgrep', 'gitleaks', 'sqlmap', 'nmap'].map(name => [name, `echo ${name}-version`])));
-  fs.writeFileSync(path.join(root, 'curl'), '#!/bin/sh\necho "curl $*" >> calls\necho curl-version\n', { mode: 0o755 });
-  const output = await chat(root, '/cyber help\n/cyber\ny\n/cyber tools\ny\n/cyber nope\n/exit\n');
-  assert.match(output, /Gitleaks/i);
-  assert.deepEqual(calls().map(call => call.split(' ')[0]),
-    ['trivy', 'osv-scanner', 'semgrep', 'gitleaks', 'trivy', 'osv-scanner', 'semgrep', 'gitleaks', 'sqlmap', 'nmap', 'curl']);
-  assert.match(output, /使い方: \/cyber <URL>/);
+const semgrepJson = JSON.stringify({
+  results: [{
+    check_id: 'php.lang.security.sql-injection', path: 'app.php', start: { line: 12 },
+    extra: { severity: 'ERROR', message: 'SQL 文を連結しています' },
+  }],
+  errors: [],
+  paths: { scanned: ['app.php'] },
 });
 
-test('/cyber <URL> alone inspects the URL and starts no local scanner', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-url-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const hits: string[] = [];
-  const server = createServer((req, res) => {
-    hits.push(`${req.method} ${req.url}`);
-    // A hardened site answers 404 to the probe paths, so this fixture must too.
-    if (['/.env', '/.git/config', '/server-status', '/.DS_Store'].includes(req.url ?? '')) {
-      res.writeHead(404);
-      res.end();
-      return;
-    }
-    res.writeHead(200, { 'Content-Security-Policy': "default-src 'self'", 'X-Content-Type-Options': 'nosniff',
-      'Referrer-Policy': 'no-referrer', 'Permissions-Policy': 'geolocation=()', 'X-Frame-Options': 'DENY',
-      'Cross-Origin-Opener-Policy': 'same-origin', 'Set-Cookie': 'sid=private-cookie-value; Secure; HttpOnly; SameSite=Lax' });
-    res.end();
-  });
-  await new Promise<void>((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
-  const port = (server.address() as AddressInfo).port;
-  const { calls } = fakeTools(root, {
-    trivy: 'exit 0', 'osv-scanner': 'exit 0', semgrep: 'exit 0', gitleaks: 'exit 0',
-  });
-  const output = await chat(root, `/cyber http://127.0.0.1:${port}/app?token=private-query\ny\n/exit\n`,
-    { no_proxy: '127.0.0.1', NO_PROXY: '127.0.0.1' });
-  // Only the approved host and path, and only GET/HEAD/OPTIONS: no scanner ran.
-  assert.deepEqual([...new Set(hits.map(hit => hit.split(' ')[0]))].sort(), ['GET', 'HEAD', 'OPTIONS']);
-  const approvedPath = '/app?token=private-query';
-  for (const hit of hits) {
-    const target = hit.split(' ')[1] ?? '';
-    assert.ok(target === approvedPath || ['.env', '.git/config', 'server-status', '.DS_Store'].includes(target.replace(/^\//, '')),
-      hit);
-  }
-  assert.equal(calls().filter(call => !call.startsWith('curl') && !call.startsWith('nmap')).length, 0, calls().join('\n'));
-  assert.match(output, /\[HTTP\] 検出なし/);
-  assert.match(output, /\[Nmap 公開ポート\] 失敗/);
-  assert.match(output, /\[ソース検査\] 未実行/);
-  assert.match(output, /\[sqlmap\] 未実行/);
-  assert.doesNotMatch(output, /private-cookie-value|private-query/);
-});
+const gitLeakJson = JSON.stringify([{
+  RuleID: 'stripe-access-token', Description: 'Stripe Access Token', File: 'app.js', StartLine: 7,
+  Secret: 'example-redaction-marker', Match: 'example-redaction-marker',
+}]);
 
-test('/cyber <URL> --source runs each source scanner once in that directory', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-source-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const checkout = path.join(root, 'my app');
-  fs.mkdirSync(checkout, { recursive: true });
-  const { calls } = fakeTools(root, {
-    trivy: `cat <<'JSON'\n${trivyJson}\nJSON\nexit 10`,
+/** Every scanner the full run needs; each one answers deterministically. */
+function fullScan(root: string) {
+  return fakeTools(root, {
+    trivy: `cat <<'JSON'\n${trivyJson}\nJSON`,
     'osv-scanner': `cat <<'JSON'\n${osvJson}\nJSON\nexit 1`,
-    semgrep: `cat <<'JSON'\n{"results":[{"check_id":"javascript.lang.security.audit.sqli","path":"app.js","start":{"line":3},"extra":{"severity":"ERROR","message":"SQL 文を連結しています"}}],"errors":[],"paths":{"scanned":["app.js"]}}\nJSON\nexit 1`,
-    gitleaks: 'echo "[]"',
-    curl: 'exit 7',
+    semgrep: `cat <<'JSON'\n${semgrepJson}\nJSON`,
+    gitleaks: `case "$1" in
+  git) cat <<'JSON'
+${gitLeakJson}
+JSON
+    exit 10 ;;
+  *) echo '[]' ;;
+esac`,
+    ss: `printf 'State Recv-Q Send-Q Local Address:Port Peer Address:Port Process\\nLISTEN 0 128 0.0.0.0:5432 0.0.0.0:* users:(("postgres",pid=7,fd=4))\\nLISTEN 0 128 127.0.0.1:3000 0.0.0.0:* users:(("node",pid=8,fd=5))\\n'`,
+    nmap: `printf 'Host: 203.0.113.10 ()\\tPorts: 443/open/tcp//https///, 5432/open/tcp//postgresql///\\tIgnored State: filtered (65533)\\n'`,
+    nikto: `while [ $# -gt 0 ]; do if [ "$1" = "-output" ]; then out="$2"; fi; shift; done
+printf '+ /admin/: Directory indexing found.\\n+ /server-status: Apache status page.\\n+ 2 items checked\\n' > "$out"
+echo 'nikto finished'`,
+    sqlmap: `case "$*" in
+  *id=1*) echo 'sqlmap identified the following injection point(s)'; echo 'Parameter: id (GET)'; echo '    Type: boolean-based blind' ;;
+  *) echo 'all tested parameters do not appear to be injectable' ;;
+esac`,
   });
-  const server = createServer((_req, res) => { res.writeHead(200); res.end(); });
-  await new Promise<void>((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
-  const port = (server.address() as AddressInfo).port;
-  const output = await chat(root, `/cyber http://127.0.0.1:${port}/app --source "my app"\ny\n/exit\n`,
-    { no_proxy: '127.0.0.1', NO_PROXY: '127.0.0.1' });
-  const sources = calls().filter(call => ['trivy', 'osv-scanner', 'semgrep', 'gitleaks'].some(name => call.startsWith(name + ' ')));
-  assert.equal(sources.length, 4, calls().join('\n'));
-  // The child cwd is the resolved source path, so compare against the real path.
-  const expectedCwd = fs.realpathSync(checkout);
-  for (const call of sources) assert.ok(call.includes(`[cwd=${expectedCwd}]`), call);
-  // The same advisory from both scanners is one row, not two.
-  assert.match(output, /CVE-2021-23337 \[HIGH\].*OSV-Scanner \+ Trivy/);
-  assert.match(output, /依存関係の指摘 1 件/);
-  assert.match(output, /javascript\.lang\.security\.audit\.sqli \[ERROR\] app\.js:3/);
-  assert.match(output, /\[Gitleaks\] 検出なし/);
+}
+
+test('/cyber help, and a missing URL, explain the scan and start nothing', async t => {
+  const root = tempDir(t, 'modkh-cyber-help-');
+  const { calls } = fakeTools(root, { trivy: 'echo should-not-run' });
+  const output = await chat(root, '/cyber help\n/cyber\n/exit\n');
+  assert.match(output, /使い方: \/cyber <URL>/);
+  assert.match(output, /ソース・依存関係・秘密情報/);
+  assert.deepEqual(calls(), []);
+  assert.deepEqual(reportDirs(root), []);
 });
 
-test('/cyber rejects an invalid source path or a symlink escape before any approval', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-bounds-'));
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-outside-'));
-  t.after(() => { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); });
-  fs.symlinkSync(outside, path.join(root, 'escape'));
-  const { calls } = fakeTools(root, { trivy: 'exit 0', 'osv-scanner': 'exit 0', semgrep: 'exit 0', gitleaks: 'exit 0' });
-  const output = await chat(root, [
-    '/cyber https://example.org/app --source does-not-exist', 'y',
-    '/cyber https://example.org/app --source escape', 'y',
-    '/cyber https://example.org/app --source', 'y',
-    '/exit', '',
-  ].join('\n'));
-  assert.doesNotMatch(output, /承認要求/);
-  assert.match(output, /ソースのパスが存在しません/);
-  assert.match(output, /ワークスペース外のパスは点検しません/);
-  assert.equal(calls().length, 0, calls().join('\n'));
+test('/cyber <URL> runs the Skill stages in order and saves each report outside the repository', async t => {
+  const root = tempDir(t, 'modkh-cyber-full-');
+  const { calls } = fullScan(root);
+  const output = await chat(root, '/cyber https://203.0.113.10/app\ny\n/exit\n');
+
+  // Stage order follows the Skill: sources, ports, web/SQL. No URL query means no sqlmap target.
+  assert.deepEqual(calls().map(call => call.split(' ')[0]),
+    ['trivy', 'osv-scanner', 'semgrep', 'gitleaks', 'gitleaks', 'ss', 'nmap', 'nikto']);
+  assert.match(calls().find(call => call.startsWith('gitleaks'))!, /gitleaks git /);
+  // Step 2 scans every TCP port, as the Skill's -p- example does.
+  assert.match(calls().find(call => call.startsWith('nmap'))!, /-p- /);
+  assert.match(calls().find(call => call.startsWith('nikto'))!, /-Tuning 2 /);
+
+  for (const stage of ['1. ソース・依存関係・秘密情報', '2. 公開ポート', '3. Web 設定と SQL', '4. 記録']) {
+    assert.match(output, new RegExp(stage.replace(/\./g, '\\.')), stage);
+  }
+  assert.match(output, /CVE-2021-23337/);
+  assert.match(output, /php\.lang\.security\.sql-injection .*app\.php:12/);
+  assert.match(output, /stripe-access-token app\.js:7/);
+  assert.match(output, /5432/);
+  assert.match(output, /\/admin\//);
+  assert.match(output, /sqlmap\] 未実行/);
+
+  const [dir] = reportDirs(root);
+  assert.ok(dir, 'audit directory was not created');
+  assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+  for (const name of ['plan.txt', 'trivy-fs.json', 'osv.json', 'semgrep.json', 'gitleaks-git.json',
+    'gitleaks-dir.json', 'ss.txt', 'nmap.txt', 'nikto.txt', 'record.md']) {
+    const file = path.join(dir, name);
+    assert.ok(fs.existsSync(file), name);
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600, name);
+  }
+  const record = fs.readFileSync(path.join(dir, 'record.md'), 'utf8');
+  assert.match(record, /対象: https:\/\/203\.0\.113\.10\/app/);
+  assert.match(record, /再検査/);
+});
+
+test('/cyber shows the approved URL, port, checks and skipped checks before starting', async t => {
+  const root = tempDir(t, 'modkh-cyber-plan-');
+  const { calls } = fullScan(root);
+  const output = await chat(root,
+    '/cyber https://203.0.113.10/app?token=private-query --no-source --no-sqlmap\ny\n/exit\n');
+
+  const prompt = output.slice(0, output.indexOf('--- 承認要求'));
+  assert.doesNotMatch(prompt, /private-query/);
+  assert.doesNotMatch(output, /private-query/);
+  assert.match(output, /対象 URL: https:\/\/203\.0\.113\.10\/app（クエリ非表示）/);
+  assert.match(output, /接続先ポート: 443\/tcp/);
+  assert.match(output, /起動しない検査:[\s\S]*ソース検査/);
+  assert.match(output, /起動しない検査:[\s\S]*sqlmap/);
+  assert.equal(calls().filter(call => call.startsWith('trivy') || call.startsWith('sqlmap')).length, 0);
 });
 
 test('/cyber refuses to start when approval is denied', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-denied-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const hits: string[] = [];
-  const server = createServer((req, res) => { hits.push(req.url ?? ''); res.writeHead(200); res.end(); });
-  await new Promise<void>((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
-  const port = (server.address() as AddressInfo).port;
-  fakeTools(root, { trivy: 'exit 0', 'osv-scanner': 'exit 0', semgrep: 'exit 0', gitleaks: 'exit 0' });
-  const output = await chat(root, `/cyber http://127.0.0.1:${port}/app --source .\nn\n/exit\n`,
-    { no_proxy: '127.0.0.1', NO_PROXY: '127.0.0.1' });
-  assert.deepEqual(hits, []);
+  const root = tempDir(t, 'modkh-cyber-denied-');
+  const { calls } = fullScan(root);
+  const output = await chat(root, '/cyber https://203.0.113.10/app\nn\n/exit\n');
+  assert.deepEqual(calls(), []);
+  assert.deepEqual(reportDirs(root), []);
   assert.match(output, /検査を開始しませんでした/);
 });
 
-test('/cyber reads a sqlmap summary only when it names the same target', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-sqlmap-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, 'match.json'), JSON.stringify({
-    target: 'http://127.0.0.1:1/app', date: '2026-11-27', verdict: '注入可能なパラメータは見つかりませんでした',
-  }));
-  fs.writeFileSync(path.join(root, 'other.json'), JSON.stringify({ target: 'https://example.net/other', verdict: '検出' }));
-  // sqlmap on PATH would log a call; reading a summary must never start it.
-  const { calls } = fakeTools(root, { sqlmap: 'echo should-not-run', curl: 'exit 7' });
+test('/cyber reports a missing scanner as 未実行 instead of 検出なし', async t => {
+  const root = tempDir(t, 'modkh-cyber-missing-');
+  // Only gitleaks exists: everything else must say why it did not run, and the run continues.
+  const { calls } = fakeTools(root, { gitleaks: 'echo "[]"' });
+  const output = await chat(root, '/cyber https://203.0.113.10/app\ny\n/exit\n', { PATH: root });
+  assert.match(output, /Trivy\] 未実行/);
+  assert.match(output, /OSV-Scanner\] 未実行/);
+  assert.match(output, /Semgrep\] 未実行/);
+  assert.match(output, /Gitleaks（Git 履歴）\] 検出なし/);
+  assert.match(output, /Nmap\] 未実行/);
+  assert.match(output, /Nikto\] 未実行/);
+  assert.ok(calls().length >= 2, calls().join('\n'));
+  assert.equal(reportDirs(root).length, 1);
+});
+
+test('/cyber runs sqlmap only for a URL with a query, and --no-sqlmap keeps it off', async t => {
+  const root = tempDir(t, 'modkh-cyber-sqlmap-');
+  const { calls } = fullScan(root);
   const output = await chat(root, [
-    '/cyber http://127.0.0.1:1/app --sqlmap-summary other.json', 'y',
-    '/cyber http://127.0.0.1:1/app --sqlmap-summary match.json', 'y',
+    '/cyber https://203.0.113.10/item?id=1', 'y',
+    '/cyber https://203.0.113.10/item?id=1 --no-sqlmap', 'y',
     '/exit', '',
   ].join('\n'));
-  assert.match(output, /要約の対象が一致しません/);
-  assert.match(output, /sqlmap（外部診断）\] 情報/);
-  assert.match(output, /2026-11-27/);
-  assert.match(output, /MoDKH は sqlmap を起動していません/);
-  assert.equal(calls().filter(call => call.startsWith('sqlmap')).length, 0, calls().join('\n'));
+  const sqlmapCalls = calls().filter(call => call.startsWith('sqlmap'));
+  assert.equal(sqlmapCalls.length, 1, calls().join('\n'));
+  assert.match(sqlmapCalls[0]!, /-u https:\/\/203\.0\.113\.10\/item\?id=1/);
+  assert.match(sqlmapCalls[0]!, /--batch/);
+  assert.match(output, /sqlmap（稼働先）\] 検出あり/);
+  assert.match(output, /sqlmap\] 未実行[\s\S]*--no-sqlmap/);
 });
 
-test('/cyber reports a missing scanner as 未実行 and keeps the other checks going', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-missing-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  // Only gitleaks exists; the other three must be reported as 未実行 rather than failing the run.
-  const { calls } = fakeTools(root, { gitleaks: 'echo "[]"', curl: 'exit 7' });
-  const server = createServer((_req, res) => { res.writeHead(200); res.end(); });
-  await new Promise<void>((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
-  const port = (server.address() as AddressInfo).port;
-  // A PATH with only this fixture makes "not installed" a fact rather than a host accident.
-  const output = await chat(root, `/cyber http://127.0.0.1:${port}/ --source .\ny\n/exit\n`,
-    { PATH: root, no_proxy: '127.0.0.1', NO_PROXY: '127.0.0.1' });
-  assert.match(output, /\[Trivy\] 未実行/);
-  assert.match(output, /\[OSV-Scanner\] 未実行/);
-  assert.match(output, /\[Semgrep\] 未実行/);
-  assert.match(output, /\[Gitleaks\] 検出なし/);
-  assert.ok(calls().some(call => call.startsWith('gitleaks ')), calls().join('\n'));
+test('/cyber uses --source and rejects a path that escapes the workspace', async t => {
+  const root = tempDir(t, 'modkh-cyber-source-');
+  const outside = tempDir(t, 'modkh-cyber-outside-');
+  fs.symlinkSync(outside, path.join(root, 'escape'));
+  const checkout = path.join(root, 'my app');
+  fs.mkdirSync(checkout, { recursive: true });
+  const { calls } = fakeTools(root, {
+    trivy: 'echo \'{"Results":[]}\'', 'osv-scanner': 'exit 0', semgrep: 'echo \'{"results":[],"errors":[],"paths":{"scanned":[]}}\'',
+    gitleaks: 'echo "[]"', ss: 'echo listening', nmap: 'exit 1', nikto: 'exit 0',
+  });
+  const output = await chat(root, [
+    '/cyber https://203.0.113.10/app --source "my app"', 'y',
+    '/cyber https://203.0.113.10/app --source does-not-exist', 'y',
+    '/cyber https://203.0.113.10/app --source escape', 'y',
+    '/exit', '',
+  ].join('\n'));
+
+  const trivy = calls().filter(call => call.startsWith('trivy'));
+  assert.equal(trivy.length, 1, calls().join('\n'));
+  assert.ok(trivy[0]!.includes(`[cwd=${fs.realpathSync(checkout)}]`), trivy[0]!);
+  assert.match(output, /ソースのパスが存在しません/);
+  assert.match(output, /ワークスペース外のパスは点検しません/);
 });
 
-test('/cyber stops the remaining source tools after an interruption', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-interrupt-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+test('/cyber never prints or stores a detected secret value', async t => {
+  const root = tempDir(t, 'modkh-cyber-redact-');
+  const { calls } = fakeTools(root, {
+    trivy: 'echo \'{"Results":[]}\'', 'osv-scanner': 'exit 0', semgrep: 'echo \'{"results":[],"errors":[],"paths":{"scanned":["a.php"]}}\'',
+    gitleaks: `case "$1" in
+  git) cat <<'JSON'
+${gitLeakJson}
+JSON
+    exit 10 ;;
+  dir) echo '[]' ;;
+esac`,
+    ss: 'echo listening', nmap: 'exit 1', nikto: 'exit 0',
+  });
+  const output = await chat(root, '/cyber https://203.0.113.10/app\ny\n/exit\n');
+  assert.match(output, /stripe-access-token app\.js:7/);
+  assert.match(output, /値は非表示/);
+  assert.doesNotMatch(output, /example-redaction-marker/);
+  const [dir] = reportDirs(root);
+  const saved = fs.readFileSync(path.join(dir, 'gitleaks-git.json'), 'utf8');
+  assert.doesNotMatch(saved, /example-redaction-marker/);
+  assert.match(saved, /stripe-access-token/);
+  assert.ok(calls().some(call => call.startsWith('gitleaks')));
+});
+
+test('/cyber stops the remaining stages after an interruption', async t => {
+  const root = tempDir(t, 'modkh-cyber-interrupt-');
   const started = path.join(root, 'trivy-started');
   const log = path.join(root, 'calls');
-  // Trivy marks that it really started, then hangs. Waiting for that marker makes the
-  // interruption decisive instead of racing the report output.
   fs.writeFileSync(path.join(root, 'trivy'),
     `#!/bin/sh\ntouch ${JSON.stringify(started)}\nprintf 'trivy started\\n' >> ${JSON.stringify(log)}\nsleep 60\nprintf 'trivy ended naturally\\n' >> ${JSON.stringify(log)}\n`,
     { mode: 0o755 });
-  for (const name of ['osv-scanner', 'semgrep', 'gitleaks', 'nmap', 'nuclei']) {
+  for (const name of ['osv-scanner', 'semgrep', 'gitleaks', 'ss', 'nmap', 'nikto']) {
     fs.writeFileSync(path.join(root, name), `#!/bin/sh\nprintf '${name} ran\\n' >> ${JSON.stringify(log)}\nexit 0\n`, { mode: 0o755 });
   }
-  fs.writeFileSync(path.join(root, 'curl'), '#!/bin/sh\nexit 7\n', { mode: 0o755 });
   const child = execFile(process.execPath, [entry, '--cwd', root], {
-    encoding: 'utf8', timeout: 60_000,
-    env: { ...process.env, PATH: root + path.delimiter + process.env.PATH, MODKH_HOME: root, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '0' },
+    encoding: 'utf8', timeout: 120_000,
+    env: { ...process.env, PATH: root + path.delimiter + process.env.PATH, HOME: root, MODKH_HOME: root, MODKH_PLAIN: '1', MODKH_AGENTICREPLAY: '0' },
   });
   let stdout = '';
   child.stdout!.on('data', (chunk: string) => { stdout += chunk; });
   child.stderr!.on('data', (chunk: string) => { stdout += chunk; });
-  child.stdin!.end('/cyber https://127.0.0.1:1/app --source .\ny\n/exit\n');
+  child.stdin!.end('/cyber https://203.0.113.10/app\ny\n/exit\n');
   const deadline = Date.now() + 20_000;
   while (!fs.existsSync(started) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
   const scannerStarted = fs.existsSync(started);
@@ -243,124 +283,10 @@ test('/cyber stops the remaining source tools after an interruption', async t =>
   await new Promise<number | null>(resolve => child.on('close', resolve));
   assert.equal(scannerStarted, true, `trivy never started:\n${stdout}`);
   const calls = fs.readFileSync(log, 'utf8');
-  for (const name of ['osv-scanner', 'semgrep', 'gitleaks']) {
+  for (const name of ['osv-scanner', 'semgrep', 'gitleaks', 'nmap', 'nikto']) {
     assert.ok(!calls.includes(`${name} ran`), `${name} started after the interruption:\n${calls}`);
   }
-  // A killed scanner must not also report a normal completion.
   assert.doesNotMatch(calls, /ended naturally/);
-  assert.match(stdout, /\[Trivy\] 中断/);
+  assert.match(stdout, /Trivy.*中断/);
   assert.match(stdout, /以降の検査は開始していません/);
-});
-
-test('/cyber never prints a detected secret value or a URL query value', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-redact-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const secret = 'example-redaction-marker';
-  fakeTools(root, {
-    trivy: 'exit 0', 'osv-scanner': 'exit 0', semgrep: 'exit 0', curl: 'exit 7',
-    // Simulate a scanner returning an unredacted value to exercise the report boundary.
-    gitleaks: `cat <<'JSON'\n[{"RuleID":"stripe-access-token","Description":"Stripe Access Token","File":"app.js","StartLine":1,"Secret":"${secret}","Match":"${secret}"}]\nJSON\nexit 10`,
-  });
-  const server = createServer((_req, res) => { res.writeHead(200, { 'Set-Cookie': 'sid=session-cookie-value' }); res.end(); });
-  await new Promise<void>((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
-  const port = (server.address() as AddressInfo).port;
-  const output = await chat(root, `/cyber http://127.0.0.1:${port}/app?token=private-query-value --source .\ny\n/exit\n`,
-    { no_proxy: '127.0.0.1', NO_PROXY: '127.0.0.1' });
-  assert.ok(!output.includes(secret));
-  assert.doesNotMatch(output, /session-cookie-value|private-query-value/);
-  assert.match(output, /stripe-access-token app\.js:1/);
-  assert.match(output, /値は非表示/);
-});
-
-test('/cyber tools URL only checks local versions and help is CLI usage', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-versions-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const { calls } = fakeTools(root, { curl: 'echo curl-version', nmap: 'echo nmap-version', nuclei: 'echo nuclei-version' });
-  const output = await chat(root, '/cyber help\n/cyber tools https://example.invalid/?token=private-query\ny\n/exit\n', { PATH: root });
-  assert.doesNotMatch(output, /対象 URL:|▶ URL:|private-query|^description:/m);
-  for (const name of ['curl', 'nmap', 'nuclei']) assert.ok(calls().some(line => line.startsWith(name + ' -') && line.includes('version')), name);
-});
-
-test('/cyber local reports incomplete coverage and never prints raw secret reports', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-local-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const { calls } = fakeTools(root, {
-    trivy: 'echo null', 'osv-scanner': 'echo "No package sources found" >&2; exit 128',
-    semgrep: `echo '{"results":[],"errors":[{"type":"ParseError"}],"paths":{"scanned":["app.js"]}}'`,
-    gitleaks: `echo '[{"RuleID":"rule","File":"app.js","StartLine":12,"Secret":"PRIVATE_FIXTURE"}]'; exit 10`,
-  });
-  const output = await chat(root, '/cyber\ny\n/exit\n', { PATH: root });
-  assert.deepEqual(calls().map(line => line.split(' ')[0]), ['trivy', 'osv-scanner', 'semgrep', 'gitleaks']);
-  assert.match(output, /\[Trivy\] 失敗/);
-  assert.match(output, /\[OSV-Scanner\] 対象なし/);
-  assert.match(output, /\[Semgrep\] 一部未確認/);
-  assert.match(output, /rule app\.js:12/);
-  assert.doesNotMatch(output, /PRIVATE_FIXTURE/);
-  assert.match(output, /指摘 1 件/);
-});
-
-test('/cyber redacts queries in matching and mismatched imported summary targets', async () => {
-  const { readSqlmapSummary } = await import('../src/cli/cyber.ts');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-summary-'));
-  try {
-    const url = new URL('https://example.org/app?token=PRIVATE_FIXTURE');
-    fs.writeFileSync(path.join(root, 'summary.json'), JSON.stringify({ target: url.href, verdict: 'ok' }));
-    const success = readSqlmapSummary(root, 'summary.json', url);
-    assert.ok(success.summary);
-    assert.doesNotMatch(success.summary.target, /PRIVATE_FIXTURE/);
-    const mismatch = readSqlmapSummary(root, 'summary.json', new URL('https://example.org/app'));
-    assert.match(mismatch.error!, /一致しません/);
-    assert.doesNotMatch(mismatch.error!, /PRIVATE_FIXTURE/);
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
-});
-
-test('/cyber URL sends only observed configuration to the connected model once', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-cyber-model-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const requests: string[] = [];
-  const provider = createServer(async (req, res) => {
-    let body = '';
-    for await (const chunk of req) body += chunk;
-    requests.push(body);
-    res.writeHead(200, { 'content-type': 'text/event-stream' });
-    const event = { id: 'c', object: 'chat.completion.chunk', created: 1, model: 'fixture',
-      choices: [{ index: 0, delta: { content: 'Cookie の用途に応じて HttpOnly を設定してください。' }, finish_reason: 'stop' }] };
-    res.end('data: ' + JSON.stringify(event) + '\n\ndata: [DONE]\n\n');
-  });
-  await new Promise<void>((resolve, reject) => provider.once('error', reject).listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>(resolve => provider.close(() => resolve())));
-  fakeTools(root, { curl: `case "$*" in
-    *no-response*) exit 7 ;;
-    *) printf 'HTTP/1.1 200 OK\\r\\nSet-Cookie: PRIVATE-httponly=PRIVATE; Path=/PRIVATE-SameSite\\r\\nServer: PRIVATE\\r\\nContent-Security-Policy: frame-ancestors self\\r\\n\\r\\nPRIVATE' ;;
-  esac` });
-  const output = await chat(root, [
-    '/cyber http://127.0.0.1/no-response', 'y', '/cyber http://127.0.0.1/denied', 'n',
-    '/cyber http://127.0.0.1/PRIVATE?token=PRIVATE', 'y', '/exit', '',
-  ].join('\n'), { PATH: root }, ['--model', 'local-llm/fixture', '--base-url', `http://127.0.0.1:${(provider.address() as AddressInfo).port}/v1`]);
-  assert.match(output, /GET の応答ヘッダーを確認できません/);
-  assert.match(output, /検査を開始しませんでした/);
-  assert.match(output, /Cookie の用途に応じて HttpOnly/);
-  assert.equal(requests.length, 1);
-  const sent = JSON.parse(requests[0]);
-  assert.deepEqual(sent.tools ?? [], []);
-  assert.doesNotMatch(requests[0], /PRIVATE|127\.0\.0\.1/);
-  const observation = JSON.parse(sent.messages.find((item: { role: string }) => item.role === 'user').content);
-  assert.equal(observation.httpStatus, 200);
-  assert.equal(observation.cookiesWithoutHttpOnly, 1);
-  assert.equal(observation.cookiesWithoutSameSite, 1);
-  assert.equal(observation.cspFrameAncestors, true);
-});
-
-test('/cyber preserves the report when the model fails after emitting partial text', async () => {
-  const { responseEvidence, writeCyberReview } = await import('../src/cli/cyber-review.ts');
-  let output = '';
-  await writeCyberReview({
-    id: 'fixture', async *stream() {
-      yield { type: 'text-delta', text: 'incomplete response' };
-      yield { type: 'finish', stopReason: 'error' };
-    },
-  }, responseEvidence(404, true, []), new AbortController().signal, text => { output += text; });
-  assert.match(output, /AI による設定レビュー\] 失敗/);
-  assert.doesNotMatch(output, /incomplete response/);
 });

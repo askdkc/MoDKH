@@ -59,6 +59,8 @@ if [ "$REPLAY_ONLY" = 1 ]; then
     'a rotated AgenticReplay event log stays complete when only the file budget is small' \
     'real AgenticReplay merges the receipt with proxy evidence and records it without another POST' \
     'real AgenticReplay records interruptions, retries, denials and background jobs' \
+    'real AgenticReplay isolates foreground child receipts' \
+    'real AgenticReplay isolates background child receipts' \
     'real AgenticReplay automatically records an unacknowledged click once'
   echo "ACCEPTANCE_OK"
   exit 0

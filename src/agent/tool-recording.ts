@@ -27,11 +27,20 @@ export interface ToolRecording {
 // After a short write, appending another frame would also corrupt the preceding line.
 const failedDestinations = new Set<string>();
 
+let replayTransport: string | undefined;
+
+/** Consume the recorder's launch environment before chat can spawn any children. */
+export function adoptAgenticReplayToolTransport(): boolean {
+  const frames = process.env.AGENTICREPLAY_MODKH_FRAMES;
+  delete process.env.AGENTICREPLAY_MODKH_FRAMES;
+  replayTransport = frames ? resolve(frames) : undefined;
+  return replayTransport !== undefined;
+}
+
 /** Each destination fails independently. Nothing on the tool/model path consumes this journal. */
 export function fileToolRecording(session: string, diagnostic: (text: string) => void): ToolRecording | undefined {
   const local = process.env.MODKH_TOOL_RECORD_FILE;
-  const replay = process.env.MODKH_AGENTICREPLAY === '0' ? undefined : process.env.AGENTICREPLAY_MODKH_FRAMES;
-  const replayPath = replay ? resolve(replay) : undefined;
+  const replayPath = process.env.MODKH_AGENTICREPLAY === '0' ? undefined : replayTransport;
   const files = new Set<string>();
   if (local) files.add(resolve(local));
   if (replayPath) files.add(replayPath);
