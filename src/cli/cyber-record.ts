@@ -1,9 +1,72 @@
 import { oneLine, type Check } from './cyber-report.ts';
 
-/** A verdict collected during the run, kept for the record file. */
+/** A verdict collected during the run, kept for the summary and the record file. */
 export interface RecordedCheck {
   stage: string;
   check: Check;
+}
+
+export interface SummaryInput {
+  checks: readonly RecordedCheck[];
+  directory: string;
+  aborted: boolean;
+}
+
+const UNFINISHED = ['未実行', '失敗', '一部未確認', '中断'] as const;
+
+/**
+ * The last thing a reader sees must be the findings themselves, not a file
+ * path. This groups what was found by severity of consequence, then lists what
+ * could not be judged, so "nothing found" and "not checked" never blur.
+ */
+export function writeSummary(input: SummaryInput): string[] {
+  const found = input.checks.filter(entry => entry.check.status === '検出あり');
+  const unfinished = input.checks.filter(entry =>
+    (UNFINISHED as readonly string[]).includes(entry.check.status));
+  const clean = input.checks.filter(entry =>
+    entry.check.status === '検出なし' || entry.check.status === '対象なし');
+  const lines: string[] = ['', '■ 発見した内容', ''];
+
+  if (!found.length) {
+    lines.push('検出ありの項目はありませんでした。');
+    if (clean.length) {
+      lines.push(`${clean.map(entry => entry.check.name).join(', ')} は実行して該当なしでした。`);
+    }
+  } else {
+    lines.push(`${found.length} 項目で検出がありました。`);
+    lines.push('');
+    let index = 1;
+    for (const entry of found) {
+      const count = entry.check.count ? `（${entry.check.count}件）` : '';
+      lines.push(`${index}. [${entry.check.name}]${count} — ${entry.stage}`);
+      index++;
+      // The check's own lines carry the evidence: CVE, path, version, file.
+      for (const line of entry.check.lines.slice(0, 8)) lines.push(`   - ${oneLine(line, 220)}`);
+      if (entry.check.lines.length > 8) lines.push(`   - …ほか ${entry.check.lines.length - 8} 行`);
+    }
+    lines.push('');
+    lines.push('疑わしい検出は、実際の設定・パッケージ・コードで裏づけを取ってください。');
+    lines.push('秘密情報が見つかった場合は、公開する前に先に失効・再発行してください。');
+  }
+
+  if (unfinished.length) {
+    lines.push('');
+    lines.push('■ 判定できなかった項目');
+    lines.push('');
+    for (const entry of unfinished) {
+      lines.push(`- [${entry.check.name}] ${entry.check.status}: ${oneLine(entry.check.lines[0] ?? '', 160)}`);
+    }
+    lines.push('');
+    lines.push('「未実行」「一部未確認」は、脆弱性がないという意味ではありません。');
+  }
+
+  lines.push('');
+  lines.push('■ 保存したもの');
+  lines.push('');
+  lines.push(`- ディレクトリ: ${input.directory}`);
+  lines.push('- record.md: 対象・日時・検出内容・再検査手順');
+  if (input.aborted) lines.push('- 状態: 中断（以降の検査は開始していません）');
+  return lines;
 }
 
 export interface RecordInput {
@@ -15,10 +78,6 @@ export interface RecordInput {
   directory: string;
   checks: readonly RecordedCheck[];
   aborted: boolean;
-}
-
-function stageTitle(stage: string): string {
-  return stage;
 }
 
 /**
@@ -48,7 +107,7 @@ export function writeRecord(input: RecordInput): string {
   }
   lines.push('', '## 全項目', '');
   for (const entry of input.checks) {
-    lines.push(`- ${stageTitle(entry.stage)} / ${entry.check.name}: ${entry.check.status}`
+    lines.push(`- ${entry.stage} / ${entry.check.name}: ${entry.check.status}`
       + (entry.check.count ? `（${entry.check.count}件）` : ''));
   }
   lines.push('', '## 再検査', '');

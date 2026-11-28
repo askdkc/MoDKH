@@ -2,6 +2,7 @@ import { DATASTORE_PORTS, EXPECTED_PUBLIC_PORTS, SERVICE_PORTS } from './cyber-p
 import { oneLine, type Check } from './cyber-report.ts';
 import { runTool } from './cyber-run.ts';
 import { isIpv6, type ScanTarget } from './cyber-target.ts';
+import type { Progress } from './cyber-progress.ts';
 
 /**
  * One command's time budget. Every check here is "run, then read the result"; a
@@ -18,6 +19,7 @@ export interface StageOptions {
   udpPorts?: string;
   signal: AbortSignal;
   store: { write(name: string, contents: string): string };
+  progress: Progress;
   report(check: Check): void;
 }
 
@@ -99,23 +101,28 @@ export async function runServiceStage(options: StageOptions): Promise<ServicePor
   const list = options.quickPorts
     ? options.target.port
     : withTargetPort(SERVICE_PORTS, options.target.port);
+  options.progress.start('サービス特定', `nmap -sV -p ${list}`);
   const run = await runTool('nmap',
     ['-n', '-Pn', '-sT', '-sV', '--version-light', '--max-rate', '50', '--reason',
       ...(isIpv6(address) ? ['-6'] : []), '-p', list, '-oG', '-', address],
     options.signal, { timeoutMs: budget(options), maxBytes: 2 * 1024 * 1024 });
   if (!run.started) {
+    options.progress.done(name, '未実行');
     options.report({ name, status: '未実行', lines: ['nmap が見つかりません（PATH を確認してください）。'] });
     return [];
   }
   if (run.aborted) {
+    options.progress.done(name, '中断');
     options.report({ name, status: '中断', lines: ['サービスの特定を中止しました。'] });
     return [];
   }
   if (run.timedOut) {
+    options.progress.done(name, '一部未確認');
     options.report({ name, status: '一部未確認', lines: unfinished(options, '次の検査へ進みます。') });
     return [];
   }
   if (run.truncated || run.code !== 0) {
+    options.progress.done(name, '失敗');
     options.report({
       name, status: '失敗',
       lines: [`終了コード ${run.code ?? '不明'} で結果を取得できませんでした。`, oneLine(run.stderr)],
@@ -126,6 +133,7 @@ export async function runServiceStage(options: StageOptions): Promise<ServicePor
   const found = parseGrepable(run.stdout);
   const open = found.filter(entry => entry.state === 'open');
   if (!open.length) {
+    options.progress.done(name, '検出なし');
     options.report({ name, status: '検出なし', lines: [`${address} の走査範囲に開いているポートはありませんでした。`] });
     return [];
   }
@@ -139,6 +147,7 @@ export async function runServiceStage(options: StageOptions): Promise<ServicePor
   if (unexpected.length) lines.push(`公開を想定していない開いているポート: ${unexpected.map(entry => entry.port).join(', ')}`);
   if (datastores.length) lines.push(`データストアのポートが公開されています: ${datastores.map(entry => entry.port).join(', ')}`);
   lines.push(`走査したポート: ${list}`);
+  options.progress.done(name, datastores.length ? '検出あり' : '情報', datastores.length || undefined);
   options.report({
     name, status: datastores.length ? '検出あり' : '情報',
     ...(datastores.length ? { count: datastores.length } : {}), lines,
@@ -163,23 +172,28 @@ export async function runVulnerabilityStage(options: StageOptions, services: rea
     ? [...new Set(services.map(entry => entry.port))].join(',')
     : options.target.port;
   const categories = options.quickPorts ? 'vuln' : 'vuln and not brute';
+  options.progress.start('既知の脆弱性', `nmap --script ${categories} -p ${portList}`);
   const run = await runTool('nmap',
     ['-n', '-Pn', '-sT', '-sV', '--version-light', '--script', categories, '-p', portList,
       ...(isIpv6(address) ? ['-6'] : []), '-oN', '-', address],
     options.signal, { timeoutMs: budget(options), maxBytes: 2 * 1024 * 1024 });
   if (!run.started) {
+    options.progress.done(name, '未実行');
     options.report({ name, status: '未実行', lines: ['nmap が見つかりません（PATH を確認してください）。'] });
     return;
   }
   if (run.aborted) {
+    options.progress.done(name, '中断');
     options.report({ name, status: '中断', lines: ['脆弱性の検査を中止しました。'] });
     return;
   }
   if (run.timedOut) {
+    options.progress.done(name, '一部未確認');
     options.report({ name, status: '一部未確認', lines: unfinished(options, '次の検査へ進みます。') });
     return;
   }
   if (run.truncated) {
+    options.progress.done(name, '失敗');
     options.report({ name, status: '失敗', lines: ['出力が上限を超えたため、結果を採用しません。'] });
     return;
   }
@@ -192,11 +206,14 @@ export async function runVulnerabilityStage(options: StageOptions, services: rea
     const checked = executed.length
       ? `実行したスクリプト: ${executed.slice(0, 8).join(', ')}${executed.length > 8 ? ' ほか' : ''}`
       : '該当するスクリプトはありませんでした';
+    options.progress.done(name, '検出なし');
     options.report({ name, status: '検出なし', lines: [`対象ポート ${portList} で CVE を伴う指摘はありませんでした。`, checked] });
     return;
   }
+  const count = cves.length || vulnerable.length;
+  options.progress.done(name, '検出あり', count);
   options.report({
-    name, status: '検出あり', count: cves.length || vulnerable.length,
+    name, status: '検出あり', count,
     lines: [
       ...(cves.length ? [`CVE: ${cves.join(', ')}`] : []),
       ...vulnerable.slice(0, 10).map(line => oneLine(line, 200)),
@@ -212,19 +229,23 @@ export async function runUdpStage(options: StageOptions): Promise<void> {
   const name = 'UDP ポート';
   const address = options.address;
   if (!address || !options.udpPorts) return;
+  options.progress.start('UDP ポート', `nmap -sU -p ${options.udpPorts}`);
   const run = await runTool('nmap',
     ['-n', '-Pn', '-sU', '-p', options.udpPorts, '--max-rate', '10', '--reason',
       ...(isIpv6(address) ? ['-6'] : []), '-oG', '-', address],
     options.signal, { timeoutMs: budget(options), maxBytes: 512 * 1024 });
   if (!run.started) {
+    options.progress.done(name, '未実行');
     options.report({ name, status: '未実行', lines: ['nmap が見つかりません。'] });
     return;
   }
   if (run.aborted) {
+    options.progress.done(name, '中断');
     options.report({ name, status: '中断', lines: ['UDP の確認を中止しました。'] });
     return;
   }
   if (run.timedOut || run.truncated || run.code !== 0) {
+    options.progress.done(name, '一部未確認');
     options.report({
       name, status: '一部未確認',
       lines: [`${minutes(budget(options))}以内に結果を取得できませんでした。`, oneLine(run.stderr)],
@@ -235,6 +256,7 @@ export async function runUdpStage(options: StageOptions): Promise<void> {
   const entries = parseGrepable(run.stdout);
   const open = entries.filter(entry => entry.state === 'open');
   const uncertain = entries.filter(entry => entry.state === 'open|filtered');
+  options.progress.done(name, '情報');
   options.report({
     name, status: '情報',
     lines: [

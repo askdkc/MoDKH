@@ -1,11 +1,14 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 /**
- * The Skill says to keep results outside the repository, so a run writes into
- * one fresh directory under the home directory: 0700 for the directory, 0600
- * for each report. Nothing here writes into the scanned checkout.
+ * The Skill says to keep results out of the repository, but "outside" must still
+ * be findable. Reports go under `<working directory>/.modkh/security-audit.<stamp>`,
+ * which the workspace already ignores, so nothing lands in the checkout itself
+ * and nothing scatters into the home directory.
+ *
+ * The directory is 0700 and every file is 0600: an audit contains the site's
+ * weaknesses, so it must not be world-readable.
  */
 export interface ReportStore {
   readonly directory: string;
@@ -22,11 +25,34 @@ const MAX_REPORT_BYTES = 8 * 1024 * 1024;
 /** A tool may only create plain names; anything else would escape the audit directory. */
 const PLAIN_NAME = /^[a-z0-9][a-z0-9.-]*$/;
 
+/** `security-audit.20261128-213045`, so two runs in the same directory stay apart. */
+function stamp(now: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+    + `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
+/**
+ * The name the run will use, without creating anything. The approval prompt
+ * shows it, and a denied prompt must leave no directory behind.
+ */
+export function plannedAuditDirectory(root: string, now = new Date()): string {
+  const parent = path.join(root, '.modkh');
+  let candidate = path.join(parent, `security-audit.${stamp(now)}`);
+  // Two runs inside one second would otherwise share a directory.
+  for (let index = 2; fs.existsSync(candidate); index++) {
+    candidate = path.join(parent, `security-audit.${stamp(now)}-${index}`);
+  }
+  return candidate;
+}
+
 export class AuditDirectory implements ReportStore {
   readonly directory: string;
 
-  constructor(directory?: string) {
-    this.directory = fs.mkdtempSync(path.join(directory ?? os.homedir(), 'security-audit.'));
+  constructor(root: string, now = new Date()) {
+    this.directory = plannedAuditDirectory(root, now);
+    fs.mkdirSync(path.dirname(this.directory), { recursive: true, mode: 0o700 });
+    fs.mkdirSync(this.directory, { mode: 0o700 });
     fs.chmodSync(this.directory, 0o700);
   }
 

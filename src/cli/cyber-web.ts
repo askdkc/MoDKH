@@ -2,12 +2,14 @@ import fs from 'node:fs';
 import { oneLine, type Check } from './cyber-report.ts';
 import { runTool } from './cyber-run.ts';
 import { toolUrl, type ScanTarget } from './cyber-target.ts';
+import type { Progress } from './cyber-progress.ts';
 
 export interface WebStageOptions {
   target: ScanTarget;
   /** Per-command budget; a tool that has not answered by then is reported unfinished. */
   timeoutMs: number;
   signal: AbortSignal;
+  progress: Progress;
   store: {
     write(name: string, contents: string): string;
     file(name: string): string;
@@ -31,6 +33,7 @@ function niktoFindings(report: string): string[] {
  * cookies and data, so only the bare URL is passed and no session is reused.
  */
 async function nikto(options: WebStageOptions): Promise<Check> {
+  options.progress.start('Nikto', `nikto -Tuning 2 ${options.target.host}`);
   const name = 'Nikto';
   const file = options.store.file('nikto.txt');
   const run = await runTool('nikto',
@@ -68,6 +71,7 @@ function injectionEvidence(stdout: string): string[] {
 }
 
 async function sqlmap(options: WebStageOptions): Promise<Check> {
+  options.progress.start('sqlmap（稼働先）', 'sqlmap --batch --smart --level 1 --risk 1');
   const name = 'sqlmap（稼働先）';
   const output = options.store.subdirectory('sqlmap');
   const run = await runTool('sqlmap',
@@ -101,7 +105,11 @@ async function sqlmap(options: WebStageOptions): Promise<Check> {
 
 /** Step 3: web configuration and SQL handling on the running site. */
 export async function runWebStage(options: WebStageOptions, withSqlmap: boolean): Promise<void> {
-  if (!options.signal.aborted) options.report(await nikto(options));
+  if (!options.signal.aborted) {
+    const niktoCheck = await nikto(options);
+    options.progress.done(niktoCheck.name, niktoCheck.status, niktoCheck.count);
+    options.report(niktoCheck);
+  }
   if (options.signal.aborted) {
     options.report({ name: 'sqlmap', status: '中断', lines: ['以降の検査は開始していません。'] });
     return;
@@ -118,5 +126,7 @@ export async function runWebStage(options: WebStageOptions, withSqlmap: boolean)
     });
     return;
   }
-  options.report(await sqlmap(options));
+  const sqlmapCheck = await sqlmap(options);
+  options.progress.done(sqlmapCheck.name, sqlmapCheck.status, sqlmapCheck.count);
+  options.report(sqlmapCheck);
 }

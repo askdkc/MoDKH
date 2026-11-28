@@ -13,6 +13,7 @@ export interface ScanRequest {
   noSqlmap?: boolean;
   noNmap?: boolean;
   noNikto?: boolean;
+  noFollowUp?: boolean;
   quickPorts?: boolean;
   udpPorts?: string;
   /** Per-command budget in seconds; the default is 60. */
@@ -20,22 +21,27 @@ export interface ScanRequest {
 }
 
 const FLAGS = ['source', 'udp-ports', 'timeout'] as const;
-const SWITCHES = ['no-source', 'no-sqlmap', 'no-nmap', 'no-nikto', 'quick-ports'] as const;
+const SWITCHES = ['no-source', 'no-sqlmap', 'no-nmap', 'no-nikto', 'no-followup', 'quick-ports'] as const;
 
 /** The Skill's checks, plus what each needs, in the order they run. */
 export const HELP = [
   '使い方: /cyber <URL> [オプション]',
   '  /cyber https://example.com/app',
-  '      1. サービス特定: Nmap -sV で稼働中のソフトウェアと版を調べる',
-  '      2. 既知の脆弱性: 判明したサービスのポートに Nmap --script vuln（CVE 単位）を実行',
-  '      3. Web 設定: Nikto（Tuning 2）  4. SQL: クエリ付き URL なら sqlmap  5. 記録',
+  '      1. ソース: --source を指定したときだけ Trivy・OSV-Scanner・Semgrep・Gitleaks',
+  '      2. サービス特定: Nmap -sV で稼働中のソフトウェアと版を調べる',
+  '      3. 既知の脆弱性: 判明したサービスのポートに Nmap --script vuln（CVE 単位）',
+  '      4. Web 設定: Nikto（Tuning 2） / 5. SQL: クエリ付き URL なら sqlmap',
+  '      6. 追加調査: 判明したサービス名で nuclei、版で searchsploit（Exploit-DB）',
+  '      7. 記録と、発見内容のまとめ',
   '      各コマンドは60秒で打ち切り、応答がなければ次の検査へ進みます。',
-  '      結果はホーム直下の security-audit.* に保存します（リポジトリ外）。',
-  '  --source <パス>      チェックアウトも点検（Trivy・OSV-Scanner・Semgrep・Gitleaks。既定では実行しません）',
+  '      実行中は何を走らせているかを表示し、終了時に発見内容をまとめて表示します。',
+  '      結果はこの作業ディレクトリの .modkh/security-audit.* に保存します（0600）。',
+  '  --source <パス>      チェックアウトも点検（既定では実行しません）',
   '  --timeout <秒>       1コマンドあたりの制限時間（既定 60）',
-  '  --quick-ports        URL のポートだけを調べる（既定は Web・DB など代表的な35ポート＋URL のポート）',
+  '  --quick-ports        URL のポートだけを調べる（既定は代表的な35ポート＋URL のポート）',
   '  --udp-ports <一覧>   UDP も確認する（例: 53,443）',
   '  --no-nmap            サービスの特定と脆弱性スキャンを起動しない',
+  '  --no-followup        追加調査（nuclei・searchsploit）を起動しない',
   '  --no-nikto           Nikto を起動しない  --no-sqlmap  sqlmap を起動しない',
   '  --no-source          --source を指定していてもソース検査を起動しない',
   '  /cyber help          この説明',
@@ -73,6 +79,7 @@ export function parseRequest(argument: string): ScanRequest {
   request.noSqlmap = takeSwitch('no-sqlmap');
   request.noNmap = takeSwitch('no-nmap');
   request.noNikto = takeSwitch('no-nikto');
+  request.noFollowUp = takeSwitch('no-followup');
   request.quickPorts = takeSwitch('quick-ports');
   if ((source !== undefined && !source) || (udpPorts !== undefined && !udpPorts)) return { kind: 'usage' };
   if (timeout !== undefined) {

@@ -1,5 +1,6 @@
 import { oneLine, type Check } from './cyber-report.ts';
 import { runTool } from './cyber-run.ts';
+import type { Progress } from './cyber-progress.ts';
 
 /** Fields a secret scanner reports that must never be written or printed. */
 const SECRET_FIELDS = new Set(['secret', 'match', 'line', 'lines', 'before', 'after']);
@@ -10,6 +11,7 @@ export interface SourceStageOptions {
   timeoutMs: number;
   signal: AbortSignal;
   store: { write(name: string, contents: string): string };
+  progress: Progress;
   report(check: Check): void;
 }
 
@@ -64,6 +66,7 @@ function truncation(name: string, truncated: boolean): string | null {
 }
 
 async function trivy(options: SourceStageOptions): Promise<Check> {
+  options.progress.start('Trivy', 'trivy fs --scanners vuln,misconfig');
   const run = await runTool('trivy',
     ['fs', '--scanners', 'vuln,misconfig', '--format', 'json', '--exit-code', '10', '--quiet', '--no-progress', '.'],
     options.signal, { cwd: options.directory, timeoutMs: options.timeoutMs });
@@ -116,6 +119,7 @@ async function trivy(options: SourceStageOptions): Promise<Check> {
 }
 
 async function osv(options: SourceStageOptions): Promise<Check> {
+  options.progress.start('OSV-Scanner', 'osv-scanner scan source -r');
   const run = await runTool('osv-scanner', ['scan', 'source', '-r', '--format', 'json', '.'],
     options.signal, { cwd: options.directory, timeoutMs: options.timeoutMs });
   const name = 'OSV-Scanner';
@@ -159,6 +163,7 @@ async function osv(options: SourceStageOptions): Promise<Check> {
 }
 
 async function semgrep(options: SourceStageOptions): Promise<Check> {
+  options.progress.start('Semgrep', 'semgrep scan --config p/php --config p/javascript');
   const run = await runTool('semgrep',
     ['scan', '--config', 'p/php', '--config', 'p/javascript', '--metrics=off', '--disable-version-check', '--json', '.'],
     options.signal, { cwd: options.directory, timeoutMs: options.timeoutMs });
@@ -196,6 +201,7 @@ async function semgrep(options: SourceStageOptions): Promise<Check> {
 
 async function gitleaks(options: SourceStageOptions, mode: 'git' | 'dir'): Promise<Check> {
   const name = mode === 'git' ? 'Gitleaks（Git 履歴）' : 'Gitleaks（ファイル）';
+  options.progress.start(name, `gitleaks ${mode} --redact=100`);
   const args = mode === 'git'
     ? ['git', '--redact=100', '--no-banner', '--no-color', '--report-format', 'json', '--report-path', '-', '--exit-code', '10', '.']
     : ['dir', '--redact=100', '--no-banner', '--no-color', '--report-format', 'json', '--report-path', '-', '--exit-code', '10', '.'];
@@ -234,15 +240,20 @@ async function gitleaks(options: SourceStageOptions, mode: 'git' | 'dir'): Promi
  */
 export async function runSourceStage(options: SourceStageOptions): Promise<void> {
   const scans = [trivy, osv, semgrep];
+  const run = async (check: Promise<Check>) => {
+    const result = await check;
+    options.progress.done(result.name, result.status, result.count);
+    options.report(result);
+  };
   let completed = 0;
   for (const scan of scans) {
     if (options.signal.aborted) break;
-    options.report(await scan(options));
+    await run(scan(options));
     completed++;
   }
   for (const mode of ['git', 'dir'] as const) {
     if (options.signal.aborted) break;
-    options.report(await gitleaks(options, mode));
+    await run(gitleaks(options, mode));
     completed++;
   }
   if (options.signal.aborted && completed < scans.length + 2) {

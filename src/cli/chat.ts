@@ -1039,7 +1039,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         continue;
       }
       if (/^\/cyber(?:\s|$)/.test(line)) {
-        await runCyber({ arg: line.slice(6), cwd, approval, write: text => ui.write(text) });
+        await runCyber({
+          arg: line.slice(6), cwd, approval,
+          write: text => ui.write(text),
+          activity: text => ui.setActivity?.(text, 'hint'),
+        });
         continue;
       }
       if (line === '/pstack' || line.startsWith('/pstack ')) {

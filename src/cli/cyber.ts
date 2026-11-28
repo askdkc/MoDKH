@@ -6,11 +6,13 @@ import type { ApprovalGate } from '../agent/types.ts';
 import { HELP, parseRequest } from './cyber-request.ts';
 import { runServiceStage, runUdpStage, runVulnerabilityStage, type ServicePort } from './cyber-ports.ts';
 import { SERVICE_PORTS } from './cyber-ports-policy.ts';
+import { runFollowUpStage } from './cyber-followup.ts';
 import { runSourceStage } from './cyber-source.ts';
 import { runWebStage } from './cyber-web.ts';
 import { displayTarget, parseTarget, type ScanTarget } from './cyber-target.ts';
-import { writeRecord, type RecordedCheck } from './cyber-record.ts';
-import { AuditDirectory } from './cyber-store.ts';
+import { writeRecord, writeSummary, type RecordedCheck } from './cyber-record.ts';
+import { AuditDirectory, plannedAuditDirectory } from './cyber-store.ts';
+import { createProgress } from './cyber-progress.ts';
 import { oneLine, writeCheck, type Check } from './cyber-report.ts';
 
 /** Every command gets this long to answer before the run moves on. */
@@ -52,6 +54,7 @@ export interface Plan {
   runNmap: boolean;
   runNikto: boolean;
   runSqlmap: boolean;
+  runFollowUp: boolean;
   quickPorts: boolean;
   timeoutSec: number;
   udpPorts?: string;
@@ -62,7 +65,7 @@ function portList(quickPorts: boolean, target: ScanTarget): string {
 }
 
 /** What the approval prompt claims will happen, including what will not run. */
-export function describePlan(target: ScanTarget, plan: Plan): string {
+export function describePlan(target: ScanTarget, plan: Plan, directory: string): string {
   const seconds = plan.timeoutSec;
   const lines = [
     `対象 URL: ${displayTarget(target)}`,
@@ -83,7 +86,10 @@ export function describePlan(target: ScanTarget, plan: Plan): string {
       ? '  4. Web 設定: Nikto（Tuning 2。実ユーザーの Cookie とデータは使わない）'
       : '  4. Web 設定: Nikto は起動しません',
     plan.runSqlmap ? '  5. SQL: sqlmap（稼働先、--smart、level 1 / risk 1）' : '  5. SQL: sqlmap は起動しません',
-    ...(plan.udpPorts ? [`  6. UDP: ${plan.udpPorts}（open|filtered は「確定していない」と表示）`] : []),
+    plan.runFollowUp
+      ? '  6. 追加調査: 特定したサービスの名前で nuclei（CVE テンプレート）、版で searchsploit（Exploit-DB）'
+      : '  6. 追加調査: 起動しません',
+    ...(plan.udpPorts ? [`  7. UDP: ${plan.udpPorts}（open|filtered は「確定していない」と表示）`] : []),
     '',
     `各コマンドの制限時間: ${seconds} 秒。応答がなければ打ち切り、次の検査へ進みます。`,
     '',
@@ -93,11 +99,12 @@ export function describePlan(target: ScanTarget, plan: Plan): string {
     plan.runNmap ? undefined : 'Nmap（サービス特定と脆弱性スキャン）',
     plan.runNikto ? undefined : 'Nikto',
     plan.runSqlmap ? undefined : 'sqlmap',
+    plan.runFollowUp ? undefined : '追加調査（nuclei / searchsploit）',
     plan.runSource ? undefined : 'ソース検査（Trivy / OSV-Scanner / Semgrep / Gitleaks）',
   ].filter((entry): entry is string => entry !== undefined);
   if (!skipped.length) lines.push('  なし');
   for (const entry of skipped) lines.push(`  ${entry}`);
-  lines.push('', '結果はリポジトリ外のホーム直下 security-audit.* に保存します。');
+  lines.push('', `結果はこの作業ディレクトリの ${directory} に保存します（0600）。`);
   lines.push('Cookie の値と URL のクエリは表示・保存しません。');
   return lines.join('\n');
 }
@@ -107,14 +114,17 @@ export interface CyberRun {
   cwd: string;
   approval: ApprovalGate;
   write(text: string): void;
-  /** Test seam: where audit directories are created (default: the home directory). */
+  /** Live activity line for an interactive terminal. */
+  activity?(text: string | null): void;
+  /** Test seam: the audit root defaults to the working directory. */
   auditRoot?: string;
 }
 
 /**
  * `/cyber <URL>` — the Skill's checks against one host. A source checkout is
- * optional: without one the run identifies the running services and probes
- * their known vulnerabilities instead of reading local dependencies.
+ * optional: without one the run identifies the running services, probes their
+ * known vulnerabilities, investigates those services further and reports what
+ * it found.
  */
 export async function runCyber(run: CyberRun): Promise<void> {
   const { arg, cwd, approval, write } = run;
@@ -132,25 +142,28 @@ export async function runCyber(run: CyberRun): Promise<void> {
     if (resolved.error) { write(`${resolved.error}\n`); return; }
     source = resolved.path;
   }
-  const timeoutSec = request.timeoutSec ?? DEFAULT_TIMEOUT_SEC;
   const plan: Plan = {
     ...(source ? { source } : {}),
     runSource: source !== undefined && !request.noSource,
     runNmap: !request.noNmap,
     runNikto: !request.noNikto,
     runSqlmap: !request.noSqlmap && target.hasQuery,
+    runFollowUp: !request.noFollowUp,
     quickPorts: request.quickPorts === true,
-    timeoutSec,
+    timeoutSec: request.timeoutSec ?? DEFAULT_TIMEOUT_SEC,
     ...(request.udpPorts ? { udpPorts: request.udpPorts } : {}),
   };
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.on('SIGINT', stop);
   try {
+    const auditRoot = run.auditRoot ?? cwd;
+    // Show the exact destination before creating it: a denied prompt leaves nothing behind.
+    const relative = path.relative(cwd, plannedAuditDirectory(auditRoot)) || plannedAuditDirectory(auditRoot);
     const approved = await approval.approve({
       kind: 'command',
       title: '/cyber ' + displayTarget(target),
-      detail: describePlan(target, plan),
+      detail: describePlan(target, plan, relative),
       outsideWorkspace: true,
       signal: controller.signal,
     });
@@ -158,11 +171,22 @@ export async function runCyber(run: CyberRun): Promise<void> {
       write('(検査を開始しませんでした)\n');
       return;
     }
+    let store: AuditDirectory;
+    try {
+      store = new AuditDirectory(auditRoot);
+    } catch (e) {
+      write(`(レポートの保存先を作れません: ${(e as Error).message})\n`);
+      return;
+    }
 
-    const store = new AuditDirectory(run.auditRoot);
     const startedAt = new Date().toISOString();
     const recorded: RecordedCheck[] = [];
-    const stage = (name: string) => {
+    const progress = createProgress({ write, ...(run.activity ? { activity: run.activity } : {}) });
+    // Number the stages as they run, so a skipped optional stage (UDP) leaves no gap.
+    let stageNumber = 0;
+    const stage = (title: string) => {
+      stageNumber++;
+      const name = `${stageNumber}. ${title}`;
       write(`\n▶ ${name}\n`);
       return (check: Check) => {
         writeCheck(write, check);
@@ -175,31 +199,33 @@ export async function runCyber(run: CyberRun): Promise<void> {
       `ソース: ${source ?? '（未指定）'}`,
       `実行開始: ${startedAt}`,
       '',
-      describePlan(target, plan),
+      describePlan(target, plan, relative),
       '',
     ].join('\n'));
     write(`▶ URL: ${displayTarget(target)}\n`);
     write(`(結果の保存先: ${store.directory})\n`);
 
-    const timeoutMs = timeoutSec * 1000;
+    const timeoutMs = plan.timeoutSec * 1000;
     const address = plan.runNmap || plan.udpPorts
       ? await resolveAddress(target.host, controller.signal) : undefined;
     const common = {
       target, ...(address ? { address } : {}),
       timeoutMs, quickPorts: plan.quickPorts,
       ...(plan.udpPorts ? { udpPorts: plan.udpPorts } : {}),
-      signal: controller.signal, store,
+      signal: controller.signal, store, progress,
     };
 
     // Skill step 1 comes first: the checkout's own dependencies and secrets.
     // Without --source there is no checkout, so the step says so and the run
     // continues with the URL side only.
-    const sourceReport = stage('1. ソース・依存関係・秘密情報');
+    const sourceReport = stage('ソース・依存関係・秘密情報');
     if (plan.runSource && source) {
       if (controller.signal.aborted) {
         sourceReport({ name: 'ソース検査', status: '中断', lines: ['ソース検査は開始していません。'] });
       } else {
-        await runSourceStage({ directory: source, timeoutMs, signal: controller.signal, store, report: sourceReport });
+        await runSourceStage({
+          directory: source, timeoutMs, signal: controller.signal, store, progress, report: sourceReport,
+        });
       }
     } else {
       sourceReport({
@@ -207,12 +233,12 @@ export async function runCyber(run: CyberRun): Promise<void> {
         lines: [
           '--source でチェックアウトを指定していないため、Trivy / OSV-Scanner / Semgrep / Gitleaks を起動していません。',
           '依存関係や秘密情報も点検するには、そのサイトのチェックアウトで --source . を付けてください。',
-          'このまま URL 側の検査（サービス特定・既知の脆弱性・Web 設定・SQL）を続けます。',
+          'このまま URL 側の検査（サービス特定・既知の脆弱性・Web 設定・SQL・追加調査）を続けます。',
         ],
       });
     }
 
-    const serviceReport = stage('2. サービス特定');
+    const serviceReport = stage('サービス特定');
     let services: ServicePort[] = [];
     if (!plan.runNmap) {
       serviceReport({
@@ -225,7 +251,7 @@ export async function runCyber(run: CyberRun): Promise<void> {
       services = await runServiceStage({ ...common, report: serviceReport });
     }
 
-    const vulnReport = stage('3. 既知の脆弱性');
+    const vulnReport = stage('既知の脆弱性');
     if (!plan.runNmap) {
       vulnReport({
         name: '既知の脆弱性', status: '未実行',
@@ -237,22 +263,36 @@ export async function runCyber(run: CyberRun): Promise<void> {
       await runVulnerabilityStage({ ...common, report: vulnReport }, services);
     }
 
-    const webReport = stage('4. Web 設定と SQL');
+    const webReport = stage('Web 設定と SQL');
     if (controller.signal.aborted) {
       webReport({ name: 'Web 検査', status: '中断', lines: ['以降の検査は開始していません。'] });
     } else {
       await runWebStage({
-        target, timeoutMs, signal: controller.signal, store, report: webReport,
+        target, timeoutMs, signal: controller.signal, store, progress, report: webReport,
       }, plan.runSqlmap);
     }
 
+    const followUpReport = stage('追加調査');
+    if (!plan.runFollowUp) {
+      followUpReport({
+        name: '追加調査', status: '未実行',
+        lines: ['--no-followup が指定されたため、nuclei と searchsploit を起動していません。'],
+      });
+    } else if (controller.signal.aborted) {
+      followUpReport({ name: '追加調査', status: '中断', lines: ['以降の検査は開始していません。'] });
+    } else {
+      await runFollowUpStage({
+        target, services, timeoutMs, signal: controller.signal, store, progress, report: followUpReport,
+      });
+    }
+
     if (plan.udpPorts) {
-      const udpReport = stage('5. UDP ポート');
+      const udpReport = stage('UDP ポート');
       if (controller.signal.aborted) udpReport({ name: 'UDP ポート', status: '中断', lines: ['UDP の確認は開始していません。'] });
       else await runUdpStage({ ...common, report: udpReport });
     }
 
-    stage('6. 記録');
+    stage('記録');
     // Tools that wrote their own report used the process umask; seal every path now.
     store.seal();
     const recordFile = store.write('record.md', writeRecord({
@@ -265,16 +305,15 @@ export async function runCyber(run: CyberRun): Promise<void> {
       checks: recorded,
       aborted: controller.signal.aborted,
     }));
-    const found = recorded.filter(entry => entry.check.status === '検出あり').length;
-    const unfinished = recorded.filter(entry => ['未実行', '失敗', '一部未確認', '中断'].includes(entry.check.status)).length;
+
+    // The run ends with what was found, not with a file path.
+    for (const line of writeSummary({ checks: recorded, directory: store.directory, aborted: controller.signal.aborted })) {
+      write(`${line}\n`);
+    }
     writeCheck(write, {
       name: '記録', status: '情報',
-      lines: [
-        `検出あり ${found} 件 / 判定できなかった項目 ${unfinished} 件`,
-        `保存ファイル: ${fs.readdirSync(store.directory).sort().join(', ')}`,
-        `記録: ${oneLine(recordFile, 200)}`,
-        '記録には対象・接続元・日時・検出内容・再検査手順を残しています。デプロイ版と修正内容を追記してください。',
-      ],
+      lines: [`record.md: ${oneLine(recordFile, 240)}`,
+        `保存ファイル: ${fs.readdirSync(store.directory).sort().join(', ')}`],
     });
     write(controller.signal.aborted ? '(中断しました。以降の検査は開始していません)\n' : '(検査を終了しました)\n');
   } finally {

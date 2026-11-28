@@ -62,15 +62,22 @@ Rust の解析だけが必要なら `brew install rust-analyzer` でも構いま
 
 ## `/cyber` で点検する（任意のツール）
 
-`modkh` の入力欄で `/cyber https://example.com/app` を実行すると、承認後に [skills/cyber/cyber/SKILL.md](../skills/cyber/cyber/SKILL.md) の手順を実行します。承認画面にはクエリを伏せた URL、接続するポート、実行する検査、起動しない検査、および各コマンドの制限時間を表示します。接続先は指定したホストだけで、リダイレクトは追跡しません。結果はリポジトリ外（ホーム直下の `security-audit.*`、ディレクトリ 0700・ファイル 0600）に保存します。
+`modkh` の入力欄で `/cyber https://example.com/app` を実行すると、承認後に [skills/cyber/cyber/SKILL.md](../skills/cyber/cyber/SKILL.md) の手順を実行します。承認画面にはクエリを伏せた URL、接続するポート、実行する検査、起動しない検査、各コマンドの制限時間、保存先を表示します。接続先は指定したホストだけで、リダイレクトは追跡しません。
 
-`/cyber <URL>` だけを指定した場合は、URL 側の検査だけを実行します。ソースが手元にない状態で依存関係を調べても意味がないため、代わりに「稼働中のサービスを特定し、そのサービスの既知の脆弱性を突く」検査にしています。
+結果は**この作業ディレクトリ**の `.modkh/security-audit.<日時>/` に保存します（ディレクトリ 0700・ファイル 0600、`.modkh/` は `.gitignore` 済み）。ホームディレクトリには何も書きません。
+
+`/cyber <URL>` だけを指定した場合は、URL 側の検査だけを実行します。ソースが手元にない状態で依存関係を調べても意味がないため、代わりに「稼働中のサービスを特定し、そのサービスの既知の脆弱性を突き、さらに追加調査する」流れにしています。
 
 1. **ソース・依存関係・秘密情報**（`--source <パス>` を指定したときだけ）: `trivy fs --scanners vuln,misconfig`、`osv-scanner scan source -r`、`semgrep --config p/php --config p/javascript`、`gitleaks git` と `gitleaks dir` を、チェックアウトのルートで順に実行します。指定しない場合は「未実行」と表示し、URL 側の検査へ進みます。
 2. **サービス特定**: `nmap -n -Pn -sT -sV --version-light` で、稼働しているソフトウェアと版を読みます。走査するのは代表的な35ポートと、URL が指定するポートそのもの（`8080` や `8443` などもれません）。`--quick-ports` を付けると URL のポートだけに絞ります。
 3. **既知の脆弱性**: 手順2で判明したポートに対して `nmap --script vuln` を実行し、CVE 単位で既知の脆弱性を突きます。判明したサービスがなければ URL のポートを対象にします。
 4. **Web 設定と SQL**: `nikto -Tuning 2 -Pause 1` で設定不備とデフォルトファイルだけを確認し、URL にクエリがあるときは `sqlmap --batch --smart --level 1 --risk 1` を稼働先に対して実行します。URL にクエリがなければ sqlmap は「未実行」です。
-5. **記録**: 対象、接続元、日時、デプロイ版を書く欄、検出内容、再検査手順を `record.md` に残します。
+5. **追加調査**: 手順2で判明したサービスを材料に、2つの独立した手段でさらに調べます。
+   - **nuclei**: サービス名（`nginx`、`php` など）を `-tags` に渡し、その製品向けの CVE テンプレートを稼働中の URL に当てます。テンプレート未導入なら「未実行」と理由を表示します。
+   - **searchsploit**: 製品と版（`nginx 1.31.8`）で Exploit-DB のローカル索引を検索します。版に紐づく公開 PoC を拾うためで、nuclei のテンプレートとは独立した根拠になります。
+6. **記録とまとめ**: `record.md` に加え、**最後に発見内容をまとめて表示**します。検出ありの項目は根拠（CVE・パス・版・ファイル）付きで並べ、判定できなかった項目は理由付きで別にまとめます。「検出なし」と「未実行」を混同させないためです。
+
+実行中は、どのコマンドを走らせているか（`… サービス特定 (nmap -sV ...)`）と、終了時の所要時間・判定（`3.2 秒 / 検出あり（2件）`）を表示します。対話端末では右欄にも「実行中」と経過秒数を出します。
 
 各コマンドは既定で **60秒** の制限時間を持ちます。応答がない場合は「一部未確認」として打ち切り、**次の検査へ進みます**。1つのツールが固まっても全体は止まりません。制限時間は `--timeout <秒>` で変えられます。
 
@@ -84,8 +91,10 @@ Rust の解析だけが必要なら `brew install rust-analyzer` でも構いま
 | Nmap --script vuln | 判明したサービスの既知 CVE |
 | Nikto | Web サーバーの設定不備とデフォルトファイル |
 | sqlmap | クエリ付き URL の SQL インジェクション |
+| nuclei | 判明したサービス向けの CVE テンプレート |
+| searchsploit | 判明した製品と版に一致する Exploit-DB の項目 |
 
-オプションは `--source <パス>`、`--timeout <秒>`、`--quick-ports`、`--udp-ports <一覧>`、`--no-nmap`、`--no-nikto`、`--no-sqlmap`、`--no-source` です。`/cyber help` に一覧が出ます。
+オプションは `--source <パス>`、`--timeout <秒>`、`--quick-ports`、`--udp-ports <一覧>`、`--no-nmap`、`--no-followup`、`--no-nikto`、`--no-sqlmap`、`--no-source` です。`/cyber help` に一覧が出ます。
 
 各検査は「検出あり」「検出なし」「対象なし」「一部未確認」「未実行」「失敗」「中断」を分けて表示します。ツール未導入は「未実行」であり「検出なし」ではありません。制限時間による打ち切りは「一部未確認」であり「検出なし」ではありません。中断した場合は以降の検査を開始しません。
 
@@ -96,18 +105,18 @@ Rust の解析だけが必要なら `brew install rust-analyzer` でも構いま
 **macOS（Homebrew）**
 
 ```sh
-brew install trivy osv-scanner semgrep gitleaks sqlmap nmap nikto
+brew install trivy osv-scanner semgrep gitleaks sqlmap nmap nikto nuclei exploitdb
 ```
 
 **Arch Linux**
 
 ```sh
-sudo pacman -Syu --needed trivy osv-scanner gitleaks sqlmap nmap nikto python-pipx
+sudo pacman -Syu --needed trivy osv-scanner gitleaks sqlmap nmap nikto nuclei exploitdb python-pipx
 pipx install semgrep
 pipx ensurepath
 ```
 
-インストール後は、新しいターミナルで `command -v trivy osv-scanner semgrep gitleaks nmap nikto sqlmap` を実行すると配置先を確認できます。
+インストール後は、新しいターミナルで `command -v trivy osv-scanner semgrep gitleaks nmap nikto sqlmap nuclei searchsploit` を実行すると配置先を確認できます。
 
 ## プロジェクトの MCP サーバー
 
