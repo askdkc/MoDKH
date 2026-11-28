@@ -8,6 +8,7 @@ import { parseImage } from '../agent/images.ts';
 import { browseExecutable } from './browser-capability.ts';
 
 const run = promisify(execFile);
+export const staleBrowseRef = '[STALE_BROWSE_REF]';
 const actions = ['status', 'navigate', 'reload', 'snapshot', 'click', 'fill', 'list', 'screenshot'] as const;
 
 /**
@@ -183,8 +184,9 @@ export function browseTools(tabs?: BrowseTabs): Tool[] {
       // すべての browse 呼び出しを「使用中」として数える。status も数えるので、
       // 接続確認だけを行った場合でも同じ規則で表示できる(実行が終われば消える)。
       setActiveCalls(activeCalls + 1);
+      const options = { cwd: ctx.root, signal: ctx.signal, timeout: 45000, maxBuffer: 128 * 1024 };
       try {
-        const result = await run(executable, argv, { cwd: ctx.root, signal: ctx.signal, timeout: 45000, maxBuffer: 128 * 1024 });
+        const result = await run(executable, argv, options);
         const output = result.stdout || result.stderr;
         if (shot) {
           const capture = await readCapture(shot.file);
@@ -194,8 +196,26 @@ export function browseTools(tabs?: BrowseTabs): Tool[] {
         return output;
       } catch (error) {
         // browse writes its failure message to stdout, so stderr alone would hide the reason.
-        const e = error as Error & { stdout?: string; stderr?: string };
+        const e = error as Error & { stdout?: string; stderr?: string; code?: number };
         const output = (e.stderr || e.stdout || e.name).slice(0, 4096);
+        const reason = (e.stderr || e.stdout || '').trim();
+        if (typeof e.code === 'number' && !ctx.signal?.aborted && typeof args.ref === 'string'
+          && ['click', 'fill', 'screenshot'].includes(String(args.action))
+          && (reason === 'Snapshot refs are stale after a page change; call snapshot again'
+            || reason === `Unknown snapshot ref: ${args.ref}`)) {
+          const rejected = `${staleBrowseRef} ${reason}`;
+          try {
+            const fresh = await run(executable, ['snapshot', '--json', JSON.stringify({ tab: tabId(args.tab) })], options);
+            return { status: 'not-executed', output: `${rejected}
+Inspect the current screen below. If the task still requires the action, select its target from this snapshot. Continue verification.
+${fresh.stdout}` };
+          } catch (snapshotError) {
+            const failure = snapshotError as Error & { stdout?: string; stderr?: string };
+            return { status: 'not-executed', output: `${rejected}
+Refresh failed. Request a new snapshot before selecting a target.
+${(failure.stderr || failure.stdout || failure.message).slice(0, 4096)}` };
+          }
+        }
         // These actions change nothing, so a failure cannot leave an unknown effect.
         const readOnly = args.action === 'status' || args.action === 'snapshot' || args.action === 'screenshot' || args.action === 'list';
         return { status: readOnly ? 'error' : 'unknown', output };

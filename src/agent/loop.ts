@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { modelInstructions } from '../model/harness-profile.ts';
 import type { AgentMessage, Model, ModelEvent, ProviderContinuation, TokenUsage, Tool, ToolCall, ToolResult, ToolSpec } from './types.ts';
 import { ToolRegistry } from '../tools/registry.ts';
+import { staleBrowseRef } from '../tools/browse.ts';
 import { editFileTool } from '../tools/edit.ts';
 import { readFileTool, readPageKey } from '../tools/files.ts';
 import { fetchUrlTool } from '../tools/web.ts';
@@ -455,6 +456,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
       calls = order.map(index => calls[index]);
       if (records) candidates = order.map(index => candidates[index]);
     }
+    let browseRefsChanged = false;
     let freshEditSucceeded = false;
     const newInputQueued = () => Boolean(opts.followupSignal?.().aborted
       || opts.jobs?.hasNotices || opts.subagents?.hasNotices || opts.subagents?.hasUnknown);
@@ -507,6 +509,9 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
       if (opts.signal.aborted) {
         candidate?.emit('not-executed', 'aborted');
         result = { callId: call.id, name: call.name, status: 'not-executed', output: '中断済みのため実行していない' };
+      } else if (browseRefsChanged) {
+        candidate?.emit('not-executed', 'workflow_stopped');
+        result = { callId: call.id, name: call.name, status: 'not-executed', output: 'Skipped pending action so the current screen can be reviewed first.' };
       } else if (prior) {
         if (!isDeepStrictEqual(prior.call, call)) {
           candidate?.emit('not-executed', 'id_conflict');
@@ -562,6 +567,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
       records?.remember(result, messages.length, 0, candidate);
       append({ role: 'tool', results: [result] });
       opts.hooks?.onToolResult?.(result);
+      if (call.name === 'browse' && result.status === 'not-executed' && result.output.startsWith(staleBrowseRef)) browseRefsChanged = true;
       if (result.status === 'unknown') uncertain ??= { call, result };
     }
     if (uncertain) return interruptedTool(uncertain.call, uncertain.result);

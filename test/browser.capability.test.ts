@@ -90,18 +90,20 @@ test('browse reports its running state to the pane while the CLI call is in flig
   }
 });
 
-test('a failing browse call keeps the CLI message, which arrives on stdout', { skip: process.platform === 'win32' }, async () => {
+test('an unknown ref reports both the rejection and a failed snapshot refresh', { skip: process.platform === 'win32' }, async () => {
   const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-browse-stdout-error-'));
   const previous = process.env.PATH;
   try {
     // browse reports failures on stdout with a nonzero exit code.
-    fs.writeFileSync(path.join(bin, 'browse'), '#!/bin/sh\necho "Unknown snapshot ref: e11"\nexit 1\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, 'browse'), '#!/bin/sh\nif [ "$1" = snapshot ]; then echo "tab closed"; else echo "Unknown snapshot ref: e11"; fi\nexit 1\n', { mode: 0o755 });
     process.env.PATH = bin;
     const { browseTools } = await import('../src/tools/browse.ts');
     const result = await new ToolRegistry(browseTools()).executeOne(
       { id: '1', name: 'browse', args: { action: 'click', tab: 12, ref: 'e11' } },
       { root: process.cwd(), approval: { approve: async () => true } });
-    assert.match(result.output, /Unknown snapshot ref: e11/, 'the reason the click failed must reach the model');
+    assert.equal(result.status, 'not-executed');
+    assert.match(result.output, /Unknown snapshot ref: e11/);
+    assert.match(result.output, /Refresh failed[\s\S]*tab closed/);
   } finally {
     if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous;
     fs.rmSync(bin, { recursive: true, force: true });
