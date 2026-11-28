@@ -15,22 +15,29 @@ export interface ScanRequest {
   noNikto?: boolean;
   quickPorts?: boolean;
   udpPorts?: string;
+  /** Per-command budget in seconds; the default is 60. */
+  timeoutSec?: number;
 }
 
-const FLAGS = ['source', 'udp-ports'] as const;
+const FLAGS = ['source', 'udp-ports', 'timeout'] as const;
 const SWITCHES = ['no-source', 'no-sqlmap', 'no-nmap', 'no-nikto', 'quick-ports'] as const;
 
+/** The Skill's checks, plus what each needs, in the order they run. */
 export const HELP = [
   '使い方: /cyber <URL> [オプション]',
   '  /cyber https://example.com/app',
-  '      ホストの点検: 1. ソース・依存関係・秘密情報  2. 公開ポート  3. Web 設定と SQL  4. 記録',
-  '      ソースは現在のワークスペース。結果はホーム直下の security-audit.* に保存します。',
-  '  --source <パス>      点検するチェックアウトを指定（ワークスペース内のディレクトリ）',
-  '  --quick-ports        代表的な17ポートだけを走査（既定は全 TCP ポート。-p- は時間がかかります）',
+  '      1. サービス特定: Nmap -sV で稼働中のソフトウェアと版を調べる',
+  '      2. 既知の脆弱性: 判明したサービスのポートに Nmap --script vuln（CVE 単位）を実行',
+  '      3. Web 設定: Nikto（Tuning 2）  4. SQL: クエリ付き URL なら sqlmap  5. 記録',
+  '      各コマンドは60秒で打ち切り、応答がなければ次の検査へ進みます。',
+  '      結果はホーム直下の security-audit.* に保存します（リポジトリ外）。',
+  '  --source <パス>      チェックアウトも点検（Trivy・OSV-Scanner・Semgrep・Gitleaks。既定では実行しません）',
+  '  --timeout <秒>       1コマンドあたりの制限時間（既定 60）',
+  '  --quick-ports        URL のポートだけを調べる（既定は Web・DB など代表的な35ポート＋URL のポート）',
   '  --udp-ports <一覧>   UDP も確認する（例: 53,443）',
-  '  --no-source          Trivy・OSV-Scanner・Semgrep・Gitleaks を起動しない',
-  '  --no-sqlmap          クエリ付き URL でも sqlmap を起動しない',
-  '  --no-nmap            Nmap を起動しない  --no-nikto  Nikto を起動しない',
+  '  --no-nmap            サービスの特定と脆弱性スキャンを起動しない',
+  '  --no-nikto           Nikto を起動しない  --no-sqlmap  sqlmap を起動しない',
+  '  --no-source          --source を指定していてもソース検査を起動しない',
   '  /cyber help          この説明',
   '',
   'URL はユーザー名・パスワードを含まない HTTP(S) のアドレスを1つ指定します。',
@@ -61,12 +68,18 @@ export function parseRequest(argument: string): ScanRequest {
 
   const source = takeFlag('source');
   const udpPorts = takeFlag('udp-ports');
+  const timeout = takeFlag('timeout');
   request.noSource = takeSwitch('no-source');
   request.noSqlmap = takeSwitch('no-sqlmap');
   request.noNmap = takeSwitch('no-nmap');
   request.noNikto = takeSwitch('no-nikto');
   request.quickPorts = takeSwitch('quick-ports');
   if ((source !== undefined && !source) || (udpPorts !== undefined && !udpPorts)) return { kind: 'usage' };
+  if (timeout !== undefined) {
+    const seconds = Number(timeout);
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 3600) return { kind: 'usage' };
+    request.timeoutSec = seconds;
+  }
   if (udpPorts !== undefined) {
     const ports = udpPorts.split(',').map(Number);
     // A port list nmap would reject is a usage error, not a failed UDP check.

@@ -1,13 +1,13 @@
 import { oneLine, type Check } from './cyber-report.ts';
 import { runTool } from './cyber-run.ts';
 
-const TIMEOUT_MS = 600_000;
-
 /** Fields a secret scanner reports that must never be written or printed. */
 const SECRET_FIELDS = new Set(['secret', 'match', 'line', 'lines', 'before', 'after']);
 
 export interface SourceStageOptions {
   directory: string;
+  /** Per-command budget; a scanner that has not answered by then is reported unfinished. */
+  timeoutMs: number;
   signal: AbortSignal;
   store: { write(name: string, contents: string): string };
   report(check: Check): void;
@@ -54,6 +54,11 @@ function exitProblem(name: string, code: number | null, stderr: string, allowed:
   return `${name}: 終了コード ${code} で完走しませんでした。${reason ? `（${reason}）` : ''}`;
 }
 
+/** A scanner that ran out of budget is unfinished, not a clean result. */
+function budgetLine(options: SourceStageOptions): string {
+  return `${Math.round(options.timeoutMs / 1000)} 秒以内に応答がないため打ち切りました。次の検査へ進みます。`;
+}
+
 function truncation(name: string, truncated: boolean): string | null {
   return truncated ? `${name}: 出力が上限を超えたため、結果を採用しません。` : null;
 }
@@ -61,11 +66,11 @@ function truncation(name: string, truncated: boolean): string | null {
 async function trivy(options: SourceStageOptions): Promise<Check> {
   const run = await runTool('trivy',
     ['fs', '--scanners', 'vuln,misconfig', '--format', 'json', '--exit-code', '10', '--quiet', '--no-progress', '.'],
-    options.signal, { cwd: options.directory, timeoutMs: TIMEOUT_MS });
+    options.signal, { cwd: options.directory, timeoutMs: options.timeoutMs });
   const name = 'Trivy';
   if (!run.started) return { name, status: '未実行', lines: ['trivy が見つかりません（PATH を確認してください）。'] };
   if (run.aborted) return { name, status: '中断', lines: ['依存関係と設定の検査を中止しました。'] };
-  if (run.timedOut) return { name, status: '失敗', lines: ['時間切れです。'] };
+  if (run.timedOut) return { name, status: '一部未確認', lines: [budgetLine(options)] };
   const cut = truncation(name, run.truncated);
   if (cut) return { name, status: '失敗', lines: [cut] };
   const problem = exitProblem(name, run.code, run.stderr, [0, 10]);
@@ -112,11 +117,11 @@ async function trivy(options: SourceStageOptions): Promise<Check> {
 
 async function osv(options: SourceStageOptions): Promise<Check> {
   const run = await runTool('osv-scanner', ['scan', 'source', '-r', '--format', 'json', '.'],
-    options.signal, { cwd: options.directory, timeoutMs: TIMEOUT_MS });
+    options.signal, { cwd: options.directory, timeoutMs: options.timeoutMs });
   const name = 'OSV-Scanner';
   if (!run.started) return { name, status: '未実行', lines: ['osv-scanner が見つかりません（PATH を確認してください）。'] };
   if (run.aborted) return { name, status: '中断', lines: ['依存関係の検査を中止しました。'] };
-  if (run.timedOut) return { name, status: '失敗', lines: ['時間切れです。'] };
+  if (run.timedOut) return { name, status: '一部未確認', lines: [budgetLine(options)] };
   const cut = truncation(name, run.truncated);
   if (cut) return { name, status: '失敗', lines: [cut] };
   if (run.code === 128 && /no package sources found/i.test(`${run.stdout}${run.stderr}`)) {
@@ -156,11 +161,11 @@ async function osv(options: SourceStageOptions): Promise<Check> {
 async function semgrep(options: SourceStageOptions): Promise<Check> {
   const run = await runTool('semgrep',
     ['scan', '--config', 'p/php', '--config', 'p/javascript', '--metrics=off', '--disable-version-check', '--json', '.'],
-    options.signal, { cwd: options.directory, timeoutMs: TIMEOUT_MS });
+    options.signal, { cwd: options.directory, timeoutMs: options.timeoutMs });
   const name = 'Semgrep';
   if (!run.started) return { name, status: '未実行', lines: ['semgrep が見つかりません（PATH を確認してください）。'] };
   if (run.aborted) return { name, status: '中断', lines: ['ソースコードの検査を中止しました。'] };
-  if (run.timedOut) return { name, status: '失敗', lines: ['時間切れです。'] };
+  if (run.timedOut) return { name, status: '一部未確認', lines: [budgetLine(options)] };
   const cut = truncation(name, run.truncated);
   if (cut) return { name, status: '失敗', lines: [cut] };
   const report = parseJson(run.stdout);
@@ -194,10 +199,10 @@ async function gitleaks(options: SourceStageOptions, mode: 'git' | 'dir'): Promi
   const args = mode === 'git'
     ? ['git', '--redact=100', '--no-banner', '--no-color', '--report-format', 'json', '--report-path', '-', '--exit-code', '10', '.']
     : ['dir', '--redact=100', '--no-banner', '--no-color', '--report-format', 'json', '--report-path', '-', '--exit-code', '10', '.'];
-  const run = await runTool('gitleaks', args, options.signal, { cwd: options.directory, timeoutMs: TIMEOUT_MS });
+  const run = await runTool('gitleaks', args, options.signal, { cwd: options.directory, timeoutMs: options.timeoutMs });
   if (!run.started) return { name, status: '未実行', lines: ['gitleaks が見つかりません（PATH を確認してください）。'] };
   if (run.aborted) return { name, status: '中断', lines: ['秘密情報の検査を中止しました。'] };
-  if (run.timedOut) return { name, status: '失敗', lines: ['時間切れです。'] };
+  if (run.timedOut) return { name, status: '一部未確認', lines: [budgetLine(options)] };
   const cut = truncation(name, run.truncated);
   if (cut) return { name, status: '失敗', lines: [cut] };
   if (mode === 'git' && run.code !== 0 && run.code !== 10) {

@@ -62,12 +62,17 @@ Rust の解析だけが必要なら `brew install rust-analyzer` でも構いま
 
 ## `/cyber` で点検する（任意のツール）
 
-`modkh` の入力欄で `/cyber https://example.com/app` を実行すると、承認後に [skills/cyber/cyber/SKILL.md](../skills/cyber/cyber/SKILL.md) の手順をそのまま実行します。承認画面にはクエリを伏せた URL、接続するポート、実行する検査、起動しない検査を表示します。接続先は指定したホストだけで、リダイレクトは追跡しません。結果はリポジトリ外（ホーム直下の `security-audit.*`、ディレクトリ 0700・ファイル 0600）に保存します。
+`modkh` の入力欄で `/cyber https://example.com/app` を実行すると、承認後に [skills/cyber/cyber/SKILL.md](../skills/cyber/cyber/SKILL.md) の手順を実行します。承認画面にはクエリを伏せた URL、接続するポート、実行する検査、起動しない検査、および各コマンドの制限時間を表示します。接続先は指定したホストだけで、リダイレクトは追跡しません。結果はリポジトリ外（ホーム直下の `security-audit.*`、ディレクトリ 0700・ファイル 0600）に保存します。
 
-1. **ソース・依存関係・秘密情報**: `trivy fs --scanners vuln,misconfig`、`osv-scanner scan source -r`、`semgrep --config p/php --config p/javascript`、`gitleaks git` と `gitleaks dir` を、チェックアウトのルートで順に実行します。既定は現在のワークスペースで、`--source <パス>` で別のチェックアウトを指定できます。
-2. **公開ポート**: サーバー上なら `ss -lntup` で待ち受けを確認し、続けて `nmap -n -Pn -sT -p- --max-rate 50 --reason` で1台だけを外部から走査します。`--quick-ports` で代表的な17ポートに絞れます。`--udp-ports 53,443` を付けると UDP も確認します。`open|filtered` は開いていると確定した扱いにしません。
-3. **Web 設定と SQL**: `nikto -Tuning 2 -Pause 1 -maxtime 5m` で設定不備とデフォルトファイルだけを確認し、URL にクエリがあるときは `sqlmap --batch --smart --level 1 --risk 1` を稼働先に対して実行します。URL にクエリがなければ sqlmap は「未実行」です。
-4. **記録**: 対象、接続元、日時、デプロイ版を書く欄、検出内容、再検査手順を `record.md` に残します。
+`/cyber <URL>` だけを指定した場合は、URL 側の検査だけを実行します。ソースが手元にない状態で依存関係を調べても意味がないため、代わりに「稼働中のサービスを特定し、そのサービスの既知の脆弱性を突く」検査にしています。
+
+1. **ソース・依存関係・秘密情報**（`--source <パス>` を指定したときだけ）: `trivy fs --scanners vuln,misconfig`、`osv-scanner scan source -r`、`semgrep --config p/php --config p/javascript`、`gitleaks git` と `gitleaks dir` を、チェックアウトのルートで順に実行します。指定しない場合は「未実行」と表示し、URL 側の検査へ進みます。
+2. **サービス特定**: `nmap -n -Pn -sT -sV --version-light` で、稼働しているソフトウェアと版を読みます。走査するのは代表的な35ポートと、URL が指定するポートそのもの（`8080` や `8443` などもれません）。`--quick-ports` を付けると URL のポートだけに絞ります。
+3. **既知の脆弱性**: 手順2で判明したポートに対して `nmap --script vuln` を実行し、CVE 単位で既知の脆弱性を突きます。判明したサービスがなければ URL のポートを対象にします。
+4. **Web 設定と SQL**: `nikto -Tuning 2 -Pause 1` で設定不備とデフォルトファイルだけを確認し、URL にクエリがあるときは `sqlmap --batch --smart --level 1 --risk 1` を稼働先に対して実行します。URL にクエリがなければ sqlmap は「未実行」です。
+5. **記録**: 対象、接続元、日時、デプロイ版を書く欄、検出内容、再検査手順を `record.md` に残します。
+
+各コマンドは既定で **60秒** の制限時間を持ちます。応答がない場合は「一部未確認」として打ち切り、**次の検査へ進みます**。1つのツールが固まっても全体は止まりません。制限時間は `--timeout <秒>` で変えられます。
 
 | ツール | 確認する内容 |
 | --- | --- |
@@ -75,15 +80,16 @@ Rust の解析だけが必要なら `brew install rust-analyzer` でも構いま
 | OSV-Scanner | ロックファイルなどのパッケージと OSV の勧告 |
 | Semgrep | p/php・p/javascript のルールに該当するファイルと行 |
 | Gitleaks | 秘密情報の候補。値・一致文字列・前後の行は保存も表示もしない |
-| Nmap | 外部から到達できる TCP ポート（既定は全ポート） |
+| Nmap -sV | 稼働中のソフトウェアと版、外部から到達できるポート |
+| Nmap --script vuln | 判明したサービスの既知 CVE |
 | Nikto | Web サーバーの設定不備とデフォルトファイル |
 | sqlmap | クエリ付き URL の SQL インジェクション |
 
-オプションは `--no-source`、`--no-nmap`、`--no-nikto`、`--no-sqlmap`、`--quick-ports`、`--udp-ports <一覧>`、`--source <パス>` です。`/cyber help` に一覧が出ます。
+オプションは `--source <パス>`、`--timeout <秒>`、`--quick-ports`、`--udp-ports <一覧>`、`--no-nmap`、`--no-nikto`、`--no-sqlmap`、`--no-source` です。`/cyber help` に一覧が出ます。
 
-各検査は「検出あり」「検出なし」「対象なし」「一部未確認」「未実行」「失敗」「中断」を分けて表示します。ツール未導入は「未実行」であり「検出なし」ではありません。中断した場合は以降の検査を開始しません。検出ゼロとスキャン失敗を混同しないため、終了コードと出力の欠落も確認してください。
+各検査は「検出あり」「検出なし」「対象なし」「一部未確認」「未実行」「失敗」「中断」を分けて表示します。ツール未導入は「未実行」であり「検出なし」ではありません。制限時間による打ち切りは「一部未確認」であり「検出なし」ではありません。中断した場合は以降の検査を開始しません。
 
-`ss` はそのホストの待ち受けを読むため、手元の Mac で実行すると手元の待ち受けが出ます。サーバーの待ち受けは、そのサーバー上で `/cyber` を実行するか、`ss -lntup` の出力を確認してください。外部からの到達性は、公開側・VPN・LAN の各経路から別々に走査します。共有 CDN のアドレスはオリジンの代わりに検査しません。
+`ss -lntup` はサーバー自身の待ち受けを読む必要があるため使っていません。サーバーの待ち受けは、そのサーバー上で `sudo ss -lntup` を実行して確認してください。外部からの到達性は、公開側・VPN・LAN の各経路から別々に走査します。共有 CDN のアドレスはオリジンの代わりに検査しません。
 
 次のツールを PATH に用意します。
 
@@ -101,7 +107,7 @@ pipx install semgrep
 pipx ensurepath
 ```
 
-`ss` は Linux の iproute2 に含まれます。macOS にはないため「未実行」と表示します。インストール後は、新しいターミナルで `command -v trivy osv-scanner semgrep gitleaks nmap nikto sqlmap` を実行すると配置先を確認できます。
+インストール後は、新しいターミナルで `command -v trivy osv-scanner semgrep gitleaks nmap nikto sqlmap` を実行すると配置先を確認できます。
 
 ## プロジェクトの MCP サーバー
 

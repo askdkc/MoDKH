@@ -4,14 +4,17 @@ import { isIP } from 'node:net';
 import path from 'node:path';
 import type { ApprovalGate } from '../agent/types.ts';
 import { HELP, parseRequest } from './cyber-request.ts';
-import { runPortStage } from './cyber-ports.ts';
-import { SWEEP_PORTS } from './cyber-ports-policy.ts';
+import { runServiceStage, runUdpStage, runVulnerabilityStage, type ServicePort } from './cyber-ports.ts';
+import { SERVICE_PORTS } from './cyber-ports-policy.ts';
 import { runSourceStage } from './cyber-source.ts';
 import { runWebStage } from './cyber-web.ts';
 import { displayTarget, parseTarget, type ScanTarget } from './cyber-target.ts';
 import { writeRecord, type RecordedCheck } from './cyber-record.ts';
 import { AuditDirectory } from './cyber-store.ts';
 import { oneLine, writeCheck, type Check } from './cyber-report.ts';
+
+/** Every command gets this long to answer before the run moves on. */
+export const DEFAULT_TIMEOUT_SEC = 60;
 
 /** A source path must be an existing directory inside the workspace after symlinks resolve. */
 export function resolveSource(cwd: string, input: string): { path?: string; error?: string } {
@@ -43,17 +46,24 @@ async function resolveAddress(host: string, signal: AbortSignal): Promise<string
 }
 
 export interface Plan {
-  source: string;
+  /** Undefined when --source was not given: the URL side does not need a checkout. */
+  source?: string;
   runSource: boolean;
-  runSqlmap: boolean;
   runNmap: boolean;
   runNikto: boolean;
+  runSqlmap: boolean;
   quickPorts: boolean;
+  timeoutSec: number;
   udpPorts?: string;
+}
+
+function portList(quickPorts: boolean, target: ScanTarget): string {
+  return quickPorts ? `URL のポート ${target.port} のみ` : SERVICE_PORTS;
 }
 
 /** What the approval prompt claims will happen, including what will not run. */
 export function describePlan(target: ScanTarget, plan: Plan): string {
+  const seconds = plan.timeoutSec;
   const lines = [
     `対象 URL: ${displayTarget(target)}`,
     `接続先ポート: ${target.port}/tcp`,
@@ -61,23 +71,29 @@ export function describePlan(target: ScanTarget, plan: Plan): string {
     '',
     '実行する検査:',
     plan.runSource
-      ? `  1. ソース・依存関係・秘密情報: ${plan.source}（Trivy → OSV-Scanner → Semgrep → Gitleaks 履歴 → Gitleaks ファイル）`
-      : '  1. ソース・依存関係・秘密情報: 起動しません',
+      ? `  1. ソース: ${plan.source}（Trivy → OSV-Scanner → Semgrep → Gitleaks 履歴 → Gitleaks ファイル）`
+      : '  1. ソース: 起動しません（--source 未指定。URL 側の検査だけを実行）',
     plan.runNmap
-      ? `  2. 公開ポート: サーバー上の待ち受け（ss -lntup）→ Nmap ${plan.quickPorts ? `代表ポート ${SWEEP_PORTS}` : 'TCP 全ポート'}${plan.udpPorts ? ` → UDP ${plan.udpPorts}` : ''}`
-      : '  2. 公開ポート: サーバー上の待ち受け（ss -lntup）だけ。Nmap は起動しません',
+      ? `  2. サービス特定: Nmap -sV（${portList(plan.quickPorts, target)}）`
+      : '  2. サービス特定: Nmap は起動しません',
+    plan.runNmap
+      ? '  3. 既知の脆弱性: 特定したサービスのポートに Nmap --script vuln（CVE 単位）'
+      : '  3. 既知の脆弱性: Nmap は起動しません',
     plan.runNikto
-      ? '  3. Web 設定: Nikto（Tuning 2、5分上限、実ユーザーの Cookie とデータは使わない）'
-      : '  3. Web 設定: Nikto は起動しません',
-    plan.runSqlmap ? '  4. SQL: sqlmap（稼働先、--smart、level 1 / risk 1）' : '  4. SQL: sqlmap は起動しません',
+      ? '  4. Web 設定: Nikto（Tuning 2。実ユーザーの Cookie とデータは使わない）'
+      : '  4. Web 設定: Nikto は起動しません',
+    plan.runSqlmap ? '  5. SQL: sqlmap（稼働先、--smart、level 1 / risk 1）' : '  5. SQL: sqlmap は起動しません',
+    ...(plan.udpPorts ? [`  6. UDP: ${plan.udpPorts}（open|filtered は「確定していない」と表示）`] : []),
+    '',
+    `各コマンドの制限時間: ${seconds} 秒。応答がなければ打ち切り、次の検査へ進みます。`,
     '',
     '起動しない検査:',
   ];
   const skipped = [
-    plan.runSource ? undefined : 'ソース検査（Trivy / OSV-Scanner / Semgrep / Gitleaks）',
-    plan.runNmap ? undefined : 'Nmap のポート走査',
+    plan.runNmap ? undefined : 'Nmap（サービス特定と脆弱性スキャン）',
     plan.runNikto ? undefined : 'Nikto',
     plan.runSqlmap ? undefined : 'sqlmap',
+    plan.runSource ? undefined : 'ソース検査（Trivy / OSV-Scanner / Semgrep / Gitleaks）',
   ].filter((entry): entry is string => entry !== undefined);
   if (!skipped.length) lines.push('  なし');
   for (const entry of skipped) lines.push(`  ${entry}`);
@@ -96,9 +112,9 @@ export interface CyberRun {
 }
 
 /**
- * `/cyber <URL>` — the Skill's four steps against one host, plus an optional
- * source checkout. Nothing runs before the approval prompt lists the target,
- * the port, the checks and the ones that will be skipped.
+ * `/cyber <URL>` — the Skill's checks against one host. A source checkout is
+ * optional: without one the run identifies the running services and probes
+ * their known vulnerabilities instead of reading local dependencies.
  */
 export async function runCyber(run: CyberRun): Promise<void> {
   const { arg, cwd, approval, write } = run;
@@ -110,19 +126,21 @@ export async function runCyber(run: CyberRun): Promise<void> {
     write(`${HELP}\n`);
     return;
   }
-  let source = cwd;
+  let source: string | undefined;
   if (request.source !== undefined) {
     const resolved = resolveSource(cwd, request.source);
     if (resolved.error) { write(`${resolved.error}\n`); return; }
-    source = resolved.path!;
+    source = resolved.path;
   }
+  const timeoutSec = request.timeoutSec ?? DEFAULT_TIMEOUT_SEC;
   const plan: Plan = {
-    source,
-    runSource: !request.noSource,
-    runSqlmap: !request.noSqlmap && target.hasQuery,
+    ...(source ? { source } : {}),
+    runSource: source !== undefined && !request.noSource,
     runNmap: !request.noNmap,
     runNikto: !request.noNikto,
+    runSqlmap: !request.noSqlmap && target.hasQuery,
     quickPorts: request.quickPorts === true,
+    timeoutSec,
     ...(request.udpPorts ? { udpPorts: request.udpPorts } : {}),
   };
   const controller = new AbortController();
@@ -154,7 +172,7 @@ export async function runCyber(run: CyberRun): Promise<void> {
     store.write('plan.txt', [
       `対象 URL: ${displayTarget(target)}`,
       `接続先ポート: ${target.port}/tcp`,
-      `ソース: ${source}`,
+      `ソース: ${source ?? '（未指定）'}`,
       `実行開始: ${startedAt}`,
       '',
       describePlan(target, plan),
@@ -163,55 +181,96 @@ export async function runCyber(run: CyberRun): Promise<void> {
     write(`▶ URL: ${displayTarget(target)}\n`);
     write(`(結果の保存先: ${store.directory})\n`);
 
+    const timeoutMs = timeoutSec * 1000;
+    const address = plan.runNmap || plan.udpPorts
+      ? await resolveAddress(target.host, controller.signal) : undefined;
+    const common = {
+      target, ...(address ? { address } : {}),
+      timeoutMs, quickPorts: plan.quickPorts,
+      ...(plan.udpPorts ? { udpPorts: plan.udpPorts } : {}),
+      signal: controller.signal, store,
+    };
+
+    // Skill step 1 comes first: the checkout's own dependencies and secrets.
+    // Without --source there is no checkout, so the step says so and the run
+    // continues with the URL side only.
     const sourceReport = stage('1. ソース・依存関係・秘密情報');
-    if (plan.runSource) {
-      await runSourceStage({ directory: source, signal: controller.signal, store, report: sourceReport });
+    if (plan.runSource && source) {
+      if (controller.signal.aborted) {
+        sourceReport({ name: 'ソース検査', status: '中断', lines: ['ソース検査は開始していません。'] });
+      } else {
+        await runSourceStage({ directory: source, timeoutMs, signal: controller.signal, store, report: sourceReport });
+      }
     } else {
       sourceReport({
         name: 'ソース検査', status: '未実行',
-        lines: ['--no-source が指定されたため、Trivy / OSV-Scanner / Semgrep / Gitleaks を起動していません。'],
+        lines: [
+          '--source でチェックアウトを指定していないため、Trivy / OSV-Scanner / Semgrep / Gitleaks を起動していません。',
+          '依存関係や秘密情報も点検するには、そのサイトのチェックアウトで --source . を付けてください。',
+          'このまま URL 側の検査（サービス特定・既知の脆弱性・Web 設定・SQL）を続けます。',
+        ],
       });
     }
 
-    const portReport = stage('2. 公開ポート');
-    if (controller.signal.aborted) {
-      portReport({ name: 'ポート検査', status: '中断', lines: ['以降の検査は開始していません。'] });
+    const serviceReport = stage('2. サービス特定');
+    let services: ServicePort[] = [];
+    if (!plan.runNmap) {
+      serviceReport({
+        name: 'サービス特定', status: '未実行',
+        lines: ['--no-nmap が指定されたため、Nmap を起動していません。'],
+      });
+    } else if (controller.signal.aborted) {
+      serviceReport({ name: 'サービス特定', status: '中断', lines: ['以降の検査は開始していません。'] });
     } else {
-      const address = await resolveAddress(target.host, controller.signal);
-      await runPortStage({
-        target, ...(address ? { address } : {}), source,
-        quickPorts: plan.quickPorts, remote: plan.runNmap,
-        ...(plan.udpPorts ? { udpPorts: plan.udpPorts } : {}),
-        signal: controller.signal, store, report: portReport,
-      });
+      services = await runServiceStage({ ...common, report: serviceReport });
     }
 
-    const webReport = stage('3. Web 設定と SQL');
+    const vulnReport = stage('3. 既知の脆弱性');
+    if (!plan.runNmap) {
+      vulnReport({
+        name: '既知の脆弱性', status: '未実行',
+        lines: ['--no-nmap が指定されたため、脆弱性スキャンを起動していません。'],
+      });
+    } else if (controller.signal.aborted) {
+      vulnReport({ name: '既知の脆弱性', status: '中断', lines: ['以降の検査は開始していません。'] });
+    } else {
+      await runVulnerabilityStage({ ...common, report: vulnReport }, services);
+    }
+
+    const webReport = stage('4. Web 設定と SQL');
     if (controller.signal.aborted) {
       webReport({ name: 'Web 検査', status: '中断', lines: ['以降の検査は開始していません。'] });
     } else {
-      await runWebStage({ target, signal: controller.signal, store, report: webReport }, plan.runSqlmap);
+      await runWebStage({
+        target, timeoutMs, signal: controller.signal, store, report: webReport,
+      }, plan.runSqlmap);
     }
 
-    stage('4. 記録');
+    if (plan.udpPorts) {
+      const udpReport = stage('5. UDP ポート');
+      if (controller.signal.aborted) udpReport({ name: 'UDP ポート', status: '中断', lines: ['UDP の確認は開始していません。'] });
+      else await runUdpStage({ ...common, report: udpReport });
+    }
+
+    stage('6. 記録');
     // Tools that wrote their own report used the process umask; seal every path now.
     store.seal();
     const recordFile = store.write('record.md', writeRecord({
       target: displayTarget(target),
       port: target.port,
       host: target.host,
-      source,
+      source: source ?? '（未指定。URL 側の検査のみ）',
       startedAt,
       directory: store.directory,
       checks: recorded,
       aborted: controller.signal.aborted,
     }));
     const found = recorded.filter(entry => entry.check.status === '検出あり').length;
-    const unresolved = recorded.filter(entry => ['未実行', '失敗', '一部未確認', '中断'].includes(entry.check.status)).length;
+    const unfinished = recorded.filter(entry => ['未実行', '失敗', '一部未確認', '中断'].includes(entry.check.status)).length;
     writeCheck(write, {
       name: '記録', status: '情報',
       lines: [
-        `検出あり ${found} 件 / 判定できなかった項目 ${unresolved} 件`,
+        `検出あり ${found} 件 / 判定できなかった項目 ${unfinished} 件`,
         `保存ファイル: ${fs.readdirSync(store.directory).sort().join(', ')}`,
         `記録: ${oneLine(recordFile, 200)}`,
         '記録には対象・接続元・日時・検出内容・再検査手順を残しています。デプロイ版と修正内容を追記してください。',

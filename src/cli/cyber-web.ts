@@ -5,6 +5,8 @@ import { toolUrl, type ScanTarget } from './cyber-target.ts';
 
 export interface WebStageOptions {
   target: ScanTarget;
+  /** Per-command budget; a tool that has not answered by then is reported unfinished. */
+  timeoutMs: number;
   signal: AbortSignal;
   store: {
     write(name: string, contents: string): string;
@@ -25,25 +27,25 @@ function niktoFindings(report: string): string[] {
 }
 
 /**
- * Nikto is limited to configuration and default-file checks (Tuning 2). The
- * Skill forbids real user cookies and data, so only the bare URL is passed and
- * no session is reused. A run that hits the time limit is reported unfinished.
+ * Web configuration and default files (Tuning 2). The Skill forbids real user
+ * cookies and data, so only the bare URL is passed and no session is reused.
  */
 async function nikto(options: WebStageOptions): Promise<Check> {
   const name = 'Nikto';
   const file = options.store.file('nikto.txt');
   const run = await runTool('nikto',
-    ['-h', toolUrl(options.target), '-Tuning', '2', '-Pause', '1', '-maxtime', '5m', '-Format', 'txt', '-output', file],
-    options.signal, { timeoutMs: 420_000, maxBytes: 512 * 1024 });
+    ['-h', toolUrl(options.target), '-Tuning', '2', '-Pause', '1', '-Format', 'txt', '-output', file],
+    options.signal, { timeoutMs: options.timeoutMs, maxBytes: 512 * 1024 });
   if (!run.started) return { name, status: '未実行', lines: ['nikto が見つかりません（PATH を確認してください）。'] };
   if (run.aborted) return { name, status: '中断', lines: ['Web 設定の検査を中止しました。'] };
   if (run.timedOut) {
-    return { name, status: '一部未確認', lines: ['制限時間に達しました。得られた結果は未完了として扱います。'] };
+    return { name, status: '一部未確認',
+      lines: [`${Math.round(options.timeoutMs / 1000)} 秒以内に応答がないため打ち切りました。次の検査へ進みます。`] };
   }
+  // Nikto exits 1 when it reports findings; it writes -output itself.
   if (run.code !== 0 && run.code !== 1) {
     return { name, status: '失敗', lines: [`終了コード ${run.code} で完走しませんでした。`, oneLine(run.stderr)] };
   }
-  // Nikto writes -output itself; if it did not, the stdout we captured is the report.
   const report = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : run.stdout;
   if (!fs.existsSync(file)) options.store.write('nikto.txt', report);
   const findings = niktoFindings(report);
@@ -71,11 +73,13 @@ async function sqlmap(options: WebStageOptions): Promise<Check> {
   const run = await runTool('sqlmap',
     ['-u', toolUrl(options.target), '--batch', '--smart', '--level', '1', '--risk', '1',
       '--output-dir', output, '--flush-session'],
-    options.signal, { timeoutMs: 600_000, maxBytes: 512 * 1024 });
+    options.signal, { timeoutMs: options.timeoutMs, maxBytes: 512 * 1024 });
   if (!run.started) return { name, status: '未実行', lines: ['sqlmap が見つかりません（PATH を確認してください）。'] };
   if (run.aborted) return { name, status: '中断', lines: ['SQL インジェクションの検査を中止しました。'] };
   if (run.timedOut) {
-    return { name, status: '一部未確認', lines: ['制限時間に達しました。取得済みの結果は未完了として扱います。'] };
+    return { name, status: '一部未確認',
+      lines: [`${Math.round(options.timeoutMs / 1000)} 秒以内に応答がないため打ち切りました。`,
+        '取得できた範囲では注入可能と判定していません。'] };
   }
   if (run.truncated) return { name, status: '失敗', lines: ['出力が上限を超えたため、結果を採用しません。'] };
   if (/identified the following injection point/i.test(run.stdout)) {
@@ -95,7 +99,7 @@ async function sqlmap(options: WebStageOptions): Promise<Check> {
   };
 }
 
-/** Stage 3: web configuration and SQL handling on the running site. */
+/** Step 3: web configuration and SQL handling on the running site. */
 export async function runWebStage(options: WebStageOptions, withSqlmap: boolean): Promise<void> {
   if (!options.signal.aborted) options.report(await nikto(options));
   if (options.signal.aborted) {

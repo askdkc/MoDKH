@@ -1,174 +1,249 @@
-import { DATASTORE_PORTS, EXPECTED_PUBLIC_PORTS, SWEEP_PORTS } from './cyber-ports-policy.ts';
+import { DATASTORE_PORTS, EXPECTED_PUBLIC_PORTS, SERVICE_PORTS } from './cyber-ports-policy.ts';
 import { oneLine, type Check } from './cyber-report.ts';
 import { runTool } from './cyber-run.ts';
-import type { ScanTarget } from './cyber-target.ts';
-import { isIpv6 } from './cyber-target.ts';
+import { isIpv6, type ScanTarget } from './cyber-target.ts';
 
-export interface PortStageOptions {
+/**
+ * One command's time budget. Every check here is "run, then read the result"; a
+ * tool that has not answered within the budget is reported unfinished and the
+ * run moves on to the next check instead of waiting.
+ */
+export interface StageOptions {
   target: ScanTarget;
-  /** Address the host resolves to; when absent, name resolution failed. */
+  /** Address the host resolves to; absent means name resolution failed. */
   address?: string;
-  source: string;
+  timeoutMs: number;
+  /** Only the URL's own port, instead of the representative list. */
   quickPorts: boolean;
   udpPorts?: string;
-  /** False when --no-nmap was given: only the server's own listener table is read. */
-  remote: boolean;
   signal: AbortSignal;
   store: { write(name: string, contents: string): string };
   report(check: Check): void;
 }
 
-/** ss prints: State Recv-Q Send-Q Local:Port Peer:Port Process. */
-function listeningFromSs(stdout: string): { address: string; port: string; process?: string }[] {
-  const entries: { address: string; port: string; process?: string }[] = [];
-  for (const line of stdout.split('\n')) {
-    const columns = line.trim().split(/\s+/);
-    if (columns[0] !== 'LISTEN' || columns.length < 4) continue;
-    const local = columns[3] ?? '';
-    const separator = local.lastIndexOf(':');
-    if (separator <= 0) continue;
-    const port = local.slice(separator + 1);
-    if (!/^\d+$/.test(port)) continue;
-    const address = local.slice(0, separator).replace(/^\[|\]$/g, '');
-    const process = /users:\(\("([^"]+)"/.exec(line)?.[1];
-    entries.push({ address, port, ...(process ? { process } : {}) });
-  }
-  return entries;
+/** One port and the version line Nmap read for it. */
+export interface ServicePort {
+  port: string;
+  service: string;
+  version: string;
 }
 
-/** One SSH/local audit on the server itself; only possible when the source is a Linux host. */
-async function localListeners(options: PortStageOptions): Promise<Check> {
-  const name = 'サーバー上の待ち受け（ss）';
-  const run = await runTool('ss', ['-lntup'], options.signal, { timeoutMs: 30_000, maxBytes: 512 * 1024 });
-  if (!run.started) {
-    return { name, status: '未実行', lines: ['ss が見つかりません。サーバー上で `ss -lntup` を実行し、出力を確認してください。'] };
-  }
-  if (run.aborted) return { name, status: '中断', lines: ['待ち受けの確認を中止しました。'] };
-  const cut = run.truncated ? `${name}: 出力が上限を超えたため、結果を採用しません。` : undefined;
-  if (cut) return { name, status: '失敗', lines: [cut] };
-  if (run.code !== 0) {
-    return { name, status: '失敗', lines: [`終了コード ${run.code}。権限不足なら sudo ss -lntup で確認してください。`, oneLine(run.stderr)] };
-  }
-  options.store.write('ss.txt', run.stdout);
-  const listeners = listeningFromSs(run.stdout);
-  if (!listeners.length) {
-    return { name, status: '検出なし', lines: ['待ち受けている TCP ポートはありませんでした。'] };
-  }
-  const lines = listeners.map(entry =>
-    `${entry.address}:${entry.port}${entry.process ? ` (${entry.process})` : ''}`);
-  const exposed = listeners.filter(entry =>
-    DATASTORE_PORTS.has(entry.port) && !/^(127\.|::1$|\[::1\])/.test(entry.address));
-  if (exposed.length) lines.push(`データストア系のポートが外部アドレスで待ち受けています: ${exposed.map(entry => entry.port).join(', ')}`);
-  return {
-    name, status: exposed.length ? '検出あり' : '情報', ...(exposed.length ? { count: exposed.length } : {}),
-    lines: [...lines, `対象: ${options.source}（サーバー自身の待ち受け）`],
-  };
-}
-
-function parseGrepable(stdout: string): { port: string; state: string; service: string }[] {
+/**
+ * Nmap's greppable port field is
+ * port/state/protocol/owner/service/sunrpc/version/
+ * so the version is the seventh field, not the one after the service.
+ */
+function parseGrepable(stdout: string): { port: string; state: string; service: string; version: string }[] {
   const line = stdout.split('\n').find(entry => entry.startsWith('Host:') && /\tPorts: /.test(entry));
   if (!line) return [];
   const ports = line.split('\tPorts: ')[1] ?? '';
-  const result: { port: string; state: string; service: string }[] = [];
+  const result: { port: string; state: string; service: string; version: string }[] = [];
   for (const entry of ports.split(', ')) {
-    const [port, state, , , service] = entry.split('/');
-    if (port && state) result.push({ port, state, service: service ?? '' });
+    const fields = entry.split('/');
+    const port = fields[0];
+    const state = fields[1];
+    if (!port || !state) continue;
+    result.push({ port, state, service: fields[4] ?? '', version: fields[6] ?? '' });
   }
   return result;
 }
 
-/** Nmap from this machine: only the specified host, never a scan of a shared CDN address. */
-async function remotePorts(options: PortStageOptions): Promise<void> {
-  const { address, target } = options;
+/** Lines an Nmap script block contributes, so a CVE line is kept as printed. */
+function scriptLines(stdout: string): string[] {
+  return stdout.split('\n')
+    .map(line => line.replace(/^\|[_ ]?/, '').trim())
+    .filter(line => line.length > 0);
+}
+
+/** Add the URL's own port to a list, keeping order and avoiding a duplicate. */
+export function withTargetPort(list: string, port: string): string {
+  const ports = list.split(',').map(entry => entry.trim()).filter(Boolean);
+  if (!ports.includes(port)) ports.unshift(port);
+  return ports.join(',');
+}
+
+function budget(options: StageOptions): number {
+  return options.timeoutMs;
+}
+
+function minutes(ms: number): string {
+  return `${Math.round(ms / 1000)} 秒`;
+}
+
+/** A tool that ran out of time is unfinished, not a clean result. */
+function unfinished(options: StageOptions, next: string): Check['lines'] {
+  return [
+    `${minutes(budget(options))}以内に応答がないため打ち切りました。${next}`,
+    '取得できた範囲では判定していません。時間を延ばすか、対象ポートを絞って再実行してください。',
+  ];
+}
+
+/**
+ * Step 2: find out what software the site runs. A version scan answers that on
+ * its own, and its result decides which ports the vulnerability probe uses.
+ */
+export async function runServiceStage(options: StageOptions): Promise<ServicePort[]> {
+  const name = 'サービス特定（Nmap -sV）';
+  const address = options.address;
   if (!address) {
-    options.report({ name: 'Nmap', status: '失敗', lines: [`${target.host} の IP アドレスを解決できませんでした。`] });
-    return;
+    options.report({ name, status: '失敗', lines: [`${options.target.host} の IP アドレスを解決できませんでした。`] });
+    return [];
   }
-  if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(address)) {
-    // The Skill checks the public side from an outside circuit; a LAN-private answer is not that.
-    options.report({ name: 'Nmap', status: '未実行',
-      lines: [`名前解決の結果が LAN 内のアドレス (${address}) のため、公開側の到達性は判定できません。`,
-        '公開側は VPN を通らない外部回線から、LAN 側はその経路から別々に確認してください。'] });
-    return;
+  if (isIpv6(address) && options.quickPorts) {
+    // Keep the fast path simple; the full list still covers IPv6 with the -6 flag.
+    options.report({ name, status: '未実行', lines: ['IPv6 では --quick-ports を省略しました。'] });
+    return [];
   }
-  const family = isIpv6(address) ? ['-6'] : [];
-  const common = ['-n', '-Pn', '-sT', '--max-rate', '50', '--reason', ...family];
-  // Step 2 of the Skill scans every TCP port; --quick-ports narrows it to the representative list.
-  const ports = options.quickPorts ? ['-p', SWEEP_PORTS] : ['-p-'];
-  const run = await runTool('nmap', [...common, ...ports, '-oG', '-', address], options.signal, { timeoutMs: 900_000, maxBytes: 2 * 1024 * 1024 });
-  const name = 'Nmap';
+  // The URL's own port is always included: a site on 8080 or an unusual port would
+  // otherwise look closed because the representative list does not name it.
+  const list = options.quickPorts
+    ? options.target.port
+    : withTargetPort(SERVICE_PORTS, options.target.port);
+  const run = await runTool('nmap',
+    ['-n', '-Pn', '-sT', '-sV', '--version-light', '--max-rate', '50', '--reason',
+      ...(isIpv6(address) ? ['-6'] : []), '-p', list, '-oG', '-', address],
+    options.signal, { timeoutMs: budget(options), maxBytes: 2 * 1024 * 1024 });
   if (!run.started) {
     options.report({ name, status: '未実行', lines: ['nmap が見つかりません（PATH を確認してください）。'] });
-  } else if (run.aborted) {
-    options.report({ name, status: '中断', lines: ['ポート走査を中止しました。'] });
-  } else if (run.timedOut) {
-    options.report({ name, status: '失敗', lines: ['時間切れです。走査範囲を狭めて再実行してください。'] });
-  } else if (run.truncated || run.code !== 0) {
-    options.report({ name, status: '失敗', lines: [`終了コード ${run.code ?? '不明'} で走査結果を取得できませんでした。`, oneLine(run.stderr)] });
-  } else {
-    options.store.write('nmap.txt', run.stdout);
-    const found = parseGrepable(run.stdout);
-    const open = found.filter(entry => entry.state === 'open');
-    const filtered = found.filter(entry => entry.state === 'open|filtered');
-    const unexpected = open.filter(entry => !EXPECTED_PUBLIC_PORTS.has(entry.port));
-    const datastores = open.filter(entry => DATASTORE_PORTS.has(entry.port));
-    const lines = open.length
-      ? open.map(entry => `${entry.port}/tcp open${entry.service ? ` (${entry.service})` : ''}`)
-      : [`${address} で開いている TCP ポートはありませんでした。`];
-    if (filtered.length) lines.push(`開いていると確定できないポート: ${filtered.map(entry => entry.port).join(', ')}`);
-    if (unexpected.length) lines.push(`公開を想定していない開いているポート: ${unexpected.map(entry => entry.port).join(', ')}`);
-    if (datastores.length) lines.push(`データストアのポートが公開されています: ${datastores.map(entry => entry.port).join(', ')}`);
-    lines.push(`対象: ${address}（${options.quickPorts ? `TCP ${SWEEP_PORTS}` : 'TCP 全ポート'}）`);
+    return [];
+  }
+  if (run.aborted) {
+    options.report({ name, status: '中断', lines: ['サービスの特定を中止しました。'] });
+    return [];
+  }
+  if (run.timedOut) {
+    options.report({ name, status: '一部未確認', lines: unfinished(options, '次の検査へ進みます。') });
+    return [];
+  }
+  if (run.truncated || run.code !== 0) {
     options.report({
-      name, status: datastores.length ? '検出あり' : '情報',
-      ...(datastores.length ? { count: datastores.length } : {}), lines,
+      name, status: '失敗',
+      lines: [`終了コード ${run.code ?? '不明'} で結果を取得できませんでした。`, oneLine(run.stderr)],
     });
+    return [];
   }
-
-  if (options.signal.aborted || !options.udpPorts) return;
-  const udp = await runTool('nmap', [...common, '-sU', '-p', options.udpPorts, '--max-rate', '10', '--reason', '-oG', '-', address],
-    options.signal, { timeoutMs: 900_000, maxBytes: 512 * 1024 });
-  const udpName = 'Nmap（UDP）';
-  if (!udp.started) {
-    options.report({ name: udpName, status: '未実行', lines: ['nmap が見つかりません。'] });
-    return;
+  options.store.write('nmap-services.txt', run.stdout);
+  const found = parseGrepable(run.stdout);
+  const open = found.filter(entry => entry.state === 'open');
+  if (!open.length) {
+    options.report({ name, status: '検出なし', lines: [`${address} の走査範囲に開いているポートはありませんでした。`] });
+    return [];
   }
-  if (udp.aborted) {
-    options.report({ name: udpName, status: '中断', lines: ['UDP の確認を中止しました。'] });
-    return;
-  }
-  if (udp.timedOut || udp.truncated || udp.code !== 0) {
-    options.report({ name: udpName, status: '失敗', lines: [`結果を取得できませんでした（終了コード ${udp.code ?? '不明'}）。`, oneLine(udp.stderr)] });
-    return;
-  }
-  options.store.write('nmap-udp.txt', udp.stdout);
-  const entries = parseGrepable(udp.stdout);
-  const open = entries.filter(entry => entry.state === 'open');
-  const uncertain = entries.filter(entry => entry.state === 'open|filtered');
+  const services: ServicePort[] = open.map(entry => ({
+    port: entry.port, service: entry.service, version: entry.version.trim() || entry.service,
+  }));
+  const datastores = open.filter(entry => DATASTORE_PORTS.has(entry.port));
+  const unexpected = services.filter(entry => !EXPECTED_PUBLIC_PORTS.has(entry.port));
+  const lines = services.map(entry =>
+    `${entry.port}/tcp open ${entry.service}${entry.version !== entry.service ? ` ${entry.version}` : ''}`);
+  if (unexpected.length) lines.push(`公開を想定していない開いているポート: ${unexpected.map(entry => entry.port).join(', ')}`);
+  if (datastores.length) lines.push(`データストアのポートが公開されています: ${datastores.map(entry => entry.port).join(', ')}`);
+  lines.push(`走査したポート: ${list}`);
   options.report({
-    name: udpName, status: '情報',
+    name, status: datastores.length ? '検出あり' : '情報',
+    ...(datastores.length ? { count: datastores.length } : {}), lines,
+  });
+  return services;
+}
+
+/**
+ * Step 3: probe the software the site actually runs for its known
+ * vulnerabilities. Nmap's `vuln` category is the CVE-backed probe that works
+ * against a single URL; it is aimed at the ports the service scan identified.
+ */
+export async function runVulnerabilityStage(options: StageOptions, services: readonly ServicePort[]): Promise<void> {
+  const name = '既知の脆弱性（Nmap --script vuln）';
+  const address = options.address;
+  if (!address) {
+    options.report({ name, status: '失敗', lines: ['IP アドレスを解決できなかったため、脆弱性の検査を実行できません。'] });
+    return;
+  }
+  // Only the URL's own port when nothing was identified, so the probe still covers the site.
+  const portList = services.length
+    ? [...new Set(services.map(entry => entry.port))].join(',')
+    : options.target.port;
+  const categories = options.quickPorts ? 'vuln' : 'vuln and not brute';
+  const run = await runTool('nmap',
+    ['-n', '-Pn', '-sT', '-sV', '--version-light', '--script', categories, '-p', portList,
+      ...(isIpv6(address) ? ['-6'] : []), '-oN', '-', address],
+    options.signal, { timeoutMs: budget(options), maxBytes: 2 * 1024 * 1024 });
+  if (!run.started) {
+    options.report({ name, status: '未実行', lines: ['nmap が見つかりません（PATH を確認してください）。'] });
+    return;
+  }
+  if (run.aborted) {
+    options.report({ name, status: '中断', lines: ['脆弱性の検査を中止しました。'] });
+    return;
+  }
+  if (run.timedOut) {
+    options.report({ name, status: '一部未確認', lines: unfinished(options, '次の検査へ進みます。') });
+    return;
+  }
+  if (run.truncated) {
+    options.report({ name, status: '失敗', lines: ['出力が上限を超えたため、結果を採用しません。'] });
+    return;
+  }
+  options.store.write('nmap-vuln.txt', run.stdout);
+  const lines = scriptLines(run.stdout);
+  const cves = [...new Set(lines.flatMap(line => line.match(/CVE-\d{4}-\d{4,}/g) ?? []))];
+  const vulnerable = lines.filter(line => /VULNERABLE/i.test(line));
+  const executed = [...new Set(lines.filter(line => /^[a-z0-9-]+:$/.test(line)).map(line => line.replace(/:$/, '')))];
+  if (!cves.length && !vulnerable.length) {
+    const checked = executed.length
+      ? `実行したスクリプト: ${executed.slice(0, 8).join(', ')}${executed.length > 8 ? ' ほか' : ''}`
+      : '該当するスクリプトはありませんでした';
+    options.report({ name, status: '検出なし', lines: [`対象ポート ${portList} で CVE を伴う指摘はありませんでした。`, checked] });
+    return;
+  }
+  options.report({
+    name, status: '検出あり', count: cves.length || vulnerable.length,
     lines: [
-      ...(open.length ? open.map(entry => `${entry.port}/udp open`) : [`${options.udpPorts} に開いている UDP ポートはありませんでした。`]),
-      ...(uncertain.length ? [`open|filtered: ${uncertain.map(entry => entry.port).join(', ')}（開いていると確定したわけではありません）`] : []),
-      'UDP は待ち受けや FW で気になるポートだけを選んで確認します。',
+      ...(cves.length ? [`CVE: ${cves.join(', ')}`] : []),
+      ...vulnerable.slice(0, 10).map(line => oneLine(line, 200)),
+      ...executed.slice(0, 10).map(script => `スクリプト: ${script}`),
+      `対象ポート: ${portList}`,
+      'Nmap の vuln カテゴリは既知 CVE を対象にした検査です。指摘は実際の版とベンダーの情報で裏づけてください。',
     ],
   });
 }
 
-/** Stage 2: what the server listens on, and what answers from outside. */
-export async function runPortStage(options: PortStageOptions): Promise<void> {
-  options.report(await localListeners(options));
-  if (!options.remote) {
+/** Optional UDP check, kept because `open|filtered` must never be reported as open. */
+export async function runUdpStage(options: StageOptions): Promise<void> {
+  const name = 'UDP ポート';
+  const address = options.address;
+  if (!address || !options.udpPorts) return;
+  const run = await runTool('nmap',
+    ['-n', '-Pn', '-sU', '-p', options.udpPorts, '--max-rate', '10', '--reason',
+      ...(isIpv6(address) ? ['-6'] : []), '-oG', '-', address],
+    options.signal, { timeoutMs: budget(options), maxBytes: 512 * 1024 });
+  if (!run.started) {
+    options.report({ name, status: '未実行', lines: ['nmap が見つかりません。'] });
+    return;
+  }
+  if (run.aborted) {
+    options.report({ name, status: '中断', lines: ['UDP の確認を中止しました。'] });
+    return;
+  }
+  if (run.timedOut || run.truncated || run.code !== 0) {
     options.report({
-      name: 'Nmap', status: '未実行',
-      lines: ['--no-nmap が指定されたため、外部からの走査はしていません。',
-        '外部からの到達性は、別マシンの各経路（公開側・VPN・LAN）から確認してください。'],
+      name, status: '一部未確認',
+      lines: [`${minutes(budget(options))}以内に結果を取得できませんでした。`, oneLine(run.stderr)],
     });
     return;
   }
-  if (options.signal.aborted) {
-    options.report({ name: 'Nmap', status: '中断', lines: ['以降の走査は開始していません。'] });
-    return;
-  }
-  await remotePorts(options);
+  options.store.write('nmap-udp.txt', run.stdout);
+  const entries = parseGrepable(run.stdout);
+  const open = entries.filter(entry => entry.state === 'open');
+  const uncertain = entries.filter(entry => entry.state === 'open|filtered');
+  options.report({
+    name, status: '情報',
+    lines: [
+      ...(open.length
+        ? open.map(entry => `${entry.port}/udp open`)
+        : [`${options.udpPorts} に開いている UDP ポートはありませんでした。`]),
+      ...(uncertain.length
+        ? [`open|filtered: ${uncertain.map(entry => entry.port).join(', ')}（開いていると確定したわけではありません）`]
+        : []),
+    ],
+  });
 }
