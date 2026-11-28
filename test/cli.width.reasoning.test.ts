@@ -74,10 +74,15 @@ test('a real TUI switches from welcome to a split conversation and shows provide
     child.stdin!.write(`/connect compatible/x --base-url http://127.0.0.1:${(server.address() as AddressInfo).port}/v1\r`);
     await wait('接続しました');
     assert.doesNotMatch(stripVTControlCharacters(output), /│ トークン使用量/);
-    child.stdin!.write('調べて\r');
+    child.stdin!.write('調べて');
+    await wait('調べて');
+    assert.match(output, /\x1b\[49m 調べて/);
+    child.stdin!.write('\r');
     await wait('│ トークン使用量');
     await wait('ANSWER_MARKER');
     await wait('応答終了');
+    assert.match(output, /\x1b\[49;1m トークン使用量/);
+    assert.ok(!/\x1b\[[\d;]*(?:48|38);(?:5|2);/.test(output), 'conversation colors must follow the terminal palette');
     const conversation = screenFrom(output, 40);
     assert.match(conversation.join('\n'), /＜ 応答終了/);
     assert.match(conversation[1], /│ トークン使用量/);
