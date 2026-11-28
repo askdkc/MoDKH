@@ -39,8 +39,14 @@ test('installed browse runs structured actions without command approval', { skip
     const result = await run({ action: 'fill', tab: '12', ref: 'e1', text });
     assert.equal(result.status, 'ok');
     assert.equal(result.output, `fill\n--json\n${JSON.stringify({ tab: 12, ref: 'e1', value: text })}\n`);
+    const ordinary = await run({ action: 'click', tab: 12, ref: 'e2' });
+    assert.equal(ordinary.output, `click\n--json\n${JSON.stringify({ tab: 12, ref: 'e2' })}\n`);
+    const moving = await run({ action: 'click', tab: 12, ref: 'e2', force: true });
+    assert.equal(moving.output, `click\n--json\n${JSON.stringify({ tab: 12, ref: 'e2', force: true })}\n`);
     assert.equal((await run({ action: 'execute' })).status, 'error');
-    assert.equal((await run({ action: 'navigate', url: 'file:///etc/passwd' })).status, 'error');
+    const local = await run({ action: 'navigate', url: 'file:///etc/passwd' });
+    assert.equal(local.status, 'error');
+    assert.match(local.output, /HTTP.*127\.0\.0\.1/i);
   } finally {
     if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous;
     fs.rmSync(bin, { recursive: true, force: true });
@@ -102,6 +108,12 @@ test('navigate reuses the given tab instead of opening another one', { skip: pro
     const ctx = { root: process.cwd(), approval: { approve: async () => assert.fail('unexpected prompt') } };
     const moved = await registry.executeOne({ id: '1', name: 'browse', args: { action: 'navigate', url: 'https://example.com', tab: 12 } }, ctx);
     assert.equal(moved.output, `navigate\n--json\n${JSON.stringify({ url: 'https://example.com', tab: 12 })}\n`);
+    const reload = await registry.executeOne({ id: 'reload', name: 'browse', args: { action: 'reload', tab: '12' } }, ctx);
+    assert.equal(reload.output, `navigate\n--json\n${JSON.stringify({ action: 'reload', tab: 12, ignoreCache: true })}\n`);
+    const invalid = await registry.executeOne({ id: 'invalid', name: 'browse', args: { action: 'reload' } }, ctx);
+    assert.equal(invalid.status, 'error');
+    const visible = await registry.executeOne({ id: 'visible', name: 'browse', args: { action: 'navigate', url: 'http://localhost:3000/', keepVisible: true } }, ctx);
+    assert.match(visible.output, /"keepVisible":true/);
     const opened = await registry.executeOne({ id: '2', name: 'browse', args: { action: 'navigate', url: 'https://example.com' } }, ctx);
     assert.match(opened.output, /"url":"https:\/\/example\.com"/);
     assert.doesNotMatch(opened.output, /"tab"/, 'without tab the CLI opens a new tab');

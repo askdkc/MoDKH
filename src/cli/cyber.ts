@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
-import { readBundledSkill } from '../agent/bundled-skills.ts';
-import type { ApprovalGate } from '../agent/types.ts';
-import { runShellProcess } from '../tools/shell-process.ts';
+import { writeCyberReview } from './cyber-review.ts';
+import type { ApprovalGate, Model } from '../agent/types.ts';
+import { runProcess } from './cyber-process.ts';
 import { displayUrl, parseCyberUrl, type UrlTarget } from './cyber-url.ts';
 import { runUrlChecks, type UrlFacts } from './cyber-url-checks.ts';
 import { runSourceChecks } from './cyber-source.ts';
@@ -11,22 +11,10 @@ import { oneLine, writeCheck } from './cyber-report.ts';
 
 const sourceTools = ['trivy', 'osv-scanner', 'semgrep', 'gitleaks'] as const;
 
-interface Check {
-  name: string;
-  version: string;
-  scan?: string;
-  findings?: number;
-}
-
-const localChecks: Check[] = [
-  { name: 'trivy', version: '--version', scan: 'fs --scanners vuln --exit-code 10 .', findings: 10 },
-  { name: 'osv-scanner', version: '--version', scan: 'scan source -r .', findings: 1 },
-  { name: 'semgrep', version: '--version', scan: 'scan --config p/default --metrics=off --error .', findings: 1 },
-  { name: 'gitleaks', version: 'version', scan: 'dir --redact=100 --no-banner --exit-code 10 .', findings: 10 },
-  { name: 'sqlmap', version: '--version' },
-  { name: 'nmap', version: '--version' },
-];
-const checks: Check[] = [...localChecks, { name: 'curl', version: '--version' }];
+const versions: Record<string, string> = {
+  trivy: '--version', 'osv-scanner': '--version', semgrep: '--version', gitleaks: 'version',
+  sqlmap: '--version', nmap: '--version', curl: '--version', dig: '-v', openssl: 'version', nuclei: '-version',
+};
 
 /** `/cyber <URL> [--source <path>] [--sqlmap-summary <file>]`, plus the existing mode selectors. */
 export interface CyberRequest {
@@ -39,10 +27,10 @@ export interface CyberRequest {
 }
 
 export const HELP_USAGE = '使い方: /cyber <URL> [--source <パス>] [--sqlmap-summary <JSON>]\n'
-  + '  /cyber <URL>: URL の DNS・ポート・TLS・HTTP ヘッダー・Cookie・公開パス・診断テンプレートを検査\n'
+  + '  /cyber <URL>: URL の DNS・ポート・TLS・HTTP ヘッダー・Cookie・公開パス・診断テンプレートを検査。モデル接続時は HTTP 設定の修正案も表示\n'
   + '  /cyber <URL> --source .: 上記に加えて、そのパスの依存関係・ソースコード・秘密情報も点検\n'
   + '  /cyber: 現在の作業ディレクトリを点検  /cyber tools [URL]: ツールの版を表示\n'
-  + '  /cyber help: 説明  /cyber <' + checks.map(check => check.name).join(' | ') + '>\n'
+  + '  /cyber help: 説明  /cyber <' + Object.keys(versions).join(' | ') + '>\n'
   + 'URL はユーザー名やパスワードを含まない HTTP(S) のアドレスを1つ指定してください。\n'
   + '--source のパスはワークスペース内の実在するディレクトリに限ります。空白を含むパスも指定できます。\n';
 
@@ -80,9 +68,9 @@ export function parseCyberRequest(arg: string): CyberRequest {
   if (legacy) {
     const url = legacy[1]?.trim();
     if (!url) return hasOptions ? { kind: 'usage' } : { kind: 'local', selected: 'tools' };
-    return hasOptions ? { kind: 'usage' } : { kind: 'url', url };
+    return hasOptions || !parseCyberUrl(url) ? { kind: 'usage' } : { kind: 'local', selected: 'tools' };
   }
-  if (head && checks.some(check => check.name === head)) {
+  if (head && Object.hasOwn(versions, head)) {
     return hasOptions ? { kind: 'usage' } : { kind: 'local', selected: head };
   }
   if (!head) return { kind: 'usage' };
@@ -144,11 +132,11 @@ export function readSqlmapSummary(cwd: string, input: string, target: URL): { su
   if (!url || !verdict) return { error: '要約には target と verdict が必要です。' };
   const summaryTarget = parseCyberUrl(url);
   if (!summaryTarget || summaryTarget.url.href !== target.href) {
-    return { error: `要約の対象が一致しません（要約: ${url}）` };
+    return { error: '要約の対象が一致しません。' };
   }
   const date = typeof record.date === 'string' ? record.date : undefined;
   const details = typeof record.details === 'string' ? record.details : undefined;
-  return { summary: { target: url, verdict, ...(date ? { date } : {}), ...(details ? { details } : {}) } };
+  return { summary: { target: displayUrl(summaryTarget), verdict, ...(date ? { date } : {}), ...(details ? { details } : {}) } };
 }
 
 function writeSqlmapSummary(write: (text: string) => void, summary: SqlmapSummary): void {
@@ -165,12 +153,12 @@ function writeSqlmapSummary(write: (text: string) => void, summary: SqlmapSummar
 }
 
 /** Everything the approval prompt claims will happen, including what will NOT run. */
-export function describeUrlPlan(target: UrlTarget, source: string | undefined): string {
+export function describeUrlPlan(target: UrlTarget, source: string | undefined, model?: Model | null): string {
   const lines = [
     `対象 URL: ${displayUrl(target)}`,
     `接続先ポート: ${target.port}/tcp`,
     'URL 側: DNS (dig) → Nmap（指定ポートと代表ポート）→ TLS (openssl) → HTTP (curl: HEAD/GET/OPTIONS、同一オリジンの固定パス) → nuclei（導入時のみ）',
-    'リダイレクトは追跡しません。接続するのは対象ホストだけです。',
+    'リダイレクトは追跡しません。URL 検査の対象は指定したホストです。',
   ];
   if (source) {
     lines.push(`ソース: ${source}`);
@@ -178,36 +166,34 @@ export function describeUrlPlan(target: UrlTarget, source: string | undefined): 
   } else {
     lines.push(`ソース側: 未実行（--source 未指定のため ${sourceTools.join(' / ')} を起動しません）`);
   }
+  if (model) lines.push(`AI による設定レビュー: ${model.id} に HTTP ステータス・HTTPS の有無・ヘッダーの有無・Cookie 属性の集計を送信します。`);
   lines.push('Cookie の値と URL のクエリは表示しません。');
   return lines.join('\n');
 }
 
 /** The existing direct-check mode (`/cyber`, `/cyber tools`, `/cyber <tool>`). */
 async function runDirectChecks(selected: string, cwd: string, approval: ApprovalGate, signal: AbortSignal, write: (text: string) => void): Promise<void> {
-  const chosen = !selected ? localChecks : selected === 'tools' ? checks : checks.filter(check => check.name === selected);
-  const plan = chosen.map(check => {
-    const scan = selected !== 'tools' && check.scan;
-    return { command: check.name + ' ' + (scan || check.version), findings: scan ? check.findings : undefined };
-  });
+  if (!selected || sourceTools.some(name => name === selected)) {
+    const names = selected || sourceTools.join(' / ');
+    if (!await approval.approve({ kind: 'command', title: '/cyber ' + cwd, detail: `ソース検査: ${names}\n対象: ${cwd}`, signal }) || signal.aborted) return;
+    const report = await runSourceChecks(cwd, signal, write, undefined, selected);
+    if (!signal.aborted) write(`確認できた指摘 ${report.total} 件\n`);
+    return;
+  }
+  const names = selected === 'tools' ? Object.keys(versions) : [selected];
   if (!await approval.approve({ kind: 'command', title: '/cyber ' + cwd,
-    detail: plan.map(item => item.command).join('\n'), signal })) return;
-  for (const { command, findings } of plan) {
+    detail: names.map(name => name + ' ' + versions[name]).join('\n'), signal })) return;
+  for (const name of names) {
     if (signal.aborted) break;
-    write('$ ' + command + '\n');
-    try {
-      const result = await runShellProcess(command, cwd, signal, { timeoutMs: 180_000, maxOutputBytes: 24_000 });
-      const status = result.timedOut ? '時間切れ' : result.signal ? '中断' : result.code === 0 ? '完了'
-        : result.code === findings ? '検出あり' : '未確認';
-      write(stripVTControlCharacters(result.stdout + result.stderr) + '\n' + status + ' (' + (result.signal ?? result.code) + ')\n');
-    } catch (error) {
-      write('未確認 (' + (error as Error).message + ')\n');
-    }
+    const run = await runProcess(name, [versions[name]], signal, { cwd, timeoutMs: 10_000, maxBytes: 24_000 });
+    writeCheck(write, { name, status: !run.started ? '未実行' : run.aborted ? '中断' : run.code === 0 ? '情報' : '失敗',
+      lines: [run.started ? oneLine(stripVTControlCharacters(run.stdout || run.stderr)) : 'PATH に見つかりません。'] });
   }
 }
 
-export async function runCyber(arg: string, cwd: string, approval: ApprovalGate, write: (text: string) => void) {
-  if (arg === 'help') {
-    write(readBundledSkill('cyber') + '\n' + HELP_USAGE);
+export async function runCyber(arg: string, cwd: string, approval: ApprovalGate, write: (text: string) => void, model: Model | null = null) {
+  if (arg.trim() === 'help') {
+    write(HELP_USAGE);
     return;
   }
   const request = parseCyberRequest(arg);
@@ -234,8 +220,9 @@ export async function runCyber(arg: string, cwd: string, approval: ApprovalGate,
       if (read.error) { write(`${read.error}\n`); return; }
       summary = read.summary;
     }
+    const reviewer = model && !/^(?:fixed|hermes)\//.test(model.id) ? model : null;
     if (!await approval.approve({ kind: 'command', title: '/cyber ' + displayUrl(target),
-      detail: describeUrlPlan(target, source), outsideWorkspace: true, signal: controller.signal })
+      detail: describeUrlPlan(target, source, reviewer), outsideWorkspace: true, signal: controller.signal })
       || controller.signal.aborted) {
       write('(検査を開始しませんでした)\n');
       return;
@@ -256,6 +243,7 @@ export async function runCyber(arg: string, cwd: string, approval: ApprovalGate,
     }
     if (summary) writeSqlmapSummary(write, summary);
     else writeCheck(write, { name: 'sqlmap', status: '未実行', lines: ['外部診断結果なし（--sqlmap-summary 未指定）。'] });
+    await writeCyberReview(reviewer, facts.evidence, controller.signal, write);
     write(controller.signal.aborted ? '(中断しました。以降の検査は開始していません)\n' : '(検査を終了しました)\n');
   } finally {
     process.off('SIGINT', stop);

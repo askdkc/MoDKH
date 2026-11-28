@@ -99,6 +99,7 @@ export interface ShellOptions {
    * This is the promotion seam: the caller keeps ownership of a still-running process instead of
    * losing its work to a deadline. Whoever receives it must continue to own its lifetime.
    */
+  executionRecord?: import('../agent/types.ts').ToolContext['executionRecord'];
   onTimeout?(process: ShellProcess): void;
 }
 
@@ -162,6 +163,12 @@ export class ShellProcess {
       this.settle = resolve;
       this.fail = reject;
     });
+    if (opts.executionRecord) {
+      const record = opts.executionRecord;
+      // spawn returns a PID only after the OS has created the child.
+      if (this.child.pid !== undefined) record.commandStarted();
+      void this.result.then(result => record.commandEnded(result.code), () => record.commandEnded(null));
+    }
     this.child.stdout!.on('data', (data: Buffer) => this.out.push(decode(data)));
     this.child.stderr!.on('data', (data: Buffer) => this.err.push(decode(data)));
     this.child.on('error', (e) => { this.failure = `起動に失敗した: ${e.message}`; });

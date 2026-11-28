@@ -461,10 +461,13 @@ test('a rejected Ollama read history resumes the request and reuses receipts und
     [...delta('FIRST and SECOND'), { type: 'finish', stopReason: 'stop' }],
   ]);
   const started: string[] = [];
+  const sources: unknown[] = [];
   const result = await runAgentLoop(messages, { root, model: { id: 'ollama/test', stream: model.stream.bind(model) }, skills: false, registry: new ToolRegistry(defaultTools()),
+    toolRecording: { session: 'fixture', write(row) { if (row.state === 'reused') sources.push(row.source); } },
     signal: new AbortController().signal, approval: new RecordingGate([]), hooks: { onToolStart: c => started.push(c.id) } });
   assert.equal(result.outcome, 'complete');
   assert.deepEqual(started, ['fresh']);
+  assert.deepEqual(sources, [{ message: 2, result: 0 }]);
   for (const request of model.requests.slice(1)) {
     assert.deepEqual(request.tools.map(t => t.name), ['read_file']);
     assert.match(JSON.stringify(request.messages.at(-1)), /Read a.txt and b.txt/);

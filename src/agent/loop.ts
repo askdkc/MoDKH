@@ -1,3 +1,4 @@
+import { TurnToolRecords, type CandidateRecord, type ToolRecording } from './tool-recording.ts';
 import { streamWithReconnect } from '../model/reconnect.ts';
 import { isContextLimitError, projectToolImages, utf8Prefix, utf8Suffix } from '../model/context.ts';
 import { isDeepStrictEqual } from 'node:util';
@@ -60,6 +61,7 @@ export interface AgentLoopOptions {
   signal: AbortSignal;
   approval: import('./types.ts').ApprovalGate;
   hooks?: LoopHooks;
+  toolRecording?: ToolRecording | undefined;
   maxTurns?: number;
   /** Opt in to one native edit -> foreground verification command per model response. */
   guardedEditCheck?: boolean;
@@ -206,6 +208,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
   // The provider sees the projection; the transcript keeps the full text for audit and replay safety.
   let compaction = opts.compaction;
   const taskStart = task ? messages.indexOf(task) : messages.length;
+  const records = opts.toolRecording && new TurnToolRecords(opts.toolRecording, taskStart, messages);
   const recoveryTools = new Set([readFileTool, ...(opts.approval.confirmOnce ? [runCommandTool, fetchUrlTool] : [])]
     .filter(isNative).map(tool => tool.name));
   let recoveredReceipts: Map<string, ToolResult> | undefined;
@@ -256,6 +259,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     let receivedReasoning = false;
     let continuation: ProviderContinuation | undefined;
     const calls: ToolCall[] = [];
+    const candidates: CandidateRecord[] = [];
     let stopReason: Extract<ModelEvent, { type: 'finish' }>['stopReason'] | undefined;
     let errorMessage: string | undefined;
     let rejectedToolHistory = false;
@@ -286,10 +290,15 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
         text = '';
         receivedReasoning = false;
         continuation = undefined;
+        for (const candidate of candidates) candidate.emit('not-executed', 'response_discarded');
+        candidates.length = 0;
         calls.length = 0;
         opts.hooks?.onReconnect?.(delayMs);
-      }, () => opts.hooks?.onModelRequest?.())) {
-        if (opts.signal.aborted) break;
+      }, () => { records?.nextAttempt(); opts.hooks?.onModelRequest?.(); })) {
+        if (opts.signal.aborted) {
+          if (records && ev.type === 'tool-call') candidates.push(records.receive(ev.call.id, calls.length + 1));
+          break;
+        }
         if (ev.type === 'usage') {
           opts.hooks?.onUsage?.(ev);
         } else if (ev.type === 'activity') {
@@ -304,6 +313,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
           continuation = ev.value;
         } else if (ev.type === 'tool-call') {
           calls.push(ev.call);
+          if (records) candidates.push(records.receive(ev.call.id, calls.length));
           opts.hooks?.onToolCall?.(ev.call);
         } else {
           rejectedToolHistory = Boolean(canRecoverHistory && ev.rejectedToolHistory);
@@ -335,6 +345,10 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     append(response);
     const interrupted = opts.signal.aborted || stopReason === 'aborted';
     if (interrupted || stopReason === 'error' || stopReason === undefined || stopReason === 'length') {
+      candidates.forEach((candidate, index) => {
+        if (index < calls.length) candidate.expectReceipt(messages.length, index);
+        candidate.emit('not-executed', 'response_interrupted');
+      });
       if (calls.length) append({ role: 'tool', results: calls.map(call => ({
         callId: call.id, name: call.name, status: 'not-executed',
         output: '応答が中断・失敗したため実行していない',
@@ -405,19 +419,27 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     const newInputQueued = () => Boolean(opts.followupSignal?.().aborted
       || opts.jobs?.hasNotices || opts.subagents?.hasNotices || opts.subagents?.hasUnknown);
     for (const [index, call] of calls.entries()) {
+      const candidate = candidates[index];
       const terminalError = opts.terminalToolBlock?.();
       if (terminalError) {
+        candidates.slice(index).forEach((pending, offset) => {
+          pending.expectReceipt(messages.length, offset);
+          pending.emit('not-executed', 'workflow_stopped');
+        });
         append({ role: 'tool', results: calls.slice(index).map(pending => ({
           callId: pending.id, name: pending.name, status: 'not-executed', output: terminalError,
         })) });
         return { outcome: 'error', errorMessage: terminalError };
       }
+      candidate?.expectReceipt(messages.length);
       if (scope && (index > 0 || call.name !== scope.tool || !scope.accepts(call))) {
+        candidate?.emit('not-executed', 'scope_blocked');
         append({ role: 'tool', results: [{ callId: call.id, name: call.name,
           status: 'not-executed', output: '出力上限からの復帰では指定された委譲を一件だけ実行できます' }] });
         continue;
       }
       if (recoveredReceipts && !recoveryTools.has(call.name)) {
+        candidate?.emit('not-executed', 'recovery_blocked');
         append({ role: 'tool', results: [{ callId: call.id, name: call.name, status: 'not-executed',
           output: '復旧中に使用できないツールです。' }] });
         continue;
@@ -440,21 +462,33 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
           root: opts.root, approval: opts.approval, signal: opts.signal,
         }));
       if (opts.signal.aborted) {
+        candidate?.emit('not-executed', 'aborted');
         result = { callId: call.id, name: call.name, status: 'not-executed', output: '中断済みのため実行していない' };
       } else if (prior) {
-        result = !isDeepStrictEqual(prior.call, call)
-          ? { callId: call.id, name: call.name, status: 'error', output: '[CALL_ID_CONFLICT] 同じIDで実行内容が異なる' }
-          : prior.result ?? { callId: call.id, name: call.name, status: 'unknown', output: '前回の要求に結果がない。再実行せず状態を確認する' };
+        if (!isDeepStrictEqual(prior.call, call)) {
+          candidate?.emit('not-executed', 'id_conflict');
+          result = { callId: call.id, name: call.name, status: 'error', output: '[CALL_ID_CONFLICT] 同じIDで実行内容が異なる' };
+        } else if (prior.result) {
+          candidate?.emit('reused', 'saved_result', records?.source(prior.result));
+          result = prior.result;
+        } else {
+          candidate?.emit('not-executed', 'prior_unknown');
+          result = { callId: call.id, name: call.name, status: 'unknown', output: '前回の要求に結果がない。再実行せず状態を確認する' };
+        }
       } else if (cached) {
+        candidate?.emit('reused', 'saved_result', records?.source(cached));
         result = { ...cached, callId: call.id };
         ledger.set(call.id, { call, result });
       } else if (!guardSatisfied) {
+        candidate?.emit('not-executed', 'guard_blocked');
         result = { callId: call.id, name: call.name, status: 'not-executed',
           output: '[EDIT_CHECK_SKIPPED] No fresh successful edit to verify, invalid guarded batch, or new input needs attention.' };
         ledger.set(call.id, { call, result });
       } else if (uncertain) {
+        candidate?.emit('not-executed', 'uncertain_batch');
         result = { callId: call.id, name: call.name, status: 'not-executed', output: '先行処理が結果不明のため実行していない' };
       } else if (unresolved) {
+        candidate?.emit('not-executed', 'prior_unknown');
         result = { callId: call.id, name: call.name, status: 'unknown',
           output: `前回要求(${unresolved.call.id})が結果不明で、同一操作または別操作と確認できない。新しいIDでも再送せず状態を確認する` };
       } else {
@@ -464,8 +498,10 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
         // harness directive before dispatch through the unmodified native tool schema.
         const nativeCall = guarded ? { ...call, args: { ...call.args } } : call;
         if (guarded) delete nativeCall.args.if_edit_succeeds;
+        candidate?.emit('unknown', 'dispatch_pending');
         result = await opts.registry.executeOne(nativeCall, {
           root: opts.root, signal: opts.signal,
+          ...(candidate && { executionRecord: candidate }),
           approval: recoveredReceipts && call.name !== 'read_file'
             ? { approve: request => opts.approval.confirmOnce!({ ...request, signal: opts.signal }) } : opts.approval,
           ...(opts.analyze ? { analyze: opts.analyze } : {}),
@@ -475,9 +511,11 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
           ...(opts.jobs ? { jobs: opts.jobs } : {}),
         });
         ledger.set(call.id, { call, result });
+        candidate?.returned(result);
         if (operationKey && result.status !== 'not-executed') recoveredReceipts?.set(operationKey, result);
         freshEditSucceeded = index === 0 && call.name === 'edit_file' && result.status === 'ok';
       }
+      records?.remember(result, messages.length, 0, candidate);
       append({ role: 'tool', results: [result] });
       opts.hooks?.onToolResult?.(result);
       uncertain ||= result.status === 'unknown';

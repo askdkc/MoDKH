@@ -96,9 +96,9 @@ export class JobRegistry {
     this.notices.push(`${head}。未読の出力が ${unread.length} 文字ある。job_output で読む。`);
   }
 
-  start(request: JobStartRequest): JobView {
+  start(request: JobStartRequest, executionRecord?: import('../agent/types.ts').ToolContext['executionRecord']): JobView {
     if (this.closed) throw new Error('ジョブ実行は終了済み');
-    const process = new ShellProcess(request.command, request.cwd, { shell: request.shell });
+    const process = new ShellProcess(request.command, request.cwd, { shell: request.shell, executionRecord });
     return this.register(process, request);
   }
 

@@ -38,6 +38,7 @@ for (const mode of ['happy', 'failed', 'denied-edit', 'denied-command', 'invalid
       );
       if (mode === 'old-unknown-command') messages.unshift({ role: 'assistant', content: '', toolCalls: [check] });
       const toolResults: ToolResult[] = [];
+      const commandStates: string[] = [];
       const approvals: ApprovalRequest['kind'][] = [];
       const persisted: string[] = [];
       const controller = new AbortController();
@@ -48,6 +49,9 @@ for (const mode of ['happy', 'failed', 'denied-edit', 'denied-command', 'invalid
       let sawBackgroundNotice = false;
       let terminal = false;
       const opts: AgentLoopOptions = {
+        toolRecording: { session: 'guard-fixture', write(row) {
+          if (row.callId === check.id) commandStates.push(row.reason);
+        } },
         registry: new ToolRegistry([editFileTool, runCommandTool]),
         root, signal: controller.signal, skills: false, guardedEditCheck: mode !== 'disabled',
         approval: { async approve(req) {
@@ -110,6 +114,10 @@ for (const mode of ['happy', 'failed', 'denied-edit', 'denied-command', 'invalid
       if (['child', 'job'].includes(mode)) assert.equal(sawBackgroundNotice, true);
       assert.equal(approvals.filter(k => k === 'command').length,
         ['happy', 'repeated', 'denied-command', 'during-approval'].includes(mode) ? 1 : 0);
+      if (mode === 'failed' || mode === 'during-approval') {
+        assert.equal(commandStates.filter(reason => reason === 'guard_blocked').length, 1);
+        assert.ok(!commandStates.includes('command_started'));
+      }
       if (mode === 'old-unknown-command') assert.equal(toolResults.at(-1)?.status, 'unknown');
       if (mode === 'during-approval') assert.match(toolResults.at(-1)?.output ?? '', /NOT_EXECUTED/);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }

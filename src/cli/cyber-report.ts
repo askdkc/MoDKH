@@ -4,7 +4,7 @@
  * 失敗 (ran but could not produce a verdict), 中断 (stopped), 情報 (observation
  * without a security verdict, e.g. resolved addresses or an open port).
  */
-export type CheckStatus = '検出あり' | '検出なし' | '未実行' | '失敗' | '中断' | '情報';
+export type CheckStatus = '検出あり' | '検出なし' | '未実行' | '失敗' | '中断' | '情報' | '対象なし' | '一部未確認';
 
 export interface CheckResult {
   /** Tool or check name shown in brackets. */

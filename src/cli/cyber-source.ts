@@ -1,5 +1,5 @@
 import { runProcess } from './cyber-process.ts';
-import { oneLine, writeCheck } from './cyber-report.ts';
+import { oneLine, writeCheck, type CheckResult } from './cyber-report.ts';
 
 const SOURCE_TIMEOUT_MS = 300_000;
 const SOURCE_MAX_BYTES = 4 * 1024 * 1024;
@@ -65,7 +65,7 @@ function truncationProblem(name: string, truncated: boolean): string | null {
   return truncated ? `${name}: 出力が上限を超えたため、結果を採用しません。` : null;
 }
 
-async function trivyScan(cwd: string, signal: AbortSignal, findings: Map<string, DependencyFinding>): Promise<{ name: string; status: '検出あり' | '検出なし' | '未実行' | '失敗' | '中断'; count?: number; lines: string[] }> {
+async function trivyScan(cwd: string, signal: AbortSignal, findings: Map<string, DependencyFinding>): Promise<CheckResult> {
   const run = await runProcess('trivy', ['fs', '--scanners', 'vuln', '--format', 'json', '--exit-code', '10', '--quiet', '--no-progress', '.'],
     signal, { cwd, timeoutMs: SOURCE_TIMEOUT_MS, maxBytes: SOURCE_MAX_BYTES });
   if (!run.started) return { name: 'Trivy', status: '未実行', lines: ['trivy が見つかりません（PATH を確認してください）。'] };
@@ -77,11 +77,11 @@ async function trivyScan(cwd: string, signal: AbortSignal, findings: Map<string,
   const problem = reportProblem('Trivy', run.code, run.stdout, run.stderr, [0, 10]);
   if (problem) return { name: 'Trivy', status: '失敗', lines: [problem] };
   const report = parseJson(run.stdout);
-  if (report === undefined) return { name: 'Trivy', status: '失敗', lines: ['JSON を解析できませんでした。'] };
+  if (!report || typeof report !== 'object' || Array.isArray(report)) return { name: 'Trivy', status: '失敗', lines: ['JSON を解析できませんでした。'] };
   const results = arrayAt(report, 'Results');
   const packages = results.reduce<number>((sum, entry) => sum + arrayAt(entry, 'Packages').length, 0);
   if (!results.length) {
-    return { name: 'Trivy', status: '検出なし', lines: ['対応するパッケージ情報が見つかりませんでした（対象ファイル 0 件）。'] };
+    return { name: 'Trivy', status: '対象なし', lines: ['対応するパッケージ情報が見つかりませんでした（対象ファイル 0 件）。'] };
   }
   let count = 0;
   for (const result of results) {
@@ -110,7 +110,7 @@ async function trivyScan(cwd: string, signal: AbortSignal, findings: Map<string,
   };
 }
 
-async function osvScan(cwd: string, signal: AbortSignal, findings: Map<string, DependencyFinding>): Promise<{ name: string; status: '検出あり' | '検出なし' | '未実行' | '失敗' | '中断'; count?: number; lines: string[] }> {
+async function osvScan(cwd: string, signal: AbortSignal, findings: Map<string, DependencyFinding>): Promise<CheckResult> {
   const run = await runProcess('osv-scanner', ['scan', 'source', '-r', '--format', 'json', '.'],
     signal, { cwd, timeoutMs: SOURCE_TIMEOUT_MS, maxBytes: SOURCE_MAX_BYTES });
   if (!run.started) return { name: 'OSV-Scanner', status: '未実行', lines: ['osv-scanner が見つかりません（PATH を確認してください）。'] };
@@ -120,15 +120,15 @@ async function osvScan(cwd: string, signal: AbortSignal, findings: Map<string, D
   if (cut) return { name: 'OSV-Scanner', status: '失敗', lines: [cut] };
   // 128 is "no package sources found": a complete run with nothing to inspect, not an error.
   if (run.code === 128 && /no package sources found/i.test(`${run.stdout}${run.stderr}`)) {
-    return { name: 'OSV-Scanner', status: '検出なし', lines: ['対応するロックファイルなどが見つかりませんでした（対象ファイル 0 件）。'] };
+    return { name: 'OSV-Scanner', status: '対象なし', lines: ['対応するロックファイルなどが見つかりませんでした（対象ファイル 0 件）。'] };
   }
   const problem = reportProblem('OSV-Scanner', run.code, run.stdout, run.stderr, [0, 1]);
   if (problem) return { name: 'OSV-Scanner', status: '失敗', lines: [problem] };
   const report = parseJson(run.stdout);
-  if (report === undefined) return { name: 'OSV-Scanner', status: '失敗', lines: ['JSON を解析できませんでした。'] };
+  if (!report || typeof report !== 'object' || Array.isArray(report)) return { name: 'OSV-Scanner', status: '失敗', lines: ['JSON を解析できませんでした。'] };
   const results = arrayAt(report, 'results');
   if (!results.length) {
-    return { name: 'OSV-Scanner', status: '検出なし', lines: ['対応するパッケージ情報が見つかりませんでした（対象ファイル 0 件）。'] };
+    return { name: 'OSV-Scanner', status: '対象なし', lines: ['対応するパッケージ情報が見つかりませんでした（対象ファイル 0 件）。'] };
   }
   const added: string[] = [];
   const files = new Set<string>();
@@ -164,7 +164,7 @@ async function osvScan(cwd: string, signal: AbortSignal, findings: Map<string, D
   };
 }
 
-async function semgrepScan(cwd: string, signal: AbortSignal): Promise<{ name: string; status: '検出あり' | '検出なし' | '未実行' | '失敗' | '中断'; count?: number; lines: string[] }> {
+async function semgrepScan(cwd: string, signal: AbortSignal): Promise<CheckResult> {
   const run = await runProcess('semgrep', ['scan', '--config', 'p/default', '--metrics=off', '--disable-version-check', '--json', '--error', '.'],
     signal, { cwd, timeoutMs: SOURCE_TIMEOUT_MS, maxBytes: SOURCE_MAX_BYTES });
   if (!run.started) return { name: 'Semgrep', status: '未実行', lines: ['semgrep が見つかりません（PATH を確認してください）。'] };
@@ -173,7 +173,7 @@ async function semgrepScan(cwd: string, signal: AbortSignal): Promise<{ name: st
   const cut = truncationProblem('Semgrep', run.truncated);
   if (cut) return { name: 'Semgrep', status: '失敗', lines: [cut] };
   const report = parseJson(run.stdout);
-  if (report === undefined) {
+  if (!report || !Array.isArray((report as { results?: unknown }).results)) {
     // Semgrep prints no JSON when the rules cannot be fetched; that is a failed scan, not clean source.
     return { name: 'Semgrep', status: '失敗', lines: [`結果を取得できませんでした（終了コード ${run.code ?? '不明'}）。`, oneLine(run.stderr)] };
   }
@@ -185,8 +185,8 @@ async function semgrepScan(cwd: string, signal: AbortSignal): Promise<{ name: st
     const first = errors.length ? oneLine(JSON.stringify(errors[0])) : oneLine(run.stderr);
     return { name: 'Semgrep', status: '失敗', lines: [`終了コード ${run.code} で完走しませんでした。${first ? `（${first}）` : ''}`] };
   }
-  if (!scanned.length) {
-    return { name: 'Semgrep', status: '検出なし', lines: ['検査対象のソースファイルが見つかりませんでした（対象ファイル 0 件）。'] };
+  if (!scanned.length && !errors.length && !results.length) {
+    return { name: 'Semgrep', status: '対象なし', lines: ['検査対象のソースファイルが見つかりませんでした（対象ファイル 0 件）。'] };
   }
   const lines: string[] = [];
   for (const result of results) {
@@ -202,12 +202,12 @@ async function semgrepScan(cwd: string, signal: AbortSignal): Promise<{ name: st
   }
   if (errors.length) lines.push(`解析できなかったファイル: ${errors.length}件（${oneLine(JSON.stringify(errors[0]), 160)}）`);
   return {
-    name: 'Semgrep', status: results.length ? '検出あり' : '検出なし', ...(results.length ? { count: results.length } : {}),
-    lines: results.length ? lines : [`対象ファイル ${scanned.length} 件を検査し、p/default のルールに該当しませんでした。`],
+    name: 'Semgrep', status: results.length ? '検出あり' : errors.length ? '一部未確認' : '検出なし', ...(results.length ? { count: results.length } : {}),
+    lines: results.length || errors.length ? lines : [`対象ファイル ${scanned.length} 件を検査し、p/default のルールに該当しませんでした。`],
   };
 }
 
-async function gitleaksScan(cwd: string, signal: AbortSignal): Promise<{ name: string; status: '検出あり' | '検出なし' | '未実行' | '失敗' | '中断'; count?: number; lines: string[] }> {
+async function gitleaksScan(cwd: string, signal: AbortSignal): Promise<CheckResult> {
   // --report-path - keeps the JSON on stdout; --redact=100 means the secret value never reaches us.
   const run = await runProcess('gitleaks', ['dir', '--redact=100', '--no-banner', '--no-color', '--report-format', 'json', '--report-path', '-', '--exit-code', '10', '.'],
     signal, { cwd, timeoutMs: SOURCE_TIMEOUT_MS, maxBytes: SOURCE_MAX_BYTES });
@@ -216,7 +216,7 @@ async function gitleaksScan(cwd: string, signal: AbortSignal): Promise<{ name: s
   if (run.timedOut) return { name: 'Gitleaks', status: '失敗', lines: ['時間切れです。'] };
   const cut = truncationProblem('Gitleaks', run.truncated);
   if (cut) return { name: 'Gitleaks', status: '失敗', lines: [cut] };
-  const problem = reportProblem('Gitleaks', run.code, run.stdout, run.stderr, [0, 10]);
+  const problem = reportProblem('Gitleaks', run.code, '', '', [0, 10]);
   if (problem) return { name: 'Gitleaks', status: '失敗', lines: [problem] };
   const report = parseJson(run.stdout);
   if (!Array.isArray(report)) return { name: 'Gitleaks', status: '失敗', lines: ['JSON を解析できませんでした。'] };
@@ -257,21 +257,14 @@ export interface SourceScanResult {
 }
 
 /** Run the four local scanners in the approved directory and report each verdict separately. */
-export async function runSourceChecks(cwd: string, signal: AbortSignal, write: (text: string) => void, facts: { server?: string; poweredBy?: string } = {}): Promise<SourceScanResult> {
+export async function runSourceChecks(cwd: string, signal: AbortSignal, write: (text: string) => void, facts?: { server?: string; poweredBy?: string }, selected?: string): Promise<SourceScanResult> {
   const findings = new Map<string, DependencyFinding>();
   let total = 0;
   const lines: string[] = [];
   // Trivy and OSV-Scanner overlap; their rows merge into one dependency section after both ran.
-  const dependencySteps = [
-    async () => { const result = await trivyScan(cwd, signal, findings); writeCheck(write, result); return result; },
-    async () => { const result = await osvScan(cwd, signal, findings); writeCheck(write, result); return result; },
-  ];
-  for (const step of dependencySteps) {
-    if (signal.aborted) {
-      writeCheck(write, { name: 'ソース検査', status: '中断', lines: ['残りのツールは起動しませんでした。'] });
-      return { total, lines };
-    }
-    await step();
+  for (const [name, scan] of [['trivy', trivyScan], ['osv-scanner', osvScan]] as const) {
+    if (signal.aborted || (selected && name !== selected)) continue;
+    writeCheck(write, await scan(cwd, signal, findings));
   }
   const merged = dependencyReport(findings);
   if (merged.count) {
@@ -279,19 +272,20 @@ export async function runSourceChecks(cwd: string, signal: AbortSignal, write: (
     total += merged.count;
     lines.push(...merged.lines);
   }
-  for (const step of [() => semgrepScan(cwd, signal), () => gitleaksScan(cwd, signal)]) {
+  for (const [name, scan] of [['semgrep', semgrepScan], ['gitleaks', gitleaksScan]] as const) {
+    if (selected && name !== selected) continue;
     if (signal.aborted) {
       writeCheck(write, { name: 'ソース検査', status: '中断', lines: ['残りのツールは起動しませんでした。'] });
       return { total, lines };
     }
-    const result = await step();
+    const result = await scan(cwd, signal);
     writeCheck(write, result);
     if (result.status === '検出あり') {
       total += result.count ?? 0;
       lines.push(...result.lines);
     }
   }
-  if (total > 0) {
+  if (facts && total > 0) {
     const hints: string[] = [];
     if (facts.poweredBy) hints.push(`X-Powered-By: ${oneLine(facts.poweredBy, 80)}`);
     if (facts.server) hints.push(`Server: ${oneLine(facts.server, 80)}`);

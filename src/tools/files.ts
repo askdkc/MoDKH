@@ -92,10 +92,11 @@ export const readFileTool: Tool = {
     const offset = argPositiveInt(args.offset, 'offset') ?? 1;
     const limit = argPositiveInt(args.limit, 'limit') ?? READ_DEFAULT_LIMIT;
     const lines = fs.readFileSync(abs, 'utf8').split('\n');
+    if (lines.at(-1) === '') lines.pop();
     const sliced = lines.slice(offset - 1, offset - 1 + limit);
     const body = sliced.map((l, i) => `${offset + i}: ${l}`).join('\n');
     const analysis = ctx.analyze ? await safeAnalysis(() => ctx.analyze!(abs, 'read')) : null;
-    return `${args.path} (${lines.length - 1}行中 ${offset}行目から${sliced.length}行)\n${body}${analysis ? `\n\n${analysis}` : ''}`;
+    return `${args.path} (${lines.length}行中 ${offset}行目から${sliced.length}行)\n${body}${analysis ? `\n\n${analysis}` : ''}`;
   },
 };
 

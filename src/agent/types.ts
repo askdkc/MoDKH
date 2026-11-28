@@ -57,6 +57,7 @@ export interface ToolContext {
   callId?: string;
   /** Host-only check immediately before a deferred foreground command would start. */
   commandStartBlocked?(): boolean;
+  executionRecord?: Pick<import('./tool-recording.ts').CandidateRecord, 'commandStarted' | 'accepted' | 'commandEnded' | 'skipped'>;
   /**
    * Post-effect analysis (structure, diagnostics). It runs after a successful read/write and its
    * failure must never change the tool's own result or cause a second edit.

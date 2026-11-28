@@ -1,3 +1,4 @@
+import { fileToolRecording } from '../agent/tool-recording.ts';
 import { runCyber } from './cyber.ts';
 import { completionArtPicker } from './completion-art.ts';
 import { shellCall, shellOutput } from './shell-display.ts';
@@ -629,6 +630,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       }) : undefined;
       let outcome = continueInChat ? await runAgentLoop(session.messages, {
         model: activeModel!,
+        toolRecording: fileToolRecording(session.id, message => process.stderr.write(message)),
         promptCacheKey: session.id,
         taskStart: turnStart,
         continuationState,
@@ -1017,7 +1019,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         continue;
       }
       if (/^\/cyber(?:\s|$)/.test(line)) {
-        await runCyber(line.slice(6).trim(), cwd, approval, text => ui.write(text));
+        await runCyber(line.slice(6).trim(), cwd, approval, text => ui.write(text), model);
         continue;
       }
       if (line === '/pstack' || line.startsWith('/pstack ')) {

@@ -18,7 +18,7 @@ export function browserCapability(): string {
   if (!browseExecutable()) return '';
   return '\nこのホストのPATHに browse CLI を検出しました（ブラウザ接続は未確認）。'
     + '専用 browse ツールがある場合は status から始め、通常のページ操作は許可を求めずに実行してください。'
-    + '専用ツールは status / navigate / snapshot / click / fill / screenshot / list を提供します。navigate 以外は snapshot が返した tab を渡し、ref は直前の snapshot のものを使います。'
+    + '専用ツールは status / navigate / reload / snapshot / click / fill / screenshot / list を提供します。ページ操作には navigate が返した tab を渡し、ref は直前の snapshot のものを使います。編集後は同じ tab を reload してから確認し、アニメーションの検証では新規 navigate に keepVisible:true を指定してください。'
     + '専用ツールに無い操作が必要なときだけ、browse --help と browse status --json で使い方を確認し、run_command の承認を得て browse CLI を実行します。browse execute --file <script.js> はPlaywright形式の page APIを使えるため、プロジェクトへのPlaywrightパッケージ導入は不要です。'
     + 'CLIで直接開いたタブは自動終了の対象外です。開いたタブのIDを控え、作業後に browse tabs close --tab <id> で自分が開いたものだけを閉じてください。'
     + 'require.resolve("playwright") の失敗だけでブラウザ検証不能と判断しないでください。'

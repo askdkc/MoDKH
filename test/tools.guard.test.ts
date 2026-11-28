@@ -203,6 +203,18 @@ test('list / search / read が基本の読み取りを満たす', async () => {
   }
 });
 
+test('read_file reports exactly the numbered lines, including a final unterminated line', async () => {
+  const root = tmpRoot();
+  try {
+    for (const [content, count] of [['a\nb\n', 2], ['a\nb', 2], ['a\n\n', 2], ['\n', 1], ['', 0]] as const) {
+      fs.writeFileSync(path.join(root, 'page'), content);
+      const result = await run(root, new FakeGate(true), 'read_file', { path: 'page' });
+      assert.ok(result.output.startsWith(`page (${count}行中 1行目から${count}行)\n`), result.output);
+      assert.equal(result.output.match(/^\d+: /gm)?.length ?? 0, count);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('list_files treats an empty path as the root without widening the workspace boundary', async () => {
   const parent = tmpRoot();
   const root = path.join(parent, 'project');

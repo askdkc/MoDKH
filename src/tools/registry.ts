@@ -63,10 +63,12 @@ export class ToolRegistry {
   ): Promise<ToolResult> {
     const base = { callId: call.id, name: call.name };
     if (ctx.signal?.aborted) {
+      ctx.executionRecord?.skipped('aborted');
       return { ...base, status: 'not-executed', output: '中断済みのため実行していない' };
     }
     const tool = this.tools.get(call.name);
     if (tool === undefined) {
+      ctx.executionRecord?.skipped('preflight_rejected');
       return {
         ...base,
         status: 'error',
@@ -74,12 +76,14 @@ export class ToolRegistry {
       };
     }
     if (call.args === null || typeof call.args !== 'object' || Array.isArray(call.args)) {
+      ctx.executionRecord?.skipped('preflight_rejected');
       return { ...base, status: 'error', output: '引数は JSON オブジェクトで渡す' };
     }
     const properties = tool.parameters.properties;
     if (properties !== null && typeof properties === 'object' && !Array.isArray(properties)) {
       const unknown = Object.keys(call.args).filter(key => !Object.prototype.hasOwnProperty.call(properties, key));
       if (unknown.length) {
+        ctx.executionRecord?.skipped('preflight_rejected');
         return { ...base, status: 'error', output: `[INVALID_ARGS] 未知の引数: ${unknown.join(', ')}` };
       }
     }
@@ -92,6 +96,7 @@ export class ToolRegistry {
       return { ...base, status: output.status, output: output.output, ...(output.image && { image: output.image }) };
     } catch (e) {
       if (e instanceof ToolError && (e.code === 'NOT_EXECUTED' || e.code === 'DENIED')) {
+        ctx.executionRecord?.skipped(e.code === 'DENIED' ? 'approval_denied' : 'preflight_rejected');
         return { ...base, status: e.code === 'DENIED' ? 'error' : 'not-executed', output: `[${e.code}] ${e.message}` };
       }
       if (ctx.signal?.aborted || (e instanceof ToolError && (e.code === 'ABORTED' || e.code === 'RESULT_UNKNOWN'))) {

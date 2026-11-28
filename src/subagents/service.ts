@@ -1,3 +1,4 @@
+import { fileToolRecording } from '../agent/tool-recording.ts';
 import fs from 'node:fs';
 import { DEFAULT_SUBAGENT_LIMIT, parseSubagentLimit } from './limits.ts';
 import { EditVerification } from './verification.ts';
@@ -379,6 +380,7 @@ export class SubagentService {
         };
         const outcome = await runAgentLoop(child.messages, {
           // Share cache routing with the parent without sharing its messages or tool permissions.
+          toolRecording: fileToolRecording(child.id, message => process.stderr.write(message)),
           promptCacheKey: record.parentSessionId,
           model, registry: new ToolRegistry(effectiveTools), root: edit?.root ?? this.opts.root,
           skills: definition.skillPolicy !== 'none', maxTurns: definition.maxTurns,

@@ -13,10 +13,13 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 /** A single foreground call may run longer than the default, but never without a bound. */
 const MAX_TIMEOUT_MS = 600_000;
 
-function positiveInt(v: unknown, name: string, max: number): number | undefined {
+function positiveInt(v: unknown, name: string, max: number, ctx: Parameters<Tool['execute']>[1]): number | undefined {
   if (v === undefined) return undefined;
   const n = typeof v === 'string' && /^\d+$/.test(v.trim()) ? Number(v.trim()) : typeof v === 'number' ? v : Number.NaN;
-  if (!Number.isSafeInteger(n) || n < 1 || n > max) throw new ToolError('INVALID_ARGS', `${name} は1〜${max}の整数で指定する`);
+  if (!Number.isSafeInteger(n) || n < 1 || n > max) {
+    ctx.executionRecord?.skipped('preflight_rejected');
+    throw new ToolError('INVALID_ARGS', `${name} は1〜${max}の整数で指定する`);
+  }
   return n;
 }
 
@@ -97,23 +100,32 @@ export const runCommandTool: Tool = {
   async execute(args, ctx) {
     function checkStart() {
       if (ctx.commandStartBlocked?.()) {
+        ctx.executionRecord?.skipped('guard_blocked');
         throw new ToolError('NOT_EXECUTED', 'New input arrived before the guarded command started.');
       }
     }
     checkStart();
-    const prepared = await authorize(args, ctx);
+    const prepared = await authorize(args, ctx).catch(error => {
+      ctx.executionRecord?.skipped(error instanceof ToolError && error.code === 'DENIED' ? 'approval_denied'
+        : ctx.signal?.aborted ? 'aborted' : 'preflight_rejected');
+      throw error;
+    });
     checkStart();
     if (args.run_in_background === true) {
       // A background job has no deadline: it runs until it exits or job_kill stops it.
-      if (!ctx.jobs) throw new ToolError('INVALID_ARGS', 'バックグラウンド実行が有効でない');
-      const view = ctx.jobs.start(prepared);
+      if (!ctx.jobs) {
+        ctx.executionRecord?.skipped('preflight_rejected');
+        throw new ToolError('INVALID_ARGS', 'バックグラウンド実行が有効でない');
+      }
+      const view = ctx.jobs.start(prepared, ctx.executionRecord);
+      ctx.executionRecord?.accepted(view.id);
       return [
         `[job_id: ${view.id}] [status: ${view.status}]`,
         `作業場所: ${view.cwd}`,
         BACKGROUND_JOB_HELP,
       ].join('\n');
     }
-    const timeoutMs = positiveInt(args.timeoutMs, 'timeoutMs', MAX_TIMEOUT_MS) ?? DEFAULT_TIMEOUT_MS;
+    const timeoutMs = positiveInt(args.timeoutMs, 'timeoutMs', MAX_TIMEOUT_MS, ctx) ?? DEFAULT_TIMEOUT_MS;
     // A foreground command that reaches its deadline keeps running as a job instead of being
     // killed: the work already done is not thrown away, and the model keeps a handle to it.
     // The call must return AT the deadline, so it resolves on whichever happens first.
@@ -123,10 +135,12 @@ export const runCommandTool: Tool = {
       : new Promise<JobView>(resolve => { resolvePromoted = resolve; });
     const shellProcess = new ShellProcess(prepared.command, prepared.cwd, {
       shell: prepared.shell,
+      executionRecord: ctx.executionRecord,
       timeoutMs,
       ...(ctx.jobs === undefined ? {} : {
         onTimeout: (process: ShellProcess) => {
           const view = ctx.jobs!.adopt(process, prepared);
+          ctx.executionRecord?.accepted(view.id);
           resolvePromoted?.(view);
         },
       }),

@@ -1,3 +1,4 @@
+import { cookieAttributes, responseEvidence, securityHeaders, type ResponseEvidence } from './cyber-review.ts';
 import { isIP } from 'node:net';
 import { displayUrl, type UrlTarget } from './cyber-url.ts';
 import { oneLine, writeCheck } from './cyber-report.ts';
@@ -6,16 +7,6 @@ import { runProcess, type ProcessRun } from './cyber-process.ts';
 const HTTP_TIMEOUT_MS = 15_000;
 const TLS_TIMEOUT_MS = 15_000;
 const NMAP_TIMEOUT_MS = 25_000;
-
-/** Headers a hardened public site is expected to send. */
-const SECURITY_HEADERS = [
-  'content-security-policy',
-  'x-content-type-options',
-  'referrer-policy',
-  'permissions-policy',
-  'x-frame-options',
-  'cross-origin-opener-policy',
-] as const;
 
 /** Paths that must not answer 200 on a public site. HEAD only; no body is fetched. */
 const EXPOSURE_PATHS = ['.env', '.git/config', 'server-status', '.DS_Store'] as const;
@@ -151,14 +142,19 @@ async function portSweep(address: string | undefined, cwd: string, signal: Abort
   if (!address) {
     writeCheck(write, { name: 'Nmap 公開ポート', status: '失敗', lines: ['対象ホストの IP アドレスを解決できませんでした。'] });
     return;
-  }  const run = await runProcess('nmap', ['--unprivileged', '-sT', '-Pn', '-n', '-T4', '--host-timeout', '20s',
+  }
+  const run = await runProcess('nmap', ['--unprivileged', '-sT', '-Pn', '-n', '-T4', '--host-timeout', '20s',
     '-p', SWEEP_PORTS, '-oG', '-', address], signal, { cwd, timeoutMs: NMAP_TIMEOUT_MS });
   if (!run.started) { writeCheck(write, { name: 'Nmap 公開ポート', status: '未実行', lines: [missingMessage('nmap')] }); return; }
   if (run.aborted) { writeCheck(write, { name: 'Nmap 公開ポート', status: '中断', lines: ['ポート走査を中止しました。'] }); return; }
   if (run.timedOut) { writeCheck(write, { name: 'Nmap 公開ポート', status: '失敗', lines: ['時間切れです。'] }); return; }
-  const line = run.stdout.split('\n').find(entry => entry.startsWith('Host:'));
+  const line = run.stdout.split('\n').find(entry => entry.startsWith('Host:') && /\t(?:Ports|Ignored State):/.test(entry));
+  if (run.code !== 0 || run.truncated || !line) {
+    writeCheck(write, { name: 'Nmap 公開ポート', status: '失敗', lines: ['ポートの確認結果を取得できませんでした。'] });
+    return;
+  }
   const open: { port: string; service: string }[] = [];
-  for (const entry of line?.split('\tPorts: ')[1]?.split(', ') ?? []) {
+  for (const entry of line.split('\tPorts: ')[1]?.split(', ') ?? []) {
     const [port, state, , , service] = entry.split('/');
     if (state === 'open' && port) open.push({ port, service: service ?? '' });
   }
@@ -235,7 +231,7 @@ async function getRequest(target: UrlTarget, signal: AbortSignal): Promise<Proce
   // One GET carries the CORS probe, the body-content checks, and the header read when HEAD is
   // refused. Redirects are not followed, so no host other than the approved one is contacted.
   return runProcess('curl', ['--disable', '--globoff', '--silent', '--show-error', '--proto', '=http,https',
-    '--max-time', '15', '--max-filesize', '262144', '--max-redirs', '0', '--dump-header', '-',
+    '--max-time', '15', '--suppress-connect-headers', '--max-filesize', '262144', '--max-redirs', '0', '--dump-header', '-',
     '-H', 'Origin: https://modkh.invalid', '-H', 'Accept: text/html,application/xhtml+xml,*/*;q=0.5',
     '--', target.url.href], signal, { timeoutMs: HTTP_TIMEOUT_MS, maxBytes: 320 * 1024 });
 }
@@ -260,6 +256,7 @@ async function exposureProbes(target: UrlTarget, signal: AbortSignal): Promise<{
 }
 
 interface HttpObservation {
+  evidence?: ResponseEvidence;
   fields: [string, string][];
 }
 
@@ -306,7 +303,7 @@ async function httpChecks(target: UrlTarget, signal: AbortSignal, write: (text: 
   }
   lines.unshift(`HTTP ${status}`);
 
-  for (const name of SECURITY_HEADERS) {
+  for (const name of securityHeaders) {
     if (name === 'x-frame-options' && headerValue(fields, 'content-security-policy')?.includes('frame-ancestors')) {
       lines.push('X-Frame-Options: CSP の frame-ancestors で代替');
       continue;
@@ -334,11 +331,11 @@ async function httpChecks(target: UrlTarget, signal: AbortSignal, write: (text: 
   const cookies = fields.filter(([key]) => key === 'set-cookie').map(([, value]) => value);
   for (const cookie of cookies) {
     const name = cookie.split('=', 1)[0].trim();
-    const attrs = cookie.toLowerCase();
+    const attrs = cookieAttributes(cookie);
     const lacking = [
-      ...(https && !attrs.includes('secure') ? ['Secure'] : []),
-      ...(attrs.includes('httponly') ? [] : ['HttpOnly']),
-      ...(attrs.includes('samesite') ? [] : ['SameSite']),
+      ...(https && !attrs.has('secure') ? ['Secure'] : []),
+      ...(attrs.has('httponly') ? [] : ['HttpOnly']),
+      ...(attrs.has('samesite') ? [] : ['SameSite']),
     ];
     if (lacking.length) issues.push(`Cookie ${name}: ${lacking.join(' / ')} がありません。`);
   }
@@ -405,7 +402,10 @@ async function httpChecks(target: UrlTarget, signal: AbortSignal, write: (text: 
     name: 'HTTP', status: issues.length ? '検出あり' : '検出なし',
     ...(issues.length ? { count: issues.length } : {}), lines: [...lines, ...issues],
   });
-  return { fields };
+  // Use only a successful, complete GET for model observations. HEAD may have different headers.
+  const evidence = get.code === 0 && !get.truncated && parsed.status && /^[2-5]\d\d$/.test(parsed.status)
+    ? responseEvidence(Number(parsed.status), https, parsed.fields) : undefined;
+  return { fields, evidence };
 }
 
 async function nucleiCheck(target: UrlTarget, signal: AbortSignal, write: (text: string) => void): Promise<void> {
@@ -454,6 +454,7 @@ async function nucleiCheck(target: UrlTarget, signal: AbortSignal, write: (text:
 /** What the URL side learned, so the source section can be read next to it. */
 export interface UrlFacts {
   display: string;
+  evidence?: ResponseEvidence;
   server?: string;
   poweredBy?: string;
   tls?: { verified: boolean; daysLeft?: number; protocol?: string };
@@ -474,6 +475,7 @@ export async function runUrlChecks(target: UrlTarget, cwd: string, signal: Abort
   const http = await httpChecks(target, signal, write);
   if (signal.aborted) return facts;
   await nucleiCheck(target, signal, write);
+  facts.evidence = http.evidence;
   const server = headerValue(http.fields, 'server');
   const poweredBy = headerValue(http.fields, 'x-powered-by');
   if (server) facts.server = server;
