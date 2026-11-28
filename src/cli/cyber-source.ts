@@ -93,10 +93,10 @@ async function trivy(options: SourceStageOptions): Promise<Check> {
       const id = textAt(item, 'ID') ?? '?';
       const title = textAt(item, 'Title') ?? '';
       const severity = textAt(item, 'Severity');
-      const file = textAt(item, 'Location');
       const location = isRecord(item) && isRecord(item.Location)
-        ? `${textAt(item.Location, 'Filename') ?? ''}:${textAt(item.Location, 'StartLine') ?? ''}` : (file ?? '');
-      lines.push(`${id}${severity ? ` [${severity}]` : ''} ${oneLine(title, 120)} ${location}`);
+        ? `${textAt(item.Location, 'Filename') ?? ''}:${textAt(item.Location, 'StartLine') ?? ''}`
+        : '';
+      lines.push(`${id}${severity ? ` [${severity}]` : ''} ${oneLine(title, 120)} ${location}`.trimEnd());
     }
   }
   const count = vulnerabilities + misconfigurations;
