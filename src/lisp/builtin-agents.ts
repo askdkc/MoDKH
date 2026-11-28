@@ -34,7 +34,8 @@ export function builtinMicroagents(): readonly SessionDefinition[] {
     (['outline', 'definition', 'references', 'diagnostics'] as const).map(kind => observationRole(language, kind)));
   roles.push(...['php', 'js', 'ts', 'html', 'css'].map(language => observationRole(language, 'syntax-search')),
     observationRole('tailwindcss', 'hover'), observationRole('tailwindcss', 'diagnostics'));
-  builtins = validateDefinitions(roles, '').map(({ descriptor, definition }) => ({
+  builtins = validateDefinitions([...roles, { id: 'micro-goki', title: '後鬼（Lean）', tool: 'verify_lean',
+    language: 'lean', 'task-kind': 'verify', enabled: true, instruction: '指定された証明元を verify_lean に渡し、ホストが返した proofStatus を報告する。' }], '').map(({ descriptor, definition }) => ({
     descriptor: {
       ...descriptor, id: `modkh-${descriptor.id}`, version: 'builtin', builtin: true,
       digest: sha256(JSON.stringify({ descriptor, definition })),

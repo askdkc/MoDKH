@@ -1,3 +1,4 @@
+import { formalDispatchOrder } from '../subagents/request.ts';
 import { TurnToolRecords, type CandidateRecord, type ToolRecording } from './tool-recording.ts';
 import { streamWithReconnect } from '../model/reconnect.ts';
 import { isContextLimitError, projectToolImages, utf8Prefix, utf8Suffix } from '../model/context.ts';
@@ -13,6 +14,7 @@ import { runCommandTool } from '../tools/run.ts';
 import { prepareSkillContext, type SkillContext } from './skills.ts';
 import { projectCompacted, type CompactionState } from './compaction.ts';
 import { collectWorkProgress, interruptionDetail, reportChecks } from './work-progress.ts';
+import { RepairAttempts } from './repair-attempts.ts';
 
 export interface LoopHooks {
   /** Selected guidance and byte size, not a provider token/cost measurement. */
@@ -224,6 +226,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     .filter(isNative).map(tool => tool.name));
   let recoveredReceipts: Map<string, ToolResult> | undefined;
   const canEdit = toolSpecs.some(t => t.name === 'edit_file');
+  let repairs = new RepairAttempts();
   let inspectionRounds = 0;
   let requestedVisibleAnswer = false;
   let truncatedResponse: AgentMessage | undefined;
@@ -252,6 +255,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
   const appendFollowups = (): boolean => {
     const followups = opts.takeFollowups?.() ?? [];
     for (const message of followups) append(typeof message === 'string' ? { role: 'user', content: message } : message);
+    if (followups.length) repairs = new RepairAttempts();
     return followups.length > 0;
   };
   for (let turn = 0; turn < maxTurns; turn++) {
@@ -269,8 +273,8 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     let text = '';
     let receivedReasoning = false;
     let continuation: ProviderContinuation | undefined;
-    const calls: ToolCall[] = [];
-    const candidates: CandidateRecord[] = [];
+    let calls: ToolCall[] = [];
+    let candidates: CandidateRecord[] = [];
     let stopReason: Extract<ModelEvent, { type: 'finish' }>['stopReason'] | undefined;
     let errorMessage: string | undefined;
     let rejectedToolHistory = false;
@@ -446,21 +450,29 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
         : { outcome: 'error', errorMessage: 'ツール終了イベントに呼び出しがない' };
     }
     let uncertain: { call: ToolCall; result: ToolResult } | undefined;
+    const order = !scope && !recoveredReceipts && opts.subagents && formalDispatchOrder(calls);
+    if (order) {
+      calls = order.map(index => calls[index]);
+      if (records) candidates = order.map(index => candidates[index]);
+    }
     let freshEditSucceeded = false;
     const newInputQueued = () => Boolean(opts.followupSignal?.().aborted
       || opts.jobs?.hasNotices || opts.subagents?.hasNotices || opts.subagents?.hasUnknown);
     for (const [index, call] of calls.entries()) {
       const candidate = candidates[index];
       const terminalError = opts.terminalToolBlock?.();
-      if (terminalError) {
+      const question = !terminalError && !uncertain && !opts.signal.aborted && !ledger.has(call.id)
+        ? repairs.questionBefore(call) : undefined;
+      const block = terminalError || question;
+      if (block) {
         candidates.slice(index).forEach((pending, offset) => {
           pending.expectReceipt(messages.length, offset);
           pending.emit('not-executed', 'workflow_stopped');
         });
         append({ role: 'tool', results: calls.slice(index).map(pending => ({
-          callId: pending.id, name: pending.name, status: 'not-executed', output: terminalError,
+          callId: pending.id, name: pending.name, status: 'not-executed', output: block,
         })) });
-        return { outcome: 'error', errorMessage: terminalError };
+        return { outcome: question ? 'interrupted' : 'error', errorMessage: block };
       }
       candidate?.expectReceipt(messages.length);
       if (scope && (index > 0 || call.name !== scope.tool || !scope.accepts(call))) {
@@ -543,6 +555,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
         });
         ledger.set(call.id, { call, result });
         candidate?.returned(result);
+        repairs.observe(call, result);
         if (operationKey && result.status !== 'not-executed') recoveredReceipts?.set(operationKey, result);
         freshEditSucceeded = index === 0 && call.name === 'edit_file' && result.status === 'ok';
       }

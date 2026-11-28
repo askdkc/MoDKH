@@ -16,7 +16,7 @@ import { fields, object, text } from '../plugins/package.ts';
 import type { AgentSetting } from './settings.ts';
 import type { DelegationRecord, DelegationRequest, SubagentHandle, SubagentResult } from './types.ts';
 import { ExternalProcesses } from './processes.ts';
-import { parseDelegation, delegationDigest } from './request.ts';
+import { parseDelegation, delegationDigest, formalCounterpart } from './request.ts';
 import { headAssignment, type HeadInputs } from './head-assignment.ts';
 export { parseDelegation } from './request.ts';
 
@@ -204,6 +204,17 @@ export class SubagentService {
       if (live) return live;
       const result: SubagentResult = prior.result ?? { agentId: prior.childSessionId, runId: prior.runId, status: 'unknown', text: '', cleanup: 'unknown', diagnostic: '前回の委譲に結果がない。自動再実行しない。' };
       return { agentId: result.agentId, runId: result.runId, result: Promise.resolve(result), cancel: async () => {} };
+    }
+    // Wait outside admission: the second verifier must not reserve a slot or claim the
+    // workspace until the first one's final journal write and writer cleanup have settled.
+    const other = formalCounterpart(request.pluginId);
+    if (other) {
+      const predecessor = records.find(r => r.pluginId === other && this.handles.has(r.runId));
+      if (predecessor) {
+        await waitFor(this.handles.get(predecessor.runId)!.result, owner.signal);
+        // Recheck replay identity, unknown outcomes and capacity against the new state.
+        return this.start(raw, owner);
+      }
     }
     const rootId = parent.rootSessionId ?? parent.id;
     const active = activeRoots.get(rootId) ?? new Set<string>();

@@ -3,7 +3,7 @@ import { runCyber } from './cyber.ts';
 import { completionArtPicker } from './completion-art.ts';
 import { shellCall, shellOutput } from './shell-display.ts';
 import { ToolDisplay } from './tool-display.ts';
-import { headCheckCompletion } from './head-checks.ts';
+import { headCheckCompletion, pstackFormalChecks } from './head-checks.ts';
 import { parseWorkspaceVerification, workspaceVerification, readWrittenVersions } from './workspace-verification.ts';
 import fs from 'node:fs';
 import { loadLispConfiguration } from '../lisp/config.ts';
@@ -105,6 +105,7 @@ const SYSTEM_PROMPT =
   + '前景のまま制限時間に達した場合もジョブへ移り、job_id が返る。'
   + 'コマンドはOSユーザー権限で動くため、承認内容と作業対象を守る。'
   + '依頼と会話履歴から目的を特定できないときだけ、一度聞き返す。'
+  + '同じ問題で修正と確認を3回繰り返しても改善を示せない場合は作業を止める。試した内容と残った問題を伝え、次の方針をユーザーに確認する。'
   + '目的が分かっていて対象や証拠が不足しているときは、現在の作業ルートと利用可能なツールで先に確認する。'
   + 'CI失敗の原因を聞かれたら、対象指定がなければ現在のGitリポジトリ・ブランチ・リモートを確認し、該当するCI実行、失敗ジョブ、ログの最初の原因エラーまで同じターンで調べる。'
   + '対象が複数残るかログにアクセスできない場合は、確認した範囲と不足情報を示して尋ねる。'
@@ -596,13 +597,15 @@ export async function runChat(opts: ChatOptions): Promise<void> {
           if (output.length > 13) ui.write(`  … 残り${output.length - 13}行（全文はセッション記録）\n`);
         },
       };
-      const registry = new ToolRegistry([...parentTools, ...subagentTools(subagents)], () => ui.setTurnToolCount?.(++turnToolCount));
+      const turnSkills = !direct && !lisp?.headInstruction ? prepareSkillContext(input, cwd, pstackEnabled ? { include: ['pstack'] } : {}) : undefined;
+      const formalPlan = !direct && (pstackEnabled || turnSkills?.selected.includes('pstack')) ? pstackFormalChecks(cwd, args['lean-contract'], boundInputs) : undefined;
+      const registry = new ToolRegistry([...parentTools, ...subagentTools(subagents), ...(formalPlan ? [formalPlan.tool] : [])], () => ui.setTurnToolCount?.(++turnToolCount));
       const directOutcome = direct && await runDirectAgent(direct, session, registry, cwd, ac.signal, approval, ui);
       const continueInChat = !directOutcome || (directOutcome.outcome === 'complete' && followups.length > 0 && !ac.signal.aborted);
-      const turnSkills = continueInChat && !lisp?.headInstruction ? prepareSkillContext(input, cwd, pstackEnabled ? { include: ['pstack'] } : {}) : undefined;
       if (turnSkills && !lisp) sessionSkills = mergeSkillContext(sessionSkills, turnSkills);
       const guidance = lisp ? turnSkills : sessionSkills;
-      const system = headSystem + (guidance?.text ?? '');
+      const system = headSystem + (guidance?.text ?? '') + (formalPlan
+        ? '\npstack: 状態遷移・並行処理の不変条件や定理について形式検証が必要と判断したら、対象に沿ったモデル JSON と Lean 証明元を用意し、require_formal_checks で両方のパスを指定する。ホストが完了前に前鬼と後鬼を順に呼ぶ。単純な変更、説明のみの依頼、形式検証を除外した依頼には使わない。' : '');
       if (continueInChat && !lisp && guidance && !ac.signal.aborted) {
         if (guidance.selected.length) ui.write(`(参考手順: ${guidance.selected.join(', ')} / ${guidance.bytes} bytes)\n`);
         for (const warning of guidance.warnings) ui.write(`(スキル: ${warning})\n`);
@@ -615,7 +618,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       let reportAt: number | undefined;
       const compactWork = async () => {
         const signal = AbortSignal.any([ac.signal, followupWake.signal, AbortSignal.timeout(60_000)]);
-        const reviewed = canDeliver && activeModel && !subagents.hasPending && !followups.length
+        const reviewed = canDeliver && !formalPlan?.required && activeModel && !subagents.hasPending && !followups.length
           ? await reviewToolWork(activeModel, session.messages, session.compaction, turnStart, signal, session.id,
             files => readWrittenVersions(cwd, files), onUsage)
           : { state: compactToolWork(session.messages, session.compaction, turnStart), ready: false };
@@ -634,12 +637,12 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const compactToolTurn = async () => {
         if (usedTools && !ac.signal.aborted) {
           if (!direct && !reportRequested()) return compactWork();
-          if (canDeliver && !direct && !subagents.hasPending) return deliver();
+          if (canDeliver && !formalPlan?.required && !direct && !subagents.hasPending) return deliver();
           if (saveLocalCompaction()) return { outcome: 'interrupted' as const, errorMessage: WORKFLOW_COMPACT_PAUSE };
         }
       };
       const headChecks = continueInChat ? headCheckCompletion({
-        config: lisp, input, session, registry, root: cwd, signal: ac.signal,
+        config: lisp, pstack: formalPlan, input, session, registry, root: cwd, signal: ac.signal,
         approval, onToolCall: hooks.onToolCall, onToolResult: hooks.onToolResult,
       }) : undefined;
       let outcome = continueInChat ? await runAgentLoop(session.messages, {
@@ -658,7 +661,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         approval,
         hooks,
         checkpoint,
-        reportFromChecks: () => reportAt === session.messages.length && !followups.length && !subagents.hasPending
+        reportFromChecks: () => !formalPlan?.required && reportAt === session.messages.length && !followups.length && !subagents.hasPending
           && !subagents.hasNotices && !jobs.hasNotices,
         ...(session.compaction ? { compaction: session.compaction } : {}),
         ...(canAutoCompact && !direct ? { recoverContextLimit: () =>
@@ -712,10 +715,11 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         followupSignal: () => followupWake.signal,
         guardedEditCheck: process.env.MODKH_EXPERIMENT_GUARDED_EDIT_CHECK === '1',
         ...headChecks?.hooks,
+        ...(formalPlan && { holdAnswerUntilComplete: true }),
         ...(workspaceCheck ? {
-          beforeComplete: () => jobs.list().some(job => job.status === 'running' || job.status === 'stopping')
+          beforeComplete: async () => (await headChecks?.hooks.beforeComplete()) ?? (jobs.list().some(job => job.status === 'running' || job.status === 'stopping')
             ? Promise.resolve({ errorMessage: '最終差分を未検証: バックグラウンドジョブが終了していません。' })
-            : workspaceCheck.beforeComplete(),
+            : workspaceCheck.beforeComplete()),
           holdAnswerUntilComplete: true,
         } : {}),
         analyze,
@@ -724,7 +728,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         jobs,
         ...(reasoningLevel ? { reasoning: reasoningLevel } : {}),
       }) : directOutcome;
-      if (!delivering && canAutoCompact && reportRequested() && !ac.signal.aborted && outcome.outcome === 'error' && isContextLimitError(outcome.errorMessage)) {
+      if (!formalPlan?.required && !delivering && canAutoCompact && reportRequested() && !ac.signal.aborted && outcome.outcome === 'error' && isContextLimitError(outcome.errorMessage)) {
         if (canDeliver && !direct && !subagents.hasPending && session.messages.some(m => m.role === 'tool')) outcome = await deliver();
         else if (saveLocalCompaction()) {
           if (!canDeliver || direct || subagents.hasPending) outcome = { outcome: 'interrupted', errorMessage: WORKFLOW_COMPACT_PAUSE };

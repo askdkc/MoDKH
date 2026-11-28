@@ -219,3 +219,75 @@ fi\n`);
   await chat(root, retry, 'Continue the same task.', session.id);
   assert.equal(fs.readFileSync(path.join(root, 'attempts'), 'utf8'), 'click\n', 'equivalent click must not be dispatched');
 });
+
+test('CLI pauses before a fourth repair and accepts a new direction in the same session', async t => {
+  const { root } = workspace(t, '');
+  fs.writeFileSync(path.join(root, 'value.txt'), '0');
+  const edit = (i: number): ToolCall => ({ id: 'edit-' + i, name: 'edit_file',
+    args: { path: 'value.txt', old_string: String(i - 1), new_string: String(i) } });
+  const calls = [1, 2, 3].flatMap(i => [edit(i), { id: 'check-' + i, name: 'run_command',
+    args: { command: 'echo mismatch && exit 1' } }]).concat(edit(4));
+  let resumed = false;
+  const model: Model = { id: modelId, async *stream(request): AsyncIterable<ModelEvent> {
+    resumed = request.messages.some(m => m.role === 'user' && m.content === 'Keep the current value.');
+    const call = calls.shift();
+    if (call) yield { type: 'tool-call', call };
+    else yield { type: 'text-delta', text: 'Done.' };
+    yield { type: 'finish', stopReason: call ? 'tool-calls' : 'stop' };
+  } };
+  const inputs = ['Fix the mismatch.', 'Keep the current value.', '/exit'];
+  let output = '';
+  await runChat({ args: { model: model.id, cwd: root }, modelFactory: () => model, terminal: {
+    interactive: false, next: async () => inputs.shift() ?? null, write(text) { output += text; }, unread() {},
+    ask: async () => null, confirm: async () => 'y', choose: async () => null, showPage: async () => {},
+    setModel() {}, close() {},
+  } });
+  assert.equal(fs.readFileSync(path.join(root, 'value.txt'), 'utf8'), '3', output);
+  assert.match(output, /修正を続けますか/);
+  assert.equal(resumed, true);
+});
+
+test('visual retries pause only after three edited revisions of the same view', async t => {
+  const { root } = workspace(t, 'echo unchanged');
+  fs.writeFileSync(path.join(root, 'value.txt'), '0');
+  fs.writeFileSync(path.join(root, 'preview.png'), Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aTioAAAAASUVORK5CYII=', 'base64'));
+  const calls: ToolCall[] = [];
+  for (let i = 1; i <= 4; i++) {
+    calls.push({ id: 'edit-' + i, name: 'edit_file',
+      args: { path: 'value.txt', old_string: String(i - 1), new_string: String(i) } });
+    for (let j = 0; j < 3; j++) calls.push({
+      id: 'view-' + i + '-' + j, name: 'view_image', args: { path: 'preview.png' },
+    });
+  }
+  const model: Model = { id: modelId, async *stream(): AsyncIterable<ModelEvent> {
+    const call = calls.shift();
+    if (call) yield { type: 'tool-call', call };
+    else yield { type: 'text-delta', text: 'Done.' };
+    yield { type: 'finish', stopReason: call ? 'tool-calls' : 'stop' };
+  } };
+  const output = await chat(root, model, 'Improve the preview.');
+  assert.match(output, /修正を続けますか/);
+  assert.equal(fs.readFileSync(path.join(root, 'value.txt'), 'utf8'), '3');
+});
+
+test('changing failure counts and a passing check allow the next edit', async t => {
+  const { root } = workspace(t, '');
+  fs.writeFileSync(path.join(root, 'remaining'), '5');
+  const calls: ToolCall[] = [];
+  for (let i = 4; i >= 0; i--) {
+    calls.push({ id: 'repair-' + i, name: 'edit_file',
+      args: { path: 'remaining', old_string: String(i + 1), new_string: String(i) } },
+    { id: 'verify-' + i, name: 'run_command', args: { command: 'cat remaining && test "$(cat remaining)" = 0' } });
+  }
+  const model: Model = { id: modelId, async *stream(): AsyncIterable<ModelEvent> {
+    const call = calls.shift();
+    if (call) yield { type: 'tool-call', call };
+    else yield { type: 'text-delta', text: 'Finished.' };
+    yield { type: 'finish', stopReason: call ? 'tool-calls' : 'stop' };
+  } };
+  const output = await chat(root, model, 'Resolve the remaining failures.');
+  assert.doesNotMatch(output, /修正を続けますか/);
+  assert.match(output, /Finished\./);
+  assert.equal(fs.readFileSync(path.join(root, 'remaining'), 'utf8'), '0');
+});

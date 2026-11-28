@@ -1,3 +1,4 @@
+import type { ToolCall } from '../agent/types.ts';
 import { createHash } from 'node:crypto';
 import { fields, object, pluginId, text } from '../plugins/package.ts';
 import type { DelegationRequest } from './types.ts';
@@ -34,4 +35,31 @@ export function parseDelegation(value: unknown): DelegationRequest {
 
 export function delegationDigest(request: DelegationRequest): string {
   return createHash('sha256').update(JSON.stringify(request)).digest('hex');
+}
+
+export function formalCounterpart(id: unknown): string | undefined {
+  switch (id) {
+    case 'micro-goki': return 'micro-zenki';
+    case 'micro-zenki': return 'micro-goki';
+    case 'modkh-micro-goki': return 'modkh-micro-zenki';
+    case 'modkh-micro-zenki': return 'modkh-micro-goki';
+  }
+}
+
+/** For adjacent explicit formal delegations the host checks the finite model first.
+ * Return dispatch indices so provider history and recording ordinals stay in emission order. */
+export function formalDispatchOrder(calls: ToolCall[]): number[] | undefined {
+  let order: number[] | undefined;
+  const isDelegation = (call: ToolCall) => ['start_subagent', 'run_subagent'].includes(call.name) && call.args?.formalInput;
+  for (let i = 1; i < calls.length; i++) {
+    const first = calls[i - 1], second = calls[i];
+    if (!isDelegation(first) || !isDelegation(second)) continue;
+    const id = first.args.pluginId;
+    if ((id === 'micro-goki' || id === 'modkh-micro-goki') && second.args.pluginId === formalCounterpart(id)) {
+      order ??= calls.map((_, index) => index);
+      order[i - 1] = i;
+      order[i] = i - 1;
+    }
+  }
+  return order;
 }
