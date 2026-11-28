@@ -78,65 +78,6 @@ test('startup clears the screen and centers the welcome like the old design', ()
   } finally { t.ui.close(); }
 });
 
-/** isTTY 指定の入力でOSC返信を実際に流し、打ち込まれないことを確認する。 */
-function ttyTerminal(columns = 100, rows = 30) {
-  const savedNoColor = process.env.NO_COLOR;
-  delete process.env.NO_COLOR; // 背景検出を有効にする
-  const input = new PassThrough() as unknown as ReadStream & { isTTY?: boolean };
-  input.isRaw = false;
-  input.isTTY = true;
-  input.setRawMode = (raw) => { input.isRaw = raw; return input; };
-  const output = new PassThrough() as unknown as WriteStream;
-  output.columns = columns; output.rows = rows;
-  let screen = '';
-  output.on('data', chunk => { screen += chunk.toString(); });
-  const ui = new TerminalUI('/workspace', input, output);
-  const finish = (): void => {
-    if (savedNoColor === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = savedNoColor;
-  };
-  return { ui, input, output, screen: () => screen, finish,
-    text: () => screenText(screenFrom(screen, Math.max(6, output.rows || 24))),
-    key: (name: string, value = '', ctrl = false) => input.emit('keypress', value, { name, ctrl }) };
-}
-
-test('the OSC background reply never lands in the input box', async () => {
-  const t = ttyTerminal();
-  try {
-    const line = t.ui.next();
-    t.input.write('garbage'); // ユーザーの打鍵はプローブ中でも通常通り入る
-    await new Promise(resolve => setTimeout(resolve, 20));
-    assert.match(t.text(), /garbage/, 'real typing is not suppressed');
-    t.input.write('\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\');
-    await new Promise(resolve => setTimeout(resolve, 20));
-    assert.doesNotMatch(t.text(), /11;rgb/, 'the reply chunk is swallowed');
-    t.input.emit('keypress', 'x', {}); // 文字入力は data と同じ経路
-    await new Promise(resolve => setTimeout(resolve, 20));
-    assert.match(t.text(), /garbagex/, 'input works normally after the reply is consumed');
-    t.key('return');
-    const outcome = await Promise.race([
-      line.then(value => ({ value })),
-      new Promise<'timeout'>(resolve => setTimeout(() => resolve('timeout'), 3000)),
-    ]);
-    assert.ok(outcome !== 'timeout' && outcome.value === 'garbagex',
-      `the composer must accept input after the probe settles: ${JSON.stringify(outcome)}`);
-  } finally { t.finish(); t.ui.close(); }
-});
-
-test('a draft keeps the terminal default background after either startup theme is detected', async () => {
-  for (const rgb of ['ffff/ffff/ffff', '0000/0000/0000']) {
-    const t = ttyTerminal();
-    try {
-      const line = t.ui.next();
-      t.input.write(`\x1b]11;rgb:${rgb}\x07`);
-      await new Promise<void>(resolve => setImmediate(resolve));
-      t.input.write('draft');
-      assert.match(t.screen(), /\x1b\[49m draft/);
-      t.key('return');
-      assert.equal(await line, 'draft');
-    } finally { t.finish(); t.ui.close(); }
-  }
-});
-
 test('secret prompt masks pasted credentials and does not retain them on screen', async () => {
   const t = terminal();
   try {

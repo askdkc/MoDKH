@@ -20,12 +20,9 @@ import type { SubagentActivity } from '../subagents/service.ts';
 import type { RunningServer } from '../language/lsp/pool.ts';
 import {
   TranscriptColorizer,
-  classifyBackground,
-  parseOscBackground,
-  paletteFor,
+  terminalPalette,
   READABLE_TEXT_STYLE,
   type ColorizerState,
-  type Palette,
   type TranscriptKind,
 } from './color.ts';
 
@@ -104,8 +101,6 @@ const LOGO = [
 const logoForWidth = (width: number): readonly string[] =>
   width >= Math.max(...LOGO.map(textWidth)) ? LOGO : ['MoDKH'];
 const ACCENT = '34'; // Use the terminal theme's blue; NO_COLOR is respected by paint().
-/** The footer sits on a painted panel, so the theme blue can sink into it (dark) or glare (light). */
-const PANEL_ACCENT: Record<'dark' | 'light', string> = { dark: '38;5;117', light: '38;5;25' };
 /** Every term must appear in any order, so "seek deep" finds deepseek. Pinned rows always survive. */
 function matching(choices: readonly Choice[], query: string): Choice[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -331,18 +326,6 @@ export class TerminalUI implements ChatTerminal {
   private readonly cwd: string;
   private readonly colorizer = new TranscriptColorizer();
   private colorizerState: ColorizerState = { mode: 'text', inDiff: false, inToolOutput: false };
-  private palette: Palette = paletteFor('dark');
-  private panelStyle = '48;5;235';
-  /** Foreground for text drawn on `panelStyle`; keeps the status line readable on both themes. */
-  private panelAccent = PANEL_ACCENT.dark;
-  private backgroundProbe = false;
-  /** 背景プローブ中(返信待ち)。時間による入力抑制には使わない。 */
-  private backgroundWaiting = false;
-  /** 返信チャンク由来のキー入力だけを一時的に握りつぶす。 */
-  private replySilenced = false;
-  /** 返信の先頭(\x1b]11;)から返信完了まで、分割チャンクごとに抑制を続ける。 */
-  private replyStarted = false;
-  private replyDone = false;
   /** 端末が消えた(書き込みが EPIPE/EIO になった)。以降の描画は行わない。 */
   private outputGone = false;
   /** 直近の書き込み所要時間(指数移動平均)。遅い端末では描画をまとめる。 */
@@ -353,15 +336,12 @@ export class TerminalUI implements ChatTerminal {
     this.copyText = options.writeClipboardText ?? writeClipboardText;
     this.cwd = cwd; this.input = input; this.output = output;
     this.previousRaw = input.isRaw; this.color = process.env.NO_COLOR === undefined;
-    // 背景プローブの data 購読を readline より先に付ける。返信チャンクからだけ
-    // キー入力を落とし、ユーザーの打鍵はいつでも通常通り処理する。
-    if (this.color && (input as unknown as { isTTY?: boolean }).isTTY === true) this.probeBackground();
     if (options.writeClipboardText || (process.platform === 'darwin' && input.isTTY && output.isTTY)) {
       const keyInput = this.keyInput = new PassThrough();
       this.mouseInput = new TerminalMouseInput(
         text => { if (text) keyInput.write(text); },
         this.mouseReport,
-        () => this.paste || this.replySilenced,
+        () => this.paste,
       );
       emitKeypressEvents(keyInput);
       keyInput.on('keypress', this.keypress);
@@ -379,58 +359,7 @@ export class TerminalUI implements ChatTerminal {
     this.writeOutput('\x1b[?2004h' + (this.mouseInput ? '\x1b[?1002h\x1b[?1006h' : ''));
     // 起動時は一度だけ画面を消す(前回実行の残りを見せない)。
     this.clearPending = true;
-    if (this.backgroundProbe) this.writeOutput('\x1b]11;?\x1b\\');
     this.render();
-  }
-
-  /**
-   * OSC 11 で端末の背景色を問い合わせる。返信がなければダーク扱い(既定パレット)。
-   * 返信バイトを readline が文字入力として流し込むので、返信を含むチャンクから
-   * 生じるキー入力だけを握りつぶす。返信が来ない端末では何も握らない(CIでも安全)。
-   */
-  private probeBackground(): void {
-    if (this.backgroundProbe) return;
-    this.backgroundProbe = true;
-    this.backgroundWaiting = true;
-    let buffer = '';
-    let timer: NodeJS.Timeout | undefined;
-    const onData = (chunk: string): void => {
-      buffer += chunk;
-      if (this.backgroundWaiting && buffer.includes('\x1b]11;')) this.replyStarted = true;
-      if (this.replyStarted && !this.replyDone) this.silenceReplyKeys();
-      const osc = parseOscBackground(buffer);
-      if (osc === null) return;
-      finishProbe();
-      const classified = classifyBackground(osc, process.env);
-      if (classified !== null) {
-        this.palette = paletteFor(classified);
-        this.panelStyle = classified === 'light' ? '48;5;255' : '48;5;235';
-        this.panelAccent = PANEL_ACCENT[classified];
-        this.render();
-      }
-    };
-    const finishProbe = (): void => {
-      clearTimeout(timer);
-      this.backgroundWaiting = false;
-      this.replyDone = true;
-      this.input.off('data', onData);
-      // 分割到着で入力欄に紛れた返信文字があれば取り除く(単一チャンクは握りつぶし済み)。
-      const tail = /\x1b\]11;([^\x07\x1b]*)/.exec(buffer)?.[1];
-      if (tail && this.text.includes(tail)) {
-        this.text = this.text.split(tail).join('');
-        this.cursor = Math.min(this.cursor, Math.max(0, this.text.length));
-        this.render();
-      }
-    };
-    this.input.on('data', onData);
-    timer = setTimeout(finishProbe, 250);
-  }
-
-  /** 返信チャンクから生じるキー入力を、現在の入力処理の終わりまで握りつぶす。 */
-  private silenceReplyKeys(): void {
-    if (this.replySilenced) return;
-    this.replySilenced = true;
-    queueMicrotask(() => { this.replySilenced = false; });
   }
 
   /** リサイズ: 画面を作り直す。トランスクリプトはスクロールバックに確定済み。 */
@@ -786,7 +715,7 @@ export class TerminalUI implements ChatTerminal {
   }
 
   private insertText(value: string): void {
-    if (this.pending?.choices === APPROVAL_CHOICES || this.replySilenced) return; // OSC 返信の取り込みを入力にしない
+    if (this.pending?.choices === APPROVAL_CHOICES) return;
     const normalized = clean(value.replace(/\r\n?/g, '\n').replace(/\t/g, '  '));
     const added = chars((this.pending?.composer || (!this.pending && this.followup)) ? normalized : normalized.replace(/\n/g, ' '));
     const parts = chars(this.text);
@@ -1062,7 +991,7 @@ export class TerminalUI implements ChatTerminal {
     const hint = 'MoDKH · 会話履歴 · Esc 戻る';
     const details = this.inputNotice || this.activityLabel() || 'ホイール / PgUp / PgDn';
     const footer = fitText(`${hint} · ${details}`, width);
-    out += `\x1b[${rows};1H${this.paint(footer, `${this.panelStyle};${this.panelAccent}`)}`;
+    out += `\x1b[${rows};1H${this.paint(footer, ACCENT)}`;
     if (this.hasUsagePane()) {
       const usage = usageBreakdownLines(this.usage ?? EMPTY_USAGE, SIDEBAR_WIDTH - 4);
       out += this.drawSidebar(rows, this.columns(), this.sidebarLines(rows, usage));
@@ -1108,7 +1037,7 @@ export class TerminalUI implements ChatTerminal {
 
   private pageKey(key: Key): void {
     const page = this.page;
-    if (!page || this.replySilenced) return;
+    if (!page) return;
     if (key.name === 'paste-start' || key.name === 'paste-end') {
       page.pasting = key.name === 'paste-start';
       return;
@@ -1136,7 +1065,7 @@ export class TerminalUI implements ChatTerminal {
       this.cancelDrag();
       this.render();
     }
-    if (this.mouseInput && !this.paste && !this.replySilenced && !this.pending?.secret &&
+    if (this.mouseInput && !this.paste && !this.pending?.secret &&
         (key.name === 'pageup' || key.name === 'pagedown')) {
       this.scrollHistory((this.rows() - 2) * (key.name === 'pageup' ? 1 : -1));
       return;
@@ -1166,8 +1095,6 @@ export class TerminalUI implements ChatTerminal {
       } else this.pending?.finish(null);
       return;
     }
-    // 返信チャンク(OSC 応答)から生じたキー入力だけを握りつぶす。Ctrl+C は通す。
-    if (this.replySilenced && !(key.ctrl && key.name === 'c')) return;
     const pending = this.pending;
     if (!pending && !this.followup) return;
     const composer = pending ? pending.composer : true;
@@ -1259,13 +1186,13 @@ export class TerminalUI implements ChatTerminal {
   private renderTranscriptLine(raw: string, kind: TranscriptKind, width: number, newline: boolean,
     colorizer: TranscriptColorizer): TranscriptScreenLine[] {
     const source = clean(raw);
-    const colored = colorizer.line(source, this.palette, kind);
+    const colored = colorizer.line(source, terminalPalette, kind);
     const text = clean(colored);
     if (kind === 'answer' && source && !text) return [];
     if (kind === 'user') {
       return transcriptLine(text, width, newline).map(line => {
         const padded = line.text.padEnd(line.text.length + width - textWidth(line.text));
-        const painted = this.color && line.text ? this.paint(padded, `${this.panelStyle};${this.palette.user}`) : line.text;
+        const painted = this.color && line.text ? this.paint(padded, terminalPalette.user) : line.text;
         return { ...line, painted };
       });
     }
@@ -1354,7 +1281,7 @@ export class TerminalUI implements ChatTerminal {
     const reasoningText = reasoningTail === '' ? [] : transcriptLines(`(推論)\n${reasoningTail}`, width);
     const liveReasoning = reasoningText.length === 0 ? []
       : reasoningText.slice(Math.max(0, reasoningText.length - maxReasoning))
-        .map(line => ({ ...line, painted: this.paint(fitText(line.text, width), this.palette.reasoning) }));
+        .map(line => ({ ...line, painted: this.paint(fitText(line.text, width), terminalPalette.reasoning) }));
 
     const optionsLines: { text: string; style: string }[] = [];
     if (options) {
@@ -1570,14 +1497,14 @@ export class TerminalUI implements ChatTerminal {
     const border = this.paint('│', ACCENT);
     const heading = content.startsWith(USAGE_HEADING) || content.startsWith(SUBAGENTS_HEADING)
       || content.startsWith(SERVERS_HEADING) || content === BROWSE_ACTIVE_LABEL;
-    const style = heading ? `${this.panelStyle};1` : this.panelStyle;
+    const style = heading ? '49;1' : '49';
     const padding = ' '.repeat(SIDEBAR_WIDTH - 3 - textWidth(right));
     const panel = this.paint(` ${right}${padding}`, style);
     return border + panel + border;
   }
 
   private drawSidebar(rows: number, columns: number, sidebar: string[]): string {
-    const empty = this.paint(' '.repeat(SIDEBAR_WIDTH), this.panelStyle);
+    const empty = this.paint(' '.repeat(SIDEBAR_WIDTH), '49');
     let out = '';
     for (let i = 0; i < rows; i++) {
       const content = sidebar[i];

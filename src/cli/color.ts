@@ -3,13 +3,9 @@
  * - 推論はグレー、回答は Markdown の強調やコードを端末のスタイルで表示
  * - diff(+/-/@@/---/+++)は追加=緑・削除=赤
  * - ``` コードブロック内は簡易トークナイザー(文字列・コメント・キーワード・数値)
- * ライト/ダーク両方で読みやすいよう背景判定ごとにパレットを替える。
+ * ライト/ダーク両方で読みやすいよう端末テーマの標準色を使う。
  */
 import { answerMarkdown } from './answer-markdown.ts';
-import { stripVTControlCharacters } from 'node:util';
-
-export type Background = 'dark' | 'light';
-
 export interface Palette {
   reasoning: string;
   user: string;
@@ -27,67 +23,14 @@ export interface Palette {
   codeKeyword: string;
 }
 
-/** ダーク背景は明るい標準色、ライト背景は256色パレットの暗い色。 */
-export function paletteFor(background: Background): Palette {
-  return background === 'dark'
-    ? {
-      reasoning: '90', result: '90', system: '90',
-      user: '1', heading: '1', accent: '36', tool: '94',
-      diffAdd: '92', diffDel: '91', diffMeta: '96',
-      codeComment: '90', codeString: '33',
-      codeNumber: '95', codeKeyword: '94',
-    }
-    : {
-      reasoning: '90', result: '90', system: '90',
-      user: '1', heading: '1', accent: '36', tool: '38;5;26',
-      diffAdd: '38;5;28', diffDel: '38;5;160', diffMeta: '38;5;30',
-      codeComment: '38;5;242', codeString: '38;5;130',
-      codeNumber: '38;5;52', codeKeyword: '38;5;19',
-    };
-}
-
-/** `rgb:rrrr/gggg/bbbb` または `color:0/9` 形式の OSC 11 応答を解析する。 */
-export function parseOscBackground(text: string): string | null {
-  const match = /\x1b]11;([^\x07\x1b]*)/.exec(text);
-  if (match === null) return null;
-  return stripVTControlCharacters(match[1]).trim() || null;
-}
-
-/** 0〜65535 の16進3成分から輝度を0..1で出す。 */
-export function backgroundLuminance(osc: string): number | null {
-  const rgb = /rgb:([0-9a-fA-F]+)\/([0-9a-fA-F]+)\/([0-9a-fA-F]+)/.exec(osc)
-    ?? /rgba?:([0-9a-fA-F]+)\/([0-9a-fA-F]+)\/([0-9a-fA-F]+)/.exec(osc);
-  if (rgb !== null) {
-    const components = [rgb[1], rgb[2], rgb[3]].map((c) => parseInt(c, 16) / (16 ** c.length - 1));
-    if (components.some((n) => !Number.isFinite(n))) return null;
-    return 0.2126 * components[0] + 0.7152 * components[1] + 0.0722 * components[2];
-  }
-  const gray = /^(\d+)$/.exec(osc.trim());
-  if (gray !== null) {
-    const n = Number(gray[1]);
-    return Number.isFinite(n) ? n / 255 : null;
-  }
-  return null;
-}
-
-/** OSC応答または COLORFGBG 環境変数から背景を分類する。根拠がなければ null。 */
-export function classifyBackground(oscReply: string | null, env?: NodeJS.ProcessEnv): 'dark' | 'light' | null {
-  if (oscReply !== null) {
-    const l = backgroundLuminance(oscReply);
-    if (l !== null) return l < 0.5 ? 'dark' : 'light';
-  }
-  const fgbg = env?.['COLORFGBG'];
-  if (typeof fgbg === 'string' && /;/.test(fgbg)) {
-    const bg = Number(fgbg.split(';').at(-1));
-    // 0-6 暗い色、7/8-15 明るい色(xterm系の慣習)。15以上は256色拡張。
-    if (Number.isFinite(bg)) {
-      if (bg <= 6) return 'dark';
-      if (bg >= 8 && bg <= 15) return 'light';
-      if (bg >= 16) return bg >= 238 ? 'dark' : 'light';
-    }
-  }
-  return null;
-}
+/** ANSI palette entries follow the terminal profile even after text has entered scrollback. */
+export const terminalPalette: Readonly<Palette> = {
+  reasoning: '90', result: '90', system: '90',
+  user: '1', heading: '1', accent: '36', tool: '94',
+  diffAdd: '92', diffDel: '91', diffMeta: '96',
+  codeComment: '90', codeString: '33',
+  codeNumber: '95', codeKeyword: '94',
+};
 
 /** 汎用キーワード群(C/JS/TS/Python/Rust/Go/Ruby/Shell など)。誤着色より無着色を避ける単純リスト。 */
 const KEYWORDS = [
