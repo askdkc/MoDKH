@@ -13,7 +13,8 @@ try {
   const load = file => import(pathToFileURL(path.join(base, 'dist', file)).href);
   const { verifyBundledSkills, bundledSkills, readBundledSkill } = await load('agent/bundled-skills.js');
   verifyBundledSkills();
-  assert.equal(bundledSkills().length, 19);
+  assert.equal(bundledSkills().length, 18);
+  assert.equal(fs.existsSync(path.join(base, 'skills/cyber')), false);
   const { ToolRegistry, defaultTools } = await load('tools/registry.js');
   const { runAgentLoop } = await load('agent/loop.js');
   const { FixedModel } = await load('model/fixed.js');
@@ -35,6 +36,6 @@ try {
   assert.throws(() => readBundledSkill('kiokuko-soul'), /integrity mismatch/);
   fs.appendFileSync(path.join(base, 'skills/pstack/pstack/SKILL.md'), '\nCORRUPTED');
   assert.throws(() => readBundledSkill('pstack'), /integrity mismatch/);
-  console.log('Packaged skill acceptance: 19 skills, 113 resources, routed core/UI/pstack, reference tool, corruption rejection in both bundles passed');
+  console.log('Packaged skill acceptance: 18 skills, 112 resources, routed core/UI/pstack, reference tool, corruption rejection in both bundles passed');
   console.log(`Package integrity: ${packed[0].integrity}`);
 } finally { fs.rmSync(directory, { recursive: true, force: true }); }

@@ -301,7 +301,8 @@ export class TerminalUI implements ChatTerminal {
   private paste = false;
   private pasteBuffer = '';
   private pasteBytes = 0;
-  private previousInput = '';
+  private inputHistory: string[] = [];
+  private recalledIndex?: number;
   private editorScroll = 0;
   private images: ImageAttachment[] = [];
   private clipboardTask?: AbortController;
@@ -469,6 +470,7 @@ export class TerminalUI implements ChatTerminal {
       this.followup = undefined;
       this.clipboardTask?.abort(); this.clipboardTask = undefined;
       if (unsent.length) {
+        this.recalledIndex = undefined;
         this.images = [...unsent.flatMap(item => item.images), ...this.images];
         this.text = [...unsent.map(item => item.text), this.text].filter(Boolean).join('\n\n');
         this.cursor = chars(this.text).length;
@@ -484,7 +486,7 @@ export class TerminalUI implements ChatTerminal {
     this.inputNotice = error ?? '追加の依頼を受け付けました';
     if (error === null) {
       this.images = [];
-      this.previousInput = this.text;
+      this.rememberInput(this.text);
       this.text = ''; this.cursor = 0; this.editorScroll = 0;
     }
   }
@@ -619,8 +621,27 @@ export class TerminalUI implements ChatTerminal {
   }
   unread(line: string): void { this.queued.unshift(line); }
   hasQueuedInput(): boolean { return this.queued.length > 0; }
-  rememberInput(text: string): void { this.previousInput = text; }
+  rememberInput(text: string): void {
+    this.recalledIndex = undefined;
+    if (!text.trim() || text === this.inputHistory.at(-1)) return;
+    this.inputHistory.push(text);
+    if (this.inputHistory.length > 100) this.inputHistory.shift();
+  }
+
+  private recallInput(direction: -1 | 1): boolean {
+    const count = this.inputHistory.length;
+    if (!count || (this.recalledIndex === undefined && (this.text || direction === 1))) return false;
+    const index = Math.max(0, (this.recalledIndex ?? count) + direction);
+    this.recalledIndex = index < count ? index : undefined;
+    this.text = this.inputHistory[index] ?? '';
+    this.cursor = chars(this.text).length;
+    this.hiddenCompletion = true;
+    this.inputNotice = '';
+    return true;
+  }
+
   restoreDraft(text: string): void {
+    this.recalledIndex = undefined;
     this.text = text;
     this.cursor = chars(text).length;
     this.render();
@@ -662,8 +683,9 @@ export class TerminalUI implements ChatTerminal {
         this.paste = false; this.pasteBuffer = ''; this.pasteBytes = 0;
         if (composer && (value?.trim() || (value !== null && this.images.length))) {
           this.started = true; // Leave the welcome screen before submission validation writes feedback.
-          if (value?.trim() && !isChatCommand(value)) this.previousInput = value;
+          if (value?.trim() && !isChatCommand(value)) this.rememberInput(value);
         }
+        if (composer) this.recalledIndex = undefined;
         if (value === null && composer) this.images = [];
         this.pending = undefined;
         this.text = draft?.text ?? ''; this.cursor = draft?.cursor ?? 0;
@@ -688,7 +710,7 @@ export class TerminalUI implements ChatTerminal {
   private fileMenu?: { text: string; cursor: number; mention: FileMention; candidates: FileCandidate[]; selected: number; dismissed: boolean };
 
   private fileOptions() {
-    if (!(this.pending ? this.pending.composer && !this.pending.secret : this.followup)) {
+    if (this.recalledIndex !== undefined || !(this.pending ? this.pending.composer && !this.pending.secret : this.followup)) {
       this.fileMenu = undefined;
       return undefined;
     }
@@ -721,6 +743,7 @@ export class TerminalUI implements ChatTerminal {
     const parts = chars(this.text);
     const next = parts.slice(0, this.cursor).concat(added, parts.slice(this.cursor)).join('');
     if (Buffer.byteLength(next) > MAX_INPUT_BYTES) { this.inputNotice = '入力は128 KiB以内にしてください'; return; }
+    if (this.pending?.composer || (!this.pending && this.followup)) this.recalledIndex = undefined;
     this.text = next; this.cursor += added.length;
     this.selection = 0; this.hiddenCompletion = false; this.inputNotice = '';
   }
@@ -1091,7 +1114,7 @@ export class TerminalUI implements ChatTerminal {
       if (process.listenerCount('SIGINT') > 0) process.emit('SIGINT');
       else if (this.pending?.choices || this.text || this.images.length) {
         if (this.pending?.choices) this.pending.finish(null);
-        else { this.text = ''; this.cursor = 0; this.images = []; this.render(); }
+        else { this.recalledIndex = undefined; this.text = ''; this.cursor = 0; this.images = []; this.render(); }
       } else this.pending?.finish(null);
       return;
     }
@@ -1112,6 +1135,7 @@ export class TerminalUI implements ChatTerminal {
       else if (!this.text && key.ctrl) pending?.finish(null);
       return;
     }
+    if (composer && key.name !== 'up' && key.name !== 'down') this.recalledIndex = undefined;
     const newline = composer && (value === '\n' || key.ctrl && key.name === 'j' || (key.name === 'return' || key.name === 'enter') && (key.shift || key.meta));
     if (newline) this.insertText('\n');
     else if (options && (key.name === 'up' || key.name === 'down')) {
@@ -1119,13 +1143,9 @@ export class TerminalUI implements ChatTerminal {
     } else if (files?.candidates.length && (key.name === 'up' || key.name === 'down')) {
       const count = files.candidates.length;
       files.selected = (files.selected + (key.name === 'down' ? 1 : -1) + count) % count;
-    } else if (composer && key.name === 'up' && !this.text && this.previousInput) {
-      this.text = this.previousInput;
-      this.cursor = chars(this.text).length;
-      this.hiddenCompletion = true;
-      this.inputNotice = '';
     } else if (composer && (key.name === 'up' || key.name === 'down')) {
-      this.cursor = verticalCursor(this.text, this.cursor, this.editorWidth(), key.name === 'up' ? -1 : 1);
+      const direction = key.name === 'up' ? -1 : 1;
+      if (!this.recallInput(direction)) this.cursor = verticalCursor(this.text, this.cursor, this.editorWidth(), direction);
     } else if (key.name === 'return' || key.name === 'enter' || key.name === 'tab') {
       if (this.clipboardTask) { this.inputNotice = '画像の読込中です。完了後にEnterで送信'; this.render(); return; }
       const selected = options?.[this.selection];
@@ -1334,7 +1354,7 @@ export class TerminalUI implements ChatTerminal {
     const hints = editingFollowup ? 'Enter 追加の依頼を送信  Ctrl+V 画像  Ctrl+C 中止'
       : !this.pending ? busyHint : this.pending.choices ? '↑↓ 選択  Enter 決定  Esc 戻る'
       : composer ? 'Enter 送信  Ctrl+J 改行  Ctrl+V 画像  Cmd+V テキスト' + (this.mouseInput ? '  ドラッグでコピー' : '') : 'Enter 決定  Ctrl+C 中止';
-    const recallHint = (this.pending?.composer || editingFollowup) && !this.text && this.previousInput ? '↑ 前回の入力  ' : '';
+    const recallHint = (this.pending?.composer || editingFollowup) && !this.text && this.inputHistory.length ? '↑ 入力履歴  ' : '';
     const fileHint = files ? '↑↓ ファイル選択  Tab 補完  Esc 閉じる' : '';
     lines.push({ text: fileHint || recallHint + hints, style: '2' });
     // 右側の内訳を置けない端末では、最下段に使用量の要約を残す。

@@ -254,3 +254,24 @@ test('Up recalls the last submitted chat text for editing, including accepted fo
     assert.equal(await next, sent[0]);
   } finally { t.ui.close(); }
 });
+
+test('repeated Up and Down traverse submitted inputs and return to the empty composer', async () => {
+  const t = terminal();
+  try {
+    for (const text of ['first prompt', 'second prompt', 'third prompt']) {
+      const input = t.ui.next();
+      t.key('', text); t.key('return');
+      assert.equal(await input, text);
+    }
+    const input = t.ui.next();
+    for (const [key, expected] of [
+      ['up', 'third prompt'], ['up', 'second prompt'], ['up', 'first prompt'],
+      ['up', 'first prompt'], ['down', 'second prompt'], ['down', 'third prompt'],
+    ]) {
+      t.key(key);
+      assert.ok(t.text().includes(expected), 'expected ' + expected);
+    }
+    t.key('down'); t.key('', 'new prompt'); t.key('return');
+    assert.equal(await input, 'new prompt');
+  } finally { t.ui.close(); }
+});
