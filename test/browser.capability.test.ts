@@ -136,7 +136,7 @@ test('navigate reuses the given tab instead of opening another one', { skip: pro
   }
 });
 
-test('a screenshot comes back as an image saved under the session records', { skip: process.platform === 'win32' }, async () => {
+test('a screenshot attaches pixels without leaving a file or returning a scratch path', { skip: process.platform === 'win32' }, async () => {
   const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-browse-shot-'));
   const previous = process.env.PATH;
   // 1x1 PNG, written wherever --output points.
@@ -144,7 +144,8 @@ test('a screenshot comes back as an image saved under the session records', { sk
   try {
     fs.writeFileSync(path.join(bin, 'browse'), `#!/bin/sh
 for last; do :; done
-mkdir -p "$(dirname "$last")"
+printf %s "$last" > "${bin}/destination"
+printf '%s\\n' "$last"
 printf %s '${png}' | base64 -d > "$last"
 printf '{"width":1,"height":1,"format":"png"}\\n'
 `, { mode: 0o755 });
@@ -157,9 +158,10 @@ printf '{"width":1,"height":1,"format":"png"}\\n'
         { root, approval: { approve: async () => true } });
       assert.equal(result.status, 'ok');
       assert.equal(result.image?.mediaType, 'image/png', 'the model must receive the pixels, not just a path');
-      const saved = path.join(root, '.modkh', 'browse', '12.png');
-      assert.ok(fs.existsSync(saved), 'the capture is written inside the working root');
-      assert.match(result.output, /\.modkh\/browse\/12\.png/);
+      const destination = fs.readFileSync(path.join(bin, 'destination'), 'utf8');
+      assert.deepEqual(fs.readdirSync(root), []);
+      assert.equal(fs.existsSync(destination), false);
+      assert.ok(!result.output.includes(destination));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

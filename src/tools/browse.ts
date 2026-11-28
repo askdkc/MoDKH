@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import path from 'node:path';
+import os from 'node:os';
 import fs from 'node:fs';
 import { ToolError, type Tool } from '../agent/types.ts';
 import { parseImage } from '../agent/images.ts';
@@ -173,14 +174,9 @@ export function browseTools(tabs?: BrowseTabs): Tool[] {
       const rel = path.relative(fs.realpathSync(ctx.root), executable);
       if (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)) throw new ToolError('DENIED', 'Workspace browse executable is not trusted');
       const argv = browseArgs(args, scopeFor(ctx.root));
-      // A screenshot is only useful if it comes back as an image. Saved under the
-      // session record directory so the same tab overwrites its previous capture.
-      const shot = args.action === 'screenshot' ? screenshotTarget(ctx.root, args.tab) : undefined;
-      if (shot) {
-        // Drop the previous capture so a failed run can never attach a stale image.
-        fs.rmSync(shot.file, { force: true });
-        argv.push('--output', shot.file);
-      }
+      const captureDir = args.action === 'screenshot' ? fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-browse-')) : undefined;
+      const shot = captureDir && path.join(captureDir, 'capture.png');
+      if (shot) argv.push('--output', shot);
       // すべての browse 呼び出しを「使用中」として数える。status も数えるので、
       // 接続確認だけを行った場合でも同じ規則で表示できる(実行が終われば消える)。
       setActiveCalls(activeCalls + 1);
@@ -189,9 +185,9 @@ export function browseTools(tabs?: BrowseTabs): Tool[] {
         const result = await run(executable, argv, options);
         const output = result.stdout || result.stderr;
         if (shot) {
-          const capture = await readCapture(shot.file);
-          if (capture.image) return { status: 'ok' as const, output: `${shot.rel}\n${output}`.trim(), image: capture.image };
-          return `${output.trim()}\n${capture.note}`;
+          const capture = await readCapture(shot);
+          if (capture.image) return { status: 'ok', output: 'Screenshot attached.', image: capture.image };
+          return { status: 'error', output: capture.note ?? 'Screenshot unavailable.' };
         }
         return output;
       } catch (error) {
@@ -221,18 +217,10 @@ ${(failure.stderr || failure.stdout || failure.message).slice(0, 4096)}` };
         return { status: readOnly ? 'error' : 'unknown', output };
       } finally {
         setActiveCalls(activeCalls - 1);
+        if (captureDir) fs.rmSync(captureDir, { recursive: true, force: true });
       }
     },
   }];
-}
-
-/** Capture location for a tab. Fixed per tab so repeated screenshots do not pile up. */
-function screenshotTarget(root: string, tab: unknown): { rel: string; file: string } {
-  const name = String(tab).replace(/[^a-z0-9-]/gi, '-').slice(0, 64) || 'tab';
-  const rel = path.join('.modkh', 'browse', `${name}.png`);
-  const file = path.join(root, rel);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  return { rel, file };
 }
 
 /** PNG/JPEG capture as an attachment. Missing or unusable files keep the text result. */
@@ -242,7 +230,6 @@ async function readCapture(file: string): Promise<{ image?: ReturnType<typeof pa
     const mediaType = bytes[0] === 0xff && bytes[1] === 0xd8 ? 'image/jpeg' : 'image/png';
     return { image: parseImage({ mediaType, data: bytes.toString('base64') }) };
   } catch (error) {
-    // A full-page capture can exceed the attachment budget; the file itself is still saved.
     return { note: `画像として添付できなかった(${error instanceof Error ? error.message : String(error)})` };
   }
 }

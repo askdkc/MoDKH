@@ -82,7 +82,7 @@ function toCoreMessages(req: ModelRequest, replayChatReasoning: boolean, omitToo
         if (omitToolImages) {
           observations.push({ role: 'user', content: 'The image from tool call ' + JSON.stringify(result.callId)
             + ' was not inspected because this model rejected image input. Use the recorded text results and perform only outstanding work. '
-            + 'Report the saved path and leave visual details unverified.' });
+            + 'Leave visual details unverified.' });
           continue;
         }
         const image = parseImage(result.image);
@@ -98,12 +98,21 @@ function toCoreMessages(req: ModelRequest, replayChatReasoning: boolean, omitToo
 }
 
 /** モデルへ渡すツール定義。execute は持たせず、実行は CLI 側で承認付きで行う。 */
-function toAiSdkTools(specs: ToolSpec[]): ToolSet {
+function toAiSdkTools(specs: ToolSpec[], omitToolImages = false): ToolSet {
   const out: ToolSet = {};
   for (const s of specs) {
+    if (omitToolImages && s.name === 'view_image') continue;
+    let parameters = s.parameters;
+    if (omitToolImages && s.name === 'browse') {
+      const properties = parameters.properties as Record<string, { enum?: string[] }>;
+      const action = properties?.action;
+      if (Array.isArray(action?.enum)) parameters = { ...parameters, properties: {
+        ...properties, action: { ...action, enum: action.enum.filter(value => value !== 'screenshot') },
+      } };
+    }
     out[s.name] = tool({
       description: s.description,
-      inputSchema: jsonSchema<Record<string, unknown>>(s.parameters as never),
+      inputSchema: jsonSchema<Record<string, unknown>>(parameters as never),
     });
   }
   return out;
@@ -116,7 +125,8 @@ function toAiSdkTools(specs: ToolSpec[]): ToolSet {
  */
 export class AiSdkModel implements Model {
   readonly id: string;
-  private toolImagesUnsupported = false;
+  private rejectedToolImages = false;
+  get toolImagesUnsupported(): boolean { return this.rejectedToolImages; }
   private readonly lm: LanguageModel;
   private readonly timeoutMs: number;
   private readonly provider?: string;
@@ -168,8 +178,9 @@ export class AiSdkModel implements Model {
       const result = streamText({
         model: this.lm,
         messages: toCoreMessages(req, this.replayChatReasoning, omitToolImages),
-        system: req.system,
-        tools: toAiSdkTools(omitToolImages ? req.tools.filter(t => t.name !== 'view_image') : req.tools),
+        system: omitToolImages ? [req.system, 'This model rejected image input. Use text-based checks for outstanding work. '
+          + 'Do not recapture or reopen a screenshot to inspect its pixels. Report any remaining visual uncertainty.'].filter(Boolean).join('\n') : req.system,
+        tools: toAiSdkTools(req.tools, omitToolImages),
         abortSignal: requestSignal,
         // fullStream below owns errors; the SDK default logs entire request bodies to stderr.
         onError: () => {},
@@ -244,7 +255,7 @@ export class AiSdkModel implements Model {
     } else if (rejectedImageInput && !timedOut && !responseStarted && !omitToolImages
       && !req.messages.some(m => m.role === 'user' && (m.images?.length || m.pdfs?.length))
       && req.messages.some(m => m.role === 'tool' && m.results.some(r => r.image))) {
-      this.toolImagesUnsupported = true;
+      this.rejectedToolImages = true;
       if (req.continueAfterImageRejection) {
         yield { type: 'activity', stage: 'tool-images-unavailable' };
         if (signal.aborted) yield { type: 'finish', stopReason: 'aborted' };

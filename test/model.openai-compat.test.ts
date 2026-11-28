@@ -289,6 +289,13 @@ test('CLI finishes the requested file after a text-only engine rejects view_imag
     const tools = (request.body.tools as { function: { name: string } }[]).map(t => t.function.name);
     assert.ok(tools.includes('create_file'));
     assert.ok(!tools.includes('view_image'));
+    assert.match(JSON.stringify(messages), /Do not recapture or reopen a screenshot/);
+    const definitions = request.body.tools as { function: { name: string; parameters: { properties: { action?: { enum: string[] } } } } }[];
+    const browse = definitions.find(t => t.function.name === 'browse');
+    if (browse) {
+      assert.ok(browse.function.parameters.properties.action?.enum.includes('snapshot'));
+      assert.ok(!browse.function.parameters.properties.action?.enum.includes('screenshot'));
+    }
   }
   assert.equal(fs.readFileSync(path.join(root, 'report.md'), 'utf8'), report);
   assert.deepEqual(fs.readFileSync(path.join(root, frame)), Buffer.from(data, 'base64'));

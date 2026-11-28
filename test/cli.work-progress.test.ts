@@ -6,7 +6,7 @@ import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import type { AgentMessage, Model, ModelEvent, ToolCall, ToolResult } from '../src/agent/types.ts';
 import { SessionStore } from '../src/session/store.ts';
-import { collectWorkProgress, currentChecks, groundReview, readyToReport } from '../src/agent/work-progress.ts';
+import { collectWorkProgress, currentChecks, groundReview, readyToReport, reportChecks } from '../src/agent/work-progress.ts';
 import { reviewToolWork } from '../src/agent/compaction.ts';
 import { readWrittenVersions } from '../src/cli/workspace-verification.ts';
 
@@ -290,4 +290,41 @@ test('changing failure counts and a passing check allow the next edit', async t 
   assert.doesNotMatch(output, /修正を続けますか/);
   assert.match(output, /Finished\./);
   assert.equal(fs.readFileSync(path.join(root, 'remaining'), 'utf8'), '0');
+});
+
+test('a visual review receives the current screenshot pixels and can finish without reopening a file', async () => {
+  const messages: AgentMessage[] = [{ role: 'user', content: 'Verify the fish appearance' }];
+  const digest = 'a'.repeat(64);
+  exchange(messages, create, 'saved' + 'x'.repeat(9000), { fileDigest: digest });
+  exchange(messages, navigate, '{"tab":7}');
+  const image = { mediaType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==' };
+  exchange(messages, { id: 'fish', name: 'browse', args: { action: 'screenshot', tab: 7 } }, 'captured', { image });
+  const model: Model = { id: modelId, async *stream(req) {
+    assert.ok(req.messages.some(m => m.role === 'tool' && m.results.some(r => r.callId === 'fish' && r.image?.data === image.data)));
+    yield { type: 'text-delta', text: '{"confirmed":[{"item":"appearance inspected","receipt":"fish"}],"remaining":[]}' };
+    yield { type: 'finish', stopReason: 'stop' };
+  } };
+  const result = await reviewToolWork(model, messages, undefined, 0, new AbortController().signal, 'test',
+    () => [['game.html', digest]], () => {});
+  assert.equal(result?.ready, true);
+});
+
+test('a text-only review can finish with a verified text check and an explicit visual limitation', async () => {
+  const messages: AgentMessage[] = [{ role: 'user', content: 'Check the score and the appearance' }];
+  const digest = 'a'.repeat(64);
+  exchange(messages, create, 'saved' + 'x'.repeat(9000), { fileDigest: digest });
+  exchange(messages, navigate, '{"tab":7}');
+  exchange(messages, score, 'Score is 1');
+  exchange(messages, { id: 'shot', name: 'browse', args: { action: 'screenshot', tab: 7 } }, 'Screenshot attached.',
+    { image: { mediaType: 'image/png', data: 'unused' } });
+  const model: Model = { id: modelId, toolImagesUnsupported: true, async *stream(req) {
+    assert.match(JSON.stringify(req.messages), /host will report appearance as unverified/);
+    assert.equal(req.messages.length, 1);
+    yield { type: 'text-delta', text: '{"confirmed":[{"item":"Score is 1","receipt":"score"}],"remaining":[]}' };
+    yield { type: 'finish', stopReason: 'stop' };
+  } };
+  const checked = await reviewToolWork(model, messages, undefined, 0, new AbortController().signal, 'test',
+    () => [['game.html', digest]], () => {});
+  assert.equal(checked?.ready, true);
+  assert.match(reportChecks(collectWorkProgress(messages, 0), checked!.state.review!), /未確認.*見た目/);
 });

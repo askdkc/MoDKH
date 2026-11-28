@@ -163,6 +163,7 @@ export interface ModelRequest {
  */
 export interface Model {
   readonly id: string;
+  readonly toolImagesUnsupported?: boolean;
   stream(req: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent>;
 }
 

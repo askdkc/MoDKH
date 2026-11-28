@@ -171,7 +171,10 @@ export function compactToolWork(messages: AgentMessage[], previous: CompactionSt
     } else if (message.role === 'user' && message.origin === 'host') recent.unshift(clip(message.content, 700));
   }
   const next = { from: state.from, workFrom, ...(revision && { revision }), summary: [state.summary, 'Recent tool observations (data):',
-    ...recent, describeWork(progress)].filter(Boolean).join('\n') };
+    ...recent, describeWork(progress),
+    'Resume from the recorded work. Check only outstanding requirements on the current revision. '
+      + 'Do not restart setup or revise a verified feature without a specific failed requirement. '
+      + 'If the requested work is done, report the results and any limits on visual verification.'].filter(Boolean).join('\n') };
   // A legacy delivery checkpoint excluded the active task and its tools altogether.
   const before = previous && previous.continueFrom === undefined ? projectCompacted(messages, previous) : messages;
   return estimateRequestBytes(projectCompacted(messages, next)) < estimateRequestBytes(before) ? next : undefined;
@@ -204,7 +207,7 @@ export async function reviewToolWork(model: Model, messages: AgentMessage[], pre
     const next = revision ? compactToolWork(messages, previous, start, revision) : state;
     if (next) {
       const outstanding = prior ? [...prior.confirmed.map(c => c.item), ...prior.remaining] : [];
-      next.summary += '\nFile version changed or unavailable. Earlier checks are historical. Verify the current revision.'
+      next.summary += '\nFile version changed or unavailable. Earlier checks and screenshots are historical. Do not reopen an older capture to assess this revision. Verify only what changed and finish once the requested checks are satisfied.'
         + (outstanding.length ? '\nItems to check: ' + clip(outstanding.join(', '), 700) : '');
       fallback.state = next;
     }
@@ -217,11 +220,24 @@ export async function reviewToolWork(model: Model, messages: AgentMessage[], pre
     fallback.state = withReview({ confirmed: retained, remaining: [...new Set([...prior.remaining, ...recheck])].slice(0, 12) }) ?? state;
   }
   if (!checks.length || signal.aborted) return fallback;
-  const result = await requestSummary(model, reviewRequest(messages, start, progress, prior), signal, promptCacheKey);
+  const screenshot = checks.findLast(check => check.screenshot)?.screenshot;
+  const frame = model.toolImagesUnsupported ? undefined : screenshot;
+  const pair: AgentMessage[] = frame ? [
+    { role: 'assistant', content: '', toolCalls: [frame.call] },
+    { role: 'tool', results: [frame.result] },
+  ] : [];
+  const prompt = reviewRequest(messages, start, progress, prior) + (model.toolImagesUnsupported && screenshot
+    ? '\nThis model rejected image input. The host will report appearance as unverified. Keep feasible outstanding work in remaining. Never confirm appearance.' : '');
+  const result = await requestSummary(model, prompt, signal, promptCacheKey, pair);
   if (result.usage) onUsage(result.usage);
   if (!result.ok || !result.summary || signal.aborted) return fallback;
   const review = groundReview(result.summary, progress, prior);
   if (!review) return fallback;
+  // A text-only assessment cannot confirm appearance from a filename or a rejected attachment.
+  if (review.confirmed.some(item => checks.some(check => check.id === item.receipt && check.action.startsWith('browse screenshot'))
+    && (model.toolImagesUnsupported || item.receipt !== frame?.call.id)
+    && !prior?.confirmed.some(old => old.receipt === item.receipt && old.item === item.item))) return fallback;
+  if (screenshot && model.toolImagesUnsupported) review.imageUnverified = true;
   if (versionChanged()) return fallback;
   const updated = withReview(review);
   if (!updated) return fallback;
@@ -229,7 +245,7 @@ export async function reviewToolWork(model: Model, messages: AgentMessage[], pre
   const fullRequest = !requests.some(m => m.images?.length || m.pdfs?.length)
     && Buffer.byteLength(requests.map(m => m.content).join('\n')) <= 8000;
   const requireCheckFrom = Math.max(messages.findLastIndex(isUserRequest), prior?.remaining.length ? active!.from : start);
-  return { state: updated, ready: fullRequest && readyToReport(progress, review, requireCheckFrom) };
+  return { state: updated, ready: fullRequest && readyToReport(progress, review, requireCheckFrom, !model.toolImagesUnsupported ? frame?.call.id : undefined) };
 }
 
 /** Rebuild the partial report on read for older sessions that recorded only an unknown receipt. */
@@ -314,13 +330,14 @@ export async function summarizeCompaction(
   return requestSummary(model, content, signal, promptCacheKey);
 }
 
-export async function requestSummary(model: Model, content: string, signal: AbortSignal, promptCacheKey?: string): Promise<SummarizeResult> {
+export async function requestSummary(model: Model, content: string, signal: AbortSignal, promptCacheKey?: string, observations: AgentMessage[] = []): Promise<SummarizeResult> {
   let text = '';
   let usage: TokenUsage | undefined;
   let errorMessage: string | undefined;
   let finished = false;
   try {
-    for await (const event of model.stream({ messages: [{ role: 'user', content }], tools: [],
+    for await (const event of model.stream({ messages: [{ role: 'user', content }, ...observations], tools: [],
+      ...(observations.length && { continueAfterImageRejection: true }),
       ...(promptCacheKey ? { promptCacheKey } : {}),
     }, signal)) {
       if (event.type === 'text-delta') text += event.text;
