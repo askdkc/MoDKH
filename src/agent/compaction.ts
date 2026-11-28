@@ -5,6 +5,7 @@
  * 「これからモデルへ送る内容」だけを [要約 + 直近ターン] へ置き換える。この置き換えは
  * プロバイダーのキャッシュprefixが変わるため、設定したしきい値に達したときだけ行う。
  */
+import { projectReadHistory } from './read-history.ts';
 import { clip, projectToolImages, toolContext } from '../model/context.ts';
 export { clip } from '../model/context.ts';
 import type { AgentMessage, Model, TokenUsage } from './types.ts';
@@ -103,7 +104,8 @@ export function planCompaction(
 export function projectCompacted(messages: AgentMessage[], state: CompactionState): AgentMessage[] {
   const from = Math.min(Math.max(0, state.from), messages.length);
   const requests = state.workFrom === undefined ? [] : messages.slice(state.workFrom, from).filter(isUserRequest);
-  return [{ role: 'user', content: `${COMPACTION_MARKER}\n${state.summary}` }, ...requests, ...messages.slice(from)];
+  const reads = state.workFrom === undefined ? { note: '', tail: messages.slice(from) } : projectReadHistory(messages, state.workFrom, from);
+  return [{ role: 'user', content: `${COMPACTION_MARKER}\n${state.summary}${reads.note}` }, ...requests, ...reads.tail];
 }
 
 /** A bounded local record for a closed exchange. No model request or tool is needed to make it. */

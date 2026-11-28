@@ -69,6 +69,8 @@ export const readFileTool: Tool = {
     type: 'object',
     properties: {
       path: { type: 'string', description: '読むファイル(ルート相対)' },
+      purpose: { type: 'string', description: 'What you want to learn from this range, retained after compaction.' },
+      full_text: { type: 'boolean', description: 'Include previously inspected unchanged lines when exact source text is needed.' },
       offset: { type: 'number', description: '開始行(1開始)' },
       limit: { type: 'number', description: '読む行数(既定500)' },
     },

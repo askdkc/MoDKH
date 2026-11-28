@@ -4,6 +4,7 @@ import { streamWithReconnect } from '../model/reconnect.ts';
 import { isContextLimitError, projectToolImages, utf8Prefix, utf8Suffix } from '../model/context.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { modelInstructions } from '../model/harness-profile.ts';
+import { isUserRequest } from './types.ts';
 import type { AgentMessage, Model, ModelEvent, ProviderContinuation, TokenUsage, Tool, ToolCall, ToolResult, ToolSpec } from './types.ts';
 import { ToolRegistry } from '../tools/registry.ts';
 import { staleBrowseRef } from '../tools/browse.ts';
@@ -15,6 +16,7 @@ import { runCommandTool } from '../tools/run.ts';
 import { prepareSkillContext, type SkillContext } from './skills.ts';
 import { projectCompacted, type CompactionState } from './compaction.ts';
 import { collectWorkProgress, interruptionDetail, reportChecks } from './work-progress.ts';
+import { RepeatedReads } from './read-history.ts';
 import { RepairAttempts } from './repair-attempts.ts';
 
 export interface LoopHooks {
@@ -228,6 +230,13 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
   let recoveredReceipts: Map<string, ToolResult> | undefined;
   const canEdit = toolSpecs.some(t => t.name === 'edit_file');
   let repairs = new RepairAttempts();
+  let repeatedReads = new RepeatedReads();
+  // Compaction and resume retain the original tool receipts in the journal.
+  const lastRequest = messages.findLastIndex(isUserRequest);
+  for (const entry of previousCalls(messages.slice(Math.max(taskStart, lastRequest))).values()) {
+    if (entry.result) repeatedReads.observe(entry.call, entry.result);
+  }
+  let blockedReadRounds = 0;
   let inspectionRounds = 0;
   let requestedVisibleAnswer = false;
   let truncatedResponse: AgentMessage | undefined;
@@ -256,7 +265,11 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
   const appendFollowups = (): boolean => {
     const followups = opts.takeFollowups?.() ?? [];
     for (const message of followups) append(typeof message === 'string' ? { role: 'user', content: message } : message);
-    if (followups.length) repairs = new RepairAttempts();
+    if (followups.length) {
+      repairs = new RepairAttempts();
+      repeatedReads = new RepeatedReads();
+      blockedReadRounds = 0;
+    }
     return followups.length > 0;
   };
   for (let turn = 0; turn < maxTurns; turn++) {
@@ -456,6 +469,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
       calls = order.map(index => calls[index]);
       if (records) candidates = order.map(index => candidates[index]);
     }
+    let blockedReads = 0;
     let browseRefsChanged = false;
     let freshEditSucceeded = false;
     const newInputQueued = () => Boolean(opts.followupSignal?.().aborted
@@ -506,6 +520,9 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
         (!entry.result || entry.result.status === 'unknown') && opts.registry.sameOperation(entry.call, call, {
           root: opts.root, approval: opts.approval, signal: opts.signal,
         }));
+      const repeated = !opts.signal.aborted && !prior && !uncertain && !unresolved && !scope && !recoveredReceipts && !guarded
+        && canEdit && (call.name === 'read_file' && isNative(readFileTool)
+          || call.name === 'run_command' && isNative(runCommandTool)) ? repeatedReads.block(opts.root, call) : undefined;
       if (opts.signal.aborted) {
         candidate?.emit('not-executed', 'aborted');
         result = { callId: call.id, name: call.name, status: 'not-executed', output: '中断済みのため実行していない' };
@@ -526,6 +543,10 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
       } else if (cached) {
         candidate?.emit('reused', 'saved_result', records?.source(cached));
         result = { ...cached, callId: call.id };
+        ledger.set(call.id, { call, result });
+      } else if (repeated) {
+        candidate?.emit('not-executed', 'workflow_stopped');
+        result = { callId: call.id, name: call.name, status: 'not-executed', output: repeated };
         ledger.set(call.id, { call, result });
       } else if (!guardSatisfied) {
         candidate?.emit('not-executed', 'guard_blocked');
@@ -561,14 +582,23 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
         ledger.set(call.id, { call, result });
         candidate?.returned(result);
         repairs.observe(call, result);
+        repeatedReads.observe(call, result);
         if (operationKey && result.status !== 'not-executed') recoveredReceipts?.set(operationKey, result);
         freshEditSucceeded = index === 0 && call.name === 'edit_file' && result.status === 'ok';
       }
+      if (result.status === 'not-executed' && result.output.startsWith('[REPEATED_READ]')) blockedReads++;
       records?.remember(result, messages.length, 0, candidate);
       append({ role: 'tool', results: [result] });
       opts.hooks?.onToolResult?.(result);
       if (call.name === 'browse' && result.status === 'not-executed' && result.output.startsWith(staleBrowseRef)) browseRefsChanged = true;
       if (result.status === 'unknown') uncertain ??= { call, result };
+    }
+    blockedReadRounds = blockedReads === calls.length ? blockedReadRounds + 1 : 0;
+    if (blockedReadRounds === 1) {
+      appendNotice('Repeated inspections: the unchanged source range has already been read. Use the recorded evidence for the next requested step, or give the final answer if the work is complete.');
+    }
+    if (blockedReadRounds >= 3 && !newInputQueued() && !uncertain && !opts.signal.aborted) {
+      return { outcome: 'interrupted', errorMessage: '既読範囲の再読を3往復続けて要求し、新しい操作に進まなかったため中断しました。' };
     }
     if (uncertain) return interruptedTool(uncertain.call, uncertain.result);
     if (opts.signal.aborted) return { outcome: 'interrupted' };

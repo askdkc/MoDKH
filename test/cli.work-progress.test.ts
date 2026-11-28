@@ -328,3 +328,34 @@ test('a text-only review can finish with a verified text check and an explicit v
   assert.equal(checked?.ready, true);
   assert.match(reportChecks(collectWorkProgress(messages, 0), checked!.state.review!), /未確認.*見た目/);
 });
+
+test('CLI carries read intent across automatic compaction and delivers a subsequent line change', async t => {
+  const { root } = workspace(t, 'exit 1');
+  const file = 'notes.ts';
+  const line = 'const detail = "' + 'X'.repeat(256) + '";';
+  const source = Array.from({ length: 32 }, (_, i) => line + ' // ' + i).join('\n');
+  fs.writeFileSync(path.join(root, file), source);
+  let step = 0;
+  const model: Model = { id: modelId, async *stream(req) {
+    step++;
+    if (step === 2) {
+      assert.match(JSON.stringify(req.messages[0]), /notes.ts:1-32.*inspect rendering/);
+      fs.writeFileSync(path.join(root, file), source.replace(line + ' // 1\n', 'changed\n'));
+    }
+    if (step <= 2) {
+      yield { type: 'tool-call', call: { id: 'read-' + step, name: 'read_file', args: { path: file, purpose: 'inspect rendering' } } };
+      yield { type: 'usage', input: step === 1 ? 8000 : 100, output: 20 };
+      yield { type: 'finish', stopReason: 'tool-calls' };
+    } else {
+      const last = req.messages.at(-1);
+      assert.ok(last?.role === 'tool');
+      assert.match(last.results[0].output, /2: changed/);
+      assert.ok(!last.results[0].output.includes(line));
+      yield { type: 'text-delta', text: 'Reviewed the changed line.' };
+      yield { type: 'finish', stopReason: 'stop' };
+    }
+  } };
+  const output = await chat(root, model, 'Check how rendering works.');
+  assert.match(output, /Reviewed the changed line/);
+  assert.equal(step, 3);
+});
