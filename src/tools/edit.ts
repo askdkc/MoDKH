@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { ToolError, type Tool } from '../agent/types.ts';
 import { resolveInRoot, assertRealInRoot } from './guard.ts';
 import { renderDiff } from './diff.ts';
@@ -79,7 +80,8 @@ export const createFileTool: Tool = {
       throw new ToolError('NOT_EXECUTED', '同名ファイルが作成されたため書き込んでいない');
     }
     const notice = ctx.analyze ? await safeAnalysis(() => ctx.analyze!(abs, 'write')) : '';
-    return `${rel} を作成した(${Buffer.byteLength(content, 'utf8')}バイト)${notice ? `\n\n${notice}` : ''}`;
+    return { status: 'ok', fileDigest: createHash('sha256').update(content).digest('hex'),
+      output: `${rel} を作成した(${Buffer.byteLength(content, 'utf8')}バイト)${notice ? `\n\n${notice}` : ''}` };
   },
 };
 
@@ -140,6 +142,7 @@ export const editFileTool: Tool = {
     }
     fs.writeFileSync(abs, updated, { encoding: 'utf8' });
     const notice = ctx.analyze ? await safeAnalysis(() => ctx.analyze!(abs, 'write')) : '';
-    return `${rel} を編集した${notice ? `\n\n${notice}` : ''}`;
+    return { status: 'ok', fileDigest: createHash('sha256').update(updated).digest('hex'),
+      output: `${rel} を編集した${notice ? `\n\n${notice}` : ''}` };
   },
 };

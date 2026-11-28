@@ -23,27 +23,37 @@ export interface ToolRecording {
   write(event: ToolRecord): void;
 }
 
+// Turns and in-process subagents share destinations for the lifetime of this CLI launch.
+// After a short write, appending another frame would also corrupt the preceding line.
+const failedDestinations = new Set<string>();
+
 /** Each destination fails independently. Nothing on the tool/model path consumes this journal. */
 export function fileToolRecording(session: string, diagnostic: (text: string) => void): ToolRecording | undefined {
   const local = process.env.MODKH_TOOL_RECORD_FILE;
-  if (!local) return;
-  const localPath = resolve(local);
-  const files = new Set([localPath]);
-  if (process.env.AGENTICREPLAY_MODKH_FRAMES) files.add(resolve(process.env.AGENTICREPLAY_MODKH_FRAMES));
+  const replay = process.env.MODKH_AGENTICREPLAY === '0' ? undefined : process.env.AGENTICREPLAY_MODKH_FRAMES;
+  const replayPath = replay ? resolve(replay) : undefined;
+  const files = new Set<string>();
+  if (local) files.add(resolve(local));
+  if (replayPath) files.add(replayPath);
+  if (!files.size) return;
   return { session, write(event) {
     for (const file of files) {
+      if (failedDestinations.has(file)) continue;
       try {
         // The private journal preserves opaque provider IDs. Export only protocol identifiers.
-        const frame = file !== localPath && !/^[A-Za-z0-9_-]{1,256}$/u.test(event.callId)
+        const frame = file === replayPath && !/^[A-Za-z0-9_-]{1,256}$/u.test(event.callId)
           ? { ...event, callId: 'sha256-' + createHash('sha256').update(event.callId).digest('hex') } : event;
-        const fd = openSync(file, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NONBLOCK, 0o600);
+        // AgenticReplay owns and pre-creates its transport. Never recreate one that was removed.
+        const create = file === replayPath ? 0 : constants.O_CREAT;
+        const fd = openSync(file, constants.O_WRONLY | constants.O_APPEND | create | constants.O_NONBLOCK, 0o600);
         try {
           const line = Buffer.from(JSON.stringify(frame) + '\n');
           if (!fstatSync(fd).isFile() || writeSync(fd, line) !== line.length) throw new Error('record write failed');
         } finally { closeSync(fd); }
       } catch {
-        files.delete(file);
-        try { diagnostic('TOOL_RECORD_WRITE_FAILED: ツール状態の記録を続けられません。\n'); } catch { /* diagnostic only */ }
+        failedDestinations.add(file);
+        const destination = file === replayPath ? 'AgenticReplay' : 'ローカルの記録ファイル';
+        try { diagnostic(`TOOL_RECORD_WRITE_FAILED: ${destination} にツール状態を保存できません。\n`); } catch { /* diagnostic only */ }
       }
     }
   } };

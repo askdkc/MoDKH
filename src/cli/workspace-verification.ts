@@ -11,6 +11,15 @@ interface VerificationConfig { root: string; command: string; sources: string[];
 type Completion = NonNullable<AgentLoopOptions['beforeComplete']>;
 type Verdict = 'unverified' | 'passed' | 'failed' | 'not-executed' | 'unknown' | 'stale';
 
+/** An unpinned or unavailable artifact leaves ordinary tool verification open. */
+export function readWrittenVersions(root: string, files: Map<string, string | undefined>): [string, string][] | undefined {
+  if (!files.size || files.size > 12) return;
+  try {
+    const base = fs.realpathSync(root);
+    return [...files.keys()].map(file => [file, sha256(safeSnapshot(base, path.normalize(file)).bytes)]);
+  } catch { return; }
+}
+
 export function parseWorkspaceVerification(value: unknown): VerificationConfig | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const v = value as Record<string, unknown>;

@@ -1,3 +1,4 @@
+import { readSealedReplay } from './sealed-replay.ts';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -83,6 +84,28 @@ AGENTICREPLAY_TLS_CA=active exec "$@"
   env.OLLAMA_CLOUD_BASE_URL = 'https://env.example/v1';
   assert.deepEqual(tlsArgs(['--model', 'ollama-cloud/fixture']), ['--tls-hosts', '+env.example']);
   assert.deepEqual(run('0', ['--resume', resume.id], '1', 1), ['version']);
+});
+
+test('local chat continues once when the recorder is missing, fails before launch or lacks frames', {
+  skip: process.platform === 'win32',
+}, t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-recorder-start-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const mode of ['missing', 'startup', 'transport']) {
+    const project = path.join(root, mode);
+    fs.mkdirSync(project);
+    fs.writeFileSync(path.join(root, 'agenticreplay'), `#!/bin/sh
+if [ "$1" = version ]; then echo fixture; exit ${mode === 'missing' ? 1 : 0}; fi
+${mode === 'startup' ? 'exit 1' : 'while [ "$1" != -- ]; do shift; done; shift; AGENTICREPLAY_TLS_CA=fixture exec "$@"'}
+`, { mode: 0o700 });
+    const env = { ...process.env, MODKH_HOME: project, MODKH_PLAIN: '1', PATH: root + path.delimiter + process.env.PATH };
+    const result = spawnSync(process.execPath, [entry, '--cwd', project, '--model', 'ollama/fixture'], {
+      env, input: '/exit\n', encoding: 'utf8', timeout: 15000,
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(fs.readdirSync(path.join(project, 'sessions')).filter(name => name.endsWith('.jsonl')).length, 1);
+    assert.equal((result.stderr.match(mode === 'transport' ? /ツール状態を記録できません/g : /モデル通信とツール状態を記録できません/g) ?? []).length, 1, result.stderr);
+  }
 });
 
 test('a recording that falls short is reported without changing the conversation exit code', {
@@ -569,6 +592,7 @@ function runStorageCase(t: TestContext, options: {
         run_id?: string; capture?: { status?: string; issues?: string[] } } : undefined;
     const events = dirs.length === 1
       ? fs.readdirSync(path.join(runs, dirs[0])).filter(name => /^events(\.[0-9]+)?\.jsonl$/.test(name)) : [];
+    if (dirs.length === 1) readSealedReplay(path.join(runs, dirs[0]));
     const store = new SessionStore(path.join(root, 'sessions'));
     const sessions = store.list();
     const session = sessions.length ? store.load(sessions[0].id) : undefined;

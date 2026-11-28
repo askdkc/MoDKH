@@ -17,6 +17,8 @@ export interface ToolResult {
   name: string;
   status: 'ok' | 'error' | 'unknown' | 'not-executed';
   output: string;
+  /** SHA-256 of the UTF-8 bytes committed by a native file write. Absent in older journals. */
+  fileDigest?: string;
   image?: ImageAttachment;
 }
 
@@ -90,7 +92,7 @@ export interface Tool {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
-  execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string | Pick<ToolResult, 'status' | 'output' | 'image'>>;
+  execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string | Pick<ToolResult, 'status' | 'output' | 'image' | 'fileDigest'>>;
 }
 
 /** Input includes both cache reads and cache writes when the provider reports them. */

@@ -1,15 +1,15 @@
-import { clip } from './compaction.ts';
+import { stripVTControlCharacters } from 'node:util';
 import type { AgentMessage, Model, ModelEvent, ModelRequest, ToolCall } from './types.ts';
 import { isUserRequest } from './types.ts';
-import { isContextLimitError } from '../model/context.ts';
+import { clip, isContextLimitError } from '../model/context.ts';
 
 export function lastRequestIndex(messages: AgentMessage[]): number {
   return messages.findLastIndex(isUserRequest);
 }
 
-function excerpt(text: string, budget: number): string {
+export function evidenceExcerpt(text: string, budget: number): string {
   // Shell environments and echoed command lines are not report evidence.
-  const clean = text.split('\n').filter(line => !/^\s*(?:\$\s|[A-Z][A-Z0-9_]*=)/u.test(line)
+  const clean = stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f]/gu, '').split('\n').filter(line => !/^\s*(?:\$\s|[A-Z][A-Z0-9_]*=)/u.test(line)
     && !/\b(?:authorization|proxy-authorization|set-cookie|cookie|api[_-]?key|access[_-]?token|password|secret)\s*[:=]/iu.test(line));
   const body = clean.join('\n').trim();
   if (Buffer.byteLength(body) <= budget) return body;
@@ -45,7 +45,7 @@ export function savedResults(messages: AgentMessage[], start: number) {
           if (r.status === 'ok') { writtenFiles.add(file); deniedFiles.delete(file); }
           else if (index >= start && (r.status === 'unknown' || /\bDENIED\b|承認されなかった/u.test(r.output))) deniedFiles.add(file);
         }
-        const receipt = [r.name, file, '[' + r.status + ']', excerpt(r.output, 1350)].filter(Boolean).join(' ');
+        const receipt = [r.name, file, '[' + r.status + ']', evidenceExcerpt(r.output, 1350)].filter(Boolean).join(' ');
         observations.set(receipt, (observations.get(receipt) ?? 0) + 1);
         if (r.image && r.status === 'ok' && call?.name === 'view_image') {
           imagePair = [{ role: 'assistant', content: '', toolCalls: [{ id: call.id, name: call.name, args: { path: file } }] },
@@ -53,7 +53,7 @@ export function savedResults(messages: AgentMessage[], start: number) {
         }
       }
     } else if (!isUserRequest(message)) {
-      const receipt = excerpt(message.content, 1200);
+      const receipt = evidenceExcerpt(message.content, 1200);
       observations.set(receipt, (observations.get(receipt) ?? 0) + 1);
     }
   }

@@ -7,7 +7,7 @@ import { ResponsesApiModel } from '../src/model/chatgpt/responses.ts';
 import path from 'node:path';
 import test from 'node:test';
 import { runAgentLoop } from '../src/agent/loop.ts';
-import type { ToolRecording } from '../src/agent/tool-recording.ts';
+import { fileToolRecording, type ToolRecording } from '../src/agent/tool-recording.ts';
 import type { AgentMessage, ModelEvent } from '../src/agent/types.ts';
 import { JobRegistry } from '../src/tools/jobs.ts';
 import { ToolRegistry } from '../src/tools/registry.ts';
@@ -15,6 +15,43 @@ import { runCommandTool } from '../src/tools/run.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 
 type Row = Parameters<ToolRecording['write']>[0];
+
+test('recorder-only tool states protect opaque IDs and respect the recording opt-out', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'modkh-record-destination-'));
+  const frames = path.join(dir, 'frames');
+  const local = path.join(dir, 'private.jsonl');
+  fs.writeFileSync(frames, '');
+  const keys = ['MODKH_TOOL_RECORD_FILE', 'AGENTICREPLAY_MODKH_FRAMES', 'MODKH_AGENTICREPLAY'];
+  const previous = new Map(keys.map(key => [key, process.env[key]]));
+  t.after(() => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  delete process.env.MODKH_TOOL_RECORD_FILE;
+  delete process.env.MODKH_AGENTICREPLAY;
+  process.env.AGENTICREPLAY_MODKH_FRAMES = frames;
+  const row: Row = { session: 'session', turn: 0, attempt: 'attempt', ordinal: 1,
+    callId: 'opaque/private-id', state: 'unknown', reason: 'command_unconfirmed' };
+  fileToolRecording('session', assert.fail)!.write(row);
+  const captured = fs.readFileSync(frames, 'utf8');
+  assert.match(JSON.parse(captured).callId, /^sha256-[a-f0-9]{64}$/);
+  fs.unlinkSync(frames);
+  const warnings: string[] = [];
+  for (const session of ['parent', 'child']) {
+    fileToolRecording(session, warning => warnings.push(warning))?.write({ ...row, session });
+  }
+  assert.equal(warnings.length, 1);
+  assert.equal(fs.existsSync(frames), false);
+  process.env.MODKH_AGENTICREPLAY = '0';
+  assert.equal(fileToolRecording('session', assert.fail), undefined);
+  process.env.MODKH_TOOL_RECORD_FILE = local;
+  fileToolRecording('session', assert.fail)!.write(row);
+  assert.equal(JSON.parse(fs.readFileSync(local, 'utf8')).callId, row.callId);
+  assert.equal(fs.existsSync(frames), false);
+});
+
 const modes = ['denied', 'before-start', 'guard', 'response-aborted', 'terminal', 'retry', 'reuse',
   'resumed', 'kill', 'background', 'promote', 'invalid', 'failure'] as const;
 for (const mode of modes) test('tool record: ' + mode, async () => {

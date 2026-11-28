@@ -12,6 +12,7 @@ import { resolveInRoot } from '../tools/guard.ts';
 import { runCommandTool } from '../tools/run.ts';
 import { prepareSkillContext, type SkillContext } from './skills.ts';
 import { projectCompacted, type CompactionState } from './compaction.ts';
+import { collectWorkProgress, interruptionDetail, reportChecks } from './work-progress.ts';
 
 export interface LoopHooks {
   /** Selected guidance and byte size, not a provider token/cost measurement. */
@@ -92,7 +93,9 @@ export interface AgentLoopOptions {
    */
   compaction?: CompactionState;
   /** Return a strictly shorter projection for a request rejected before any tool call. */
-  recoverContextLimit?(): CompactionState | undefined;
+  recoverContextLimit?(): CompactionState | undefined | Promise<CompactionState | undefined>;
+  /** Only applies to the exact, freshly reviewed active boundary. */
+  reportFromChecks?(): boolean;
   /** Inspect the current projection between complete model/tool exchanges. */
   autoCompact?(outgoing: AgentMessage[]): Promise<CompactionState | TurnResult | undefined>;
 }
@@ -208,6 +211,14 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
   // The provider sees the projection; the transcript keeps the full text for audit and replay safety.
   let compaction = opts.compaction;
   const taskStart = task ? messages.indexOf(task) : messages.length;
+  const workProgress = () => {
+    const state = compaction?.workFrom === taskStart ? compaction : undefined;
+    return collectWorkProgress(messages, taskStart, state?.review, state?.revision);
+  };
+  const interruptedTool = (call: ToolCall, result: ToolResult): TurnResult => ({
+    outcome: 'interrupted', errorMessage: interruptionDetail(workProgress(), call, result,
+      compaction?.workFrom === taskStart ? compaction.review : undefined),
+  });
   const records = opts.toolRecording && new TurnToolRecords(opts.toolRecording, taskStart, messages);
   const recoveryTools = new Set([readFileTool, ...(opts.approval.confirmOnce ? [runCommandTool, fetchUrlTool] : [])]
     .filter(isNative).map(tool => tool.name));
@@ -265,11 +276,14 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     let rejectedToolHistory = false;
     const scope = recoveryScope;
     recoveryScope = undefined;
+    let reporting = false;
     try {
       const next = await opts.autoCompact?.(outgoing());
       if (next && 'outcome' in next) return next;
       compaction = next ?? compaction;
       if (opts.signal.aborted) return { outcome: 'interrupted' };
+      if (next) appendFollowups();
+      reporting = !!compaction?.review && !scope && !recoveredReceipts && opts.reportFromChecks?.() === true;
       const projected = requestMessages();
       const canRecoverHistory = !recoveredReceipts && !scope && task && opts.model.id.startsWith('ollama/')
         && recoveryTools.size > 0 && projected.at(-1)?.role === 'tool';
@@ -283,8 +297,8 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
           return entry?.model === opts.model ? entry.value : undefined;
         } } : {}),
         ...(opts.promptCacheKey ? { promptCacheKey: opts.promptCacheKey } : {}),
-        tools: recoveredReceipts ? toolSpecs.filter(tool => recoveryTools.has(tool.name)) : scope ? toolSpecs.filter(tool => tool.name === scope.tool) : toolSpecs,
-        system: scope?.system ?? system,
+        tools: reporting ? [] : recoveredReceipts ? toolSpecs.filter(tool => recoveryTools.has(tool.name)) : scope ? toolSpecs.filter(tool => tool.name === scope.tool) : toolSpecs,
+        system: reporting ? (system ?? '') + '\nReport the requested results now, using the saved files and observed checks. Include the limits of that evidence.' : scope?.system ?? system,
         ...(opts.reasoning ? { reasoning: opts.reasoning } : {}),
       }, opts.signal, delayMs => {
         text = '';
@@ -305,7 +319,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
           opts.hooks?.onModelActivity?.(ev.stage, ev.toolName);
         } else if (ev.type === 'text-delta') {
           text += ev.text;
-          if (!opts.holdAnswerUntilComplete) opts.hooks?.onText?.(ev.text);
+          if (!opts.holdAnswerUntilComplete && !reporting) opts.hooks?.onText?.(ev.text);
         } else if (ev.type === 'reasoning-delta') {
           receivedReasoning ||= ev.text.length > 0;
           opts.hooks?.onReasoning?.(ev.text);
@@ -330,7 +344,9 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
       && turn + 1 < maxTurns) {
       recoveredReceipts = new Map();
       for (const { call, result } of previousCalls(messages.slice(taskStart)).values()) {
-        if (!result || result.status === 'unknown') return { outcome: 'interrupted' };
+        if (!result || result.status === 'unknown') return interruptedTool(call, result ?? {
+          name: call.name, callId: call.id, status: 'unknown', output: '実行結果が記録されていません。',
+        });
         const key = receiptKey(opts.root, call);
         if (key && result.status !== 'not-executed') recoveredReceipts.set(key, result);
       }
@@ -338,8 +354,11 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     }
     if (!opts.signal.aborted && stopReason === 'error' && !calls.length && !text && !scope && !recoveredReceipts
       && turn + 1 < maxTurns && isContextLimitError(errorMessage)) {
-      const shorter = opts.recoverContextLimit?.();
+      const shorter = await opts.recoverContextLimit?.();
       if (shorter) { compaction = shorter; continue; }
+    }
+    if (reporting && compaction?.review && !calls.length && !text.trim() && stopReason === 'stop') {
+      text = reportChecks(workProgress(), compaction.review);
     }
     const response: AgentMessage = { role: 'assistant', content: text, ...(calls.length ? { toolCalls: calls } : {}) };
     append(response);
@@ -372,7 +391,19 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
         : { outcome: 'error', errorMessage: errorMessage ?? 'モデル応答が終了イベントなしで切れた' };
     }
     if (privateReplay && continuation) continuationState.set(response, { model: opts.model, value: continuation });
-    if (calls.length === 0) {
+    if (reporting && calls.length && compaction?.review) {
+      const results = calls.map((call, index): ToolResult => {
+        candidates[index]?.expectReceipt(messages.length, index);
+        candidates[index]?.emit('not-executed', 'workflow_stopped');
+        return { callId: call.id, name: call.name, status: 'not-executed', output: '確認結果の報告中のため実行しませんでした。' };
+      });
+      append({ role: 'tool', results });
+      for (const result of results) opts.hooks?.onToolResult?.(result);
+      text = reportChecks(workProgress(), compaction.review);
+      append({ role: 'assistant', content: text });
+      stopReason = 'stop';
+    }
+    if (calls.length === 0 || reporting) {
       // A job that settled while this answer was streaming still owes the model a report.
       // Yield one more step instead of closing the turn on an unread completion.
       const children = opts.subagents?.takeNotices() ?? [];
@@ -410,11 +441,11 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
         appendNotice('The response contained no final answer. Give the user the answer from the evidence already available, in the final response text.');
         continue;
       }
-      if (stopReason === 'stop' && opts.holdAnswerUntilComplete && text) opts.hooks?.onText?.(text);
+      if (stopReason === 'stop' && (opts.holdAnswerUntilComplete || reporting) && text) opts.hooks?.onText?.(text);
       return stopReason === 'stop' ? { outcome: 'complete' }
         : { outcome: 'error', errorMessage: 'ツール終了イベントに呼び出しがない' };
     }
-    let uncertain = false;
+    let uncertain: { call: ToolCall; result: ToolResult } | undefined;
     let freshEditSucceeded = false;
     const newInputQueued = () => Boolean(opts.followupSignal?.().aborted
       || opts.jobs?.hasNotices || opts.subagents?.hasNotices || opts.subagents?.hasUnknown);
@@ -518,9 +549,10 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
       records?.remember(result, messages.length, 0, candidate);
       append({ role: 'tool', results: [result] });
       opts.hooks?.onToolResult?.(result);
-      uncertain ||= result.status === 'unknown';
+      if (result.status === 'unknown') uncertain ??= { call, result };
     }
-    if (opts.signal.aborted || uncertain) return { outcome: 'interrupted' };
+    if (uncertain) return interruptedTool(uncertain.call, uncertain.result);
+    if (opts.signal.aborted) return { outcome: 'interrupted' };
     const decision = await opts.afterToolBatch?.();
     if (opts.signal.aborted) return { outcome: 'interrupted' };
     if (decision && 'continueWith' in decision) appendNotice(decision.continueWith);
@@ -528,7 +560,7 @@ async function runLoop(messages: AgentMessage[], opts: AgentLoopOptions): Promis
     if (!decision && canEdit && !scope && !recoveredReceipts) {
       inspectionRounds = calls.every(call => isInspection(call, opts.registry)) ? inspectionRounds + 1 : 0;
       if (inspectionRounds === 6) {
-        appendNotice('Repeated inspections: use the evidence already collected. If the user requested a change and the cause is known, make the smallest authorized edit now and verify it. If one fact is missing, check that fact. For an investigation-only request, answer from the evidence. Respect denied operations.');
+        appendNotice('Repeated inspections: compare the evidence for the latest revision with the user’s request. If the requested work and checks are complete, give the final answer now. Otherwise address the specific missing fact or failed check. Respect denied operations.');
         inspectionRounds = 0;
       }
     }

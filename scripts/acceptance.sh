@@ -4,7 +4,7 @@
 # 読む → 承認して編集 → テスト実行 → 再起動して再開 を確認する。
 # 不正引数・ルート外・承認拒否・二重実行防止も確認する。
 #
-# `--replay-only` は同じ導入だけを行い、実レコーダーの容量枯渇ケースだけを実行する。
+# `--replay-only` は同じ導入を行い、実レコーダーの自動記録と容量枯渇を確認する。
 # CI は通常の受け入れと、実レコーダー必須のケースを別ステップに分けて実行する。
 set -eu
 
@@ -43,7 +43,7 @@ for flag in -v --version; do
   }
 done
 
-# 2b) 実レコーダーの容量枯渇ケースだけを実行する (--replay-only)。
+# 2b) 実レコーダーの自動記録と容量枯渇を確認する (--replay-only)。
 #     導入済み tarball の CLI を MODKH_TEST_ENTRY で指し、同じテストを実際の記録器で回す。
 #     未実行・SKIP・不合格は scripts/assert-replay-tap.sh がすべて失敗にする。
 if [ "$REPLAY_ONLY" = 1 ]; then
@@ -52,11 +52,14 @@ if [ "$REPLAY_ONLY" = 1 ]; then
   echo "RECORDER_VERSION=$(agenticreplay version)"
   cd "$ROOT"
   MODKH_TEST_ENTRY="$CLI" MODKH_TEST_REAL_AGENTICREPLAY=1 node --test --test-reporter=tap \
-    --test-name-pattern='AgenticReplay event log' \
-    "$ROOT/test/cli.agenticreplay.test.ts" > "$WORK/replay-tarball.tap" 2>&1 || true
+    --test-name-pattern='AgenticReplay event log|real AgenticReplay' \
+    "$ROOT/test/cli.agenticreplay.test.ts" "$ROOT/test/tool-recording-cli.test.ts" > "$WORK/replay-tarball.tap" 2>&1 || true
   sh scripts/assert-replay-tap.sh "$WORK/replay-tarball.tap" \
     'a full AgenticReplay event log still allows the answer and the following turn' \
-    'a rotated AgenticReplay event log stays complete when only the file budget is small'
+    'a rotated AgenticReplay event log stays complete when only the file budget is small' \
+    'real AgenticReplay merges the receipt with proxy evidence and records it without another POST' \
+    'real AgenticReplay records interruptions, retries, denials and background jobs' \
+    'real AgenticReplay automatically records an unacknowledged click once'
   echo "ACCEPTANCE_OK"
   exit 0
 fi
@@ -159,7 +162,7 @@ echo "$OUTMODELS" | grep -q '接続中: fixed/scripted' || { echo 'FAIL: モデ�
 MODKH_TEST_FIXED="$WORK/install/node_modules/modkh/dist/model/fixed.js" MODKH_TEST_ENTRY="$CLI" MODKH_TEST_CHAT="$WORK/install/node_modules/modkh/dist/cli/chat.js" MODKH_TEST_TERMINAL="$WORK/install/node_modules/modkh/dist/cli/terminal.js" env -u MODKH_TEST_REAL_AGENTICREPLAY \
   node --test --test-reporter=tap \
   "$ROOT/test/stateright.install.test.ts" "$ROOT/test/cli.interactive.test.ts" "$ROOT/test/cli.safety.test.ts" \
-  "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.compaction.test.ts" "$ROOT/test/cli.memory.test.ts" "$ROOT/test/cli.tui.test.ts" \
+  "$ROOT/test/cli.stop.test.ts" "$ROOT/test/cli.compaction.test.ts" "$ROOT/test/cli.work-progress.test.ts" "$ROOT/test/cli.memory.test.ts" "$ROOT/test/cli.tui.test.ts" \
   "$ROOT/test/cli.agenticreplay.test.ts" "$ROOT/test/cli.cyber.test.ts" "$ROOT/test/terminal.drag-copy.test.ts" \
   "$ROOT/test/plugins.entry.test.ts" "$ROOT/test/subagents.cli.test.ts" "$ROOT/test/composer.flow.test.ts" "$ROOT/test/pdf.cli.test.ts" "$ROOT/test/cli.harness.test.ts" \
   "$ROOT/test/model.openai-compat.test.ts" "$ROOT/test/tool-recording-cli.test.ts"

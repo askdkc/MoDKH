@@ -1,8 +1,9 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { constants, tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { constants, devNull, tmpdir } from 'node:os';
 import path from 'node:path';
 import { configureHttpModelRecording } from '../model/record-fetch.ts';
+import { isLocalModelProvider } from '../model/providers.ts';
 import { SessionStore } from '../session/store.ts';
 import { loadConfig } from './config.ts';
 import { loadResumedSession, selectInitialConnection } from './initial-connection.ts';
@@ -262,15 +263,41 @@ function writeStderr(text: string): void {
   try { process.stderr.write(text); } catch { /* 表示先がないだけ */ }
 }
 
+let localRecordingNotice: string | undefined;
+
+export function reportLocalRecordingLimit(provider: string): void {
+  if (localRecordingNotice && isLocalModelProvider(provider)) {
+    writeStderr(localRecordingNotice);
+    localRecordingNotice = undefined;
+  }
+}
+
+const noRecorder = '(記録: AgenticReplay を起動できないため、モデル通信とツール状態を記録できません。会話を続けます)\n';
+
 export async function recordChat(
   entry: string, argv: readonly string[], args: Readonly<Record<string, string | undefined>>,
 ): Promise<RecordedChat | undefined> {
   const launchCwd = process.env.MODKH_AGENTICREPLAY_LAUNCH_CWD;
-  if (launchCwd && process.env.AGENTICREPLAY_TLS_CA) {
+  if (launchCwd && process.env.MODKH_AGENTICREPLAY_RECEIPT) {
+    // Claim the launch before entering chat. A recorder failure after this point must never replay stdin.
+    const receipt = process.env.MODKH_AGENTICREPLAY_RECEIPT;
+    renameSync(receipt + '.pending', receipt);
     // The recorder starts in the workspace, while chat resolves CLI paths from the launch directory.
     process.chdir(launchCwd);
     delete process.env.MODKH_AGENTICREPLAY_LAUNCH_CWD;
+    // The recorder has negotiated the run's frame channel. Restore the caller's
+    // environment before loading the model or executing any tool.
+    const previous = process.env.MODKH_AGENTICREPLAY_RESTORE_TOOL_FILE;
+    delete process.env.MODKH_AGENTICREPLAY_RESTORE_TOOL_FILE;
+    if (process.env.MODKH_TOOL_RECORD_FILE === devNull) {
+      if (previous === 'unset') delete process.env.MODKH_TOOL_RECORD_FILE;
+      else if (previous === 'empty') process.env.MODKH_TOOL_RECORD_FILE = '';
+    }
     reportReceipt(process.env.AGENTICREPLAY_TLS_CA);
+    if (!process.env.AGENTICREPLAY_MODKH_FRAMES) {
+      localRecordingNotice = '(記録: ツール状態を記録できません。AgenticReplay から状態通知の保存先が渡されませんでした)\n';
+    }
+    if (!process.env.AGENTICREPLAY_TLS_CA) return undefined;
     const { EnvHttpProxyAgent, setGlobalDispatcher } = await import('undici');
     // AgenticReplay uses the negotiated protocol upstream too. Some model APIs only offer HTTP/1.1.
     setGlobalDispatcher(new EnvHttpProxyAgent({ requestTls: { allowH2: false } }));
@@ -285,7 +312,10 @@ export async function recordChat(
   const probe = spawnSync('agenticreplay', ['version'], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000, killSignal: 'SIGKILL', maxBuffer: 4096,
   });
-  if (probe.status !== 0 || !probe.stdout?.trim()) return undefined;
+  if (probe.status !== 0 || !probe.stdout?.trim()) {
+    localRecordingNotice = noRecorder;
+    return undefined;
+  }
 
   const config = loadConfig();
   const session = args.resume ? loadResumedSession(new SessionStore(), args.resume, cwd) : undefined;
@@ -303,28 +333,48 @@ export async function recordChat(
   try {
     ensureWorkspaceIgnores(cwd);
   } catch { /* 会話側が改めて試し、失敗すればそこで報告する */ }
-  const receipt = path.join(tmpdir(), `modkh-receipt-${process.pid}-${Date.now().toString(36)}.json`);
+  let receiptDir: string;
   try {
+    receiptDir = mkdtempSync(path.join(tmpdir(), 'modkh-receipt-'));
+  } catch {
+    localRecordingNotice = noRecorder;
+    return undefined;
+  }
+  const receipt = path.join(receiptDir, 'receipt');
+  try {
+    try { writeFileSync(receipt + '.pending', '{}', { mode: 0o600 }); }
+    catch { localRecordingNotice = noRecorder; return undefined; }
     // The recorder can retain the child command line. Transfer the key outside its argv.
     const childArgs = argv.filter((arg, i) =>
       arg !== '--apikey' && !arg.startsWith('--apikey=') && argv[i - 1] !== '--apikey');
+    // AgenticReplay 0.1.32 offers its private transport when a journal destination
+    // is present at launch. Request it without creating a second journal by default.
+    const userToolFile = process.env.MODKH_TOOL_RECORD_FILE;
+    const launchEnv = { ...process.env };
+    delete launchEnv.AGENTICREPLAY_MODKH_FRAMES;
     const child = spawn('agenticreplay', [
       'record', 'exec', '--tls-intercept', ...tlsHosts, '--no-fs', '--no-shell', '--no-agent-spans', '--',
       process.execPath, ...process.execArgv, entry, ...childArgs,
     ], { cwd, stdio: 'inherit', env: {
-      ...process.env, ...(args.apikey ? { MODKH_AGENTICREPLAY_APIKEY: args.apikey } : {}),
+      ...launchEnv, ...(args.apikey ? { MODKH_AGENTICREPLAY_APIKEY: args.apikey } : {}),
+      MODKH_TOOL_RECORD_FILE: userToolFile || devNull,
+      MODKH_AGENTICREPLAY_RESTORE_TOOL_FILE: userToolFile ? '' : userToolFile === undefined ? 'unset' : 'empty',
       AGENTICREPLAY_CONTINUE_ON_STORAGE_LIMIT: '1', MODKH_AGENTICREPLAY_LAUNCH_CWD: process.cwd(), MODKH_AGENTICREPLAY_RECEIPT: receipt,
     } });
 
-    const forwardInterrupt = () => child.kill('SIGINT');
-    const forwardTermination = () => child.kill('SIGTERM');
+    let interrupted = false;
+    const forward = (signal: 'SIGINT' | 'SIGTERM') => {
+      if (child.kill(signal)) interrupted = true;
+    };
+    const forwardInterrupt = () => forward('SIGINT');
+    const forwardTermination = () => forward('SIGTERM');
     process.on('SIGINT', forwardInterrupt);
     process.on('SIGTERM', forwardTermination);
     try {
       return await new Promise<RecordedChat | undefined>(resolve => {
-        child.once('error', error => {
+        child.once('error', () => {
           // 記録できないだけで会話は続けられる。起動失敗は1回だけ伝え、記録なしで走る。
-          writeStderr(`AgenticReplay を起動できませんでした: ${error.message}\n`);
+          localRecordingNotice = noRecorder;
           resolve(undefined);
         });
         child.once('close', (code, signal) => {
@@ -332,6 +382,11 @@ export async function recordChat(
           // including sessions closed before the first model request. The conversation's
           // exit code therefore never depends on the recording's completeness.
           const recorderExitCode = code ?? (signal ? 128 + constants.signals[signal] : 1);
+          if (!interrupted && !signal && code !== null && code < 128 && existsSync(receipt + '.pending')) {
+            localRecordingNotice = noRecorder;
+            resolve(undefined);
+            return;
+          }
           const exitCode = code === 2 ? 0 : recorderExitCode;
           const runDir = runDirFromTlsCa(readReceipt(receipt)?.tlsCa);
           resolve({ exitCode, recording: summarizeRecording(runDir, recorderExitCode) });
@@ -342,6 +397,6 @@ export async function recordChat(
       process.off('SIGTERM', forwardTermination);
     }
   } finally {
-    rmSync(receipt, { force: true });
+    rmSync(receiptDir, { recursive: true, force: true });
   }
 }

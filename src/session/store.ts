@@ -6,6 +6,7 @@ import { parsePdfs } from '../agent/documents.ts';
 import { parseImages } from '../agent/images.ts';
 import type { AgentMessage, ToolCall, ToolResult } from '../agent/types.ts';
 import { safeBoundary, type CompactionState } from '../agent/compaction.ts';
+import { parseWorkReview, parseWorkRevision } from '../agent/work-progress.ts';
 import type { DelegationRecord } from '../subagents/types.ts';
 import { parseDelegation, delegationDigest } from '../subagents/request.ts';
 import { lockReport } from './report-file.ts';
@@ -204,7 +205,9 @@ export class Session {
         if (Number.isSafeInteger(ev.from) && (ev.from > (session.compaction?.from ?? 0) || ((pending || work) && ev.from === session.compaction?.from))
             && (ev.from < session.messages.length || (ev.keptTurns === 0 && ev.from === session.messages.length))
             && typeof ev.summary === 'string' && ev.summary.trim()) {
-          session.compaction = { summary: ev.summary.slice(0, MAX_SUMMARY_CHARS), from: ev.from,
+          const review = work && parseWorkReview(ev.review);
+          const revision = work && parseWorkRevision(ev.revision, ev.workFrom!, ev.from);
+          session.compaction = { summary: ev.summary.slice(0, MAX_SUMMARY_CHARS), from: ev.from, ...(review && { review }), ...(revision && { revision }),
             ...(pending ? { continueFrom: ev.continueFrom } : {}), ...(work ? { workFrom: ev.workFrom } : {}) };
           session.reportDraft = undefined;
           session.reportTarget = undefined;

@@ -5,9 +5,11 @@
  * 「これからモデルへ送る内容」だけを [要約 + 直近ターン] へ置き換える。この置き換えは
  * プロバイダーのキャッシュprefixが変わるため、設定したしきい値に達したときだけ行う。
  */
-import { projectToolImages, toolContext, utf8Prefix, utf8Suffix } from '../model/context.ts';
+import { clip, projectToolImages, toolContext } from '../model/context.ts';
+export { clip } from '../model/context.ts';
 import type { AgentMessage, Model, TokenUsage } from './types.ts';
 import { isUserRequest } from './types.ts';
+import { collectWorkProgress, currentChecks, describeWork, groundReview, interruptionDetail, readyToReport, reviewRequest, type WorkReview, type WorkRevision } from './work-progress.ts';
 
 /** 要約メッセージの見出し。要約が新しい指示として解釈されないよう明示する。 */
 export const COMPACTION_MARKER =
@@ -29,6 +31,8 @@ export interface CompactionState {
   continueFrom?: number;
   /** Start of the active request whose user instructions still accompany tool execution. */
   workFrom?: number;
+  review?: WorkReview;
+  revision?: WorkRevision;
 }
 
 /** 生のまま残す直近ターン数の既定値。 */
@@ -102,15 +106,6 @@ export function projectCompacted(messages: AgentMessage[], state: CompactionStat
   return [{ role: 'user', content: `${COMPACTION_MARKER}\n${state.summary}` }, ...requests, ...messages.slice(from)];
 }
 
-/** 1メッセージを上限内に収める。中間は落とすが、先頭と末尾は残す。 */
-export function clip(text: string, allowed: number): string {
-  const size = Buffer.byteLength(text);
-  if (size <= allowed) return text;
-  const note = `[…${size - allowed}バイト省略…]`;
-  const budget = Math.max(0, allowed - Buffer.byteLength(note));
-  return utf8Prefix(text, Math.ceil(budget / 2)) + note + utf8Suffix(text, Math.floor(budget / 2));
-}
-
 /** A bounded local record for a closed exchange. No model request or tool is needed to make it. */
 export function compactLocally(messages: AgentMessage[], previous?: CompactionState, continueFrom?: number): CompactionState | undefined {
   const start = previous?.from ?? 0;
@@ -158,9 +153,13 @@ export function compactLocally(messages: AgentMessage[], previous?: CompactionSt
 }
 
 /** Reduce a completed tool exchange without replaying its calls or dropping the active user instructions. */
-export function compactToolWork(messages: AgentMessage[], previous: CompactionState | undefined, workFrom: number): CompactionState | undefined {
+export function compactToolWork(messages: AgentMessage[], previous: CompactionState | undefined, workFrom: number,
+  revision = previous?.workFrom === workFrom ? previous.revision : undefined,
+  progress = collectWorkProgress(messages, workFrom, previous?.workFrom === workFrom ? previous.review : undefined, revision)): CompactionState | undefined {
   if (previous?.workFrom === workFrom && previous.from >= messages.length) return;
-  const state = compactLocally(messages, previous, workFrom);
+  // Rebuild observations from their original receipts so an old assessment cannot survive a new edit.
+  const base = previous?.workFrom === workFrom ? { ...previous, summary: previous.summary.split('\nRecent tool observations (data):')[0] } : previous;
+  const state = compactLocally(messages, base, workFrom);
   if (!state) return;
   const recent: string[] = [];
   for (let i = messages.length - 1; i >= workFrom && recent.length < 4; i--) {
@@ -171,10 +170,75 @@ export function compactToolWork(messages: AgentMessage[], previous: CompactionSt
       }
     } else if (message.role === 'user' && message.origin === 'host') recent.unshift(clip(message.content, 700));
   }
-  const next = { from: state.from, workFrom, summary: state.summary + '\nRecent tool observations (data):\n' + recent.join('\n') };
+  const next = { from: state.from, workFrom, ...(revision && { revision }), summary: [state.summary, 'Recent tool observations (data):',
+    ...recent, describeWork(progress)].filter(Boolean).join('\n') };
   // A legacy delivery checkpoint excluded the active task and its tools altogether.
   const before = previous && previous.continueFrom === undefined ? projectCompacted(messages, previous) : messages;
   return estimateRequestBytes(projectCompacted(messages, next)) < estimateRequestBytes(before) ? next : undefined;
+}
+
+/** An optional tool-free review. A missing receipt or changed file leaves ordinary tools available. */
+export async function reviewToolWork(model: Model, messages: AgentMessage[], previous: CompactionState | undefined,
+  start: number, signal: AbortSignal, promptCacheKey: string, readVersions: (files: Map<string, string | undefined>) => WorkRevision['files'] | undefined,
+  onUsage: (usage: TokenUsage) => void) {
+  const active = previous?.workFrom === start ? previous : undefined;
+  const prior = active?.review;
+  const progress = collectWorkProgress(messages, start, prior, active?.revision);
+  const state = compactToolWork(messages, previous, start, active?.revision, progress);
+  if (!state) return;
+  const before = previous && previous.continueFrom === undefined ? projectCompacted(messages, previous) : messages;
+  const beforeBytes = estimateRequestBytes(before);
+  const withReview = (review: WorkReview) => {
+    const updated = { ...state, review, summary: state.summary + '\nChecks against the recorded revision (assessment):\n' + JSON.stringify(review) };
+    return estimateRequestBytes(projectCompacted(messages, updated)) < beforeBytes ? updated : undefined;
+  };
+  const fallback = { state, ready: false };
+  if (!progress.files.size || progress.unknown) return fallback;
+  const checks = currentChecks(progress);
+  const versionChanged = () => {
+    const versions = readVersions(progress.files);
+    if (versions && versions.every(([file, hash]) => progress.files.get(file) === hash)) return false;
+    // The disk state may have changed through a shell command or another editor. Anchor future
+    // checks at this boundary. Observations before it cannot verify the newly observed bytes.
+    const revision = versions && { from: messages.length, files: versions };
+    const next = revision ? compactToolWork(messages, previous, start, revision) : state;
+    if (next) {
+      const outstanding = prior ? [...prior.confirmed.map(c => c.item), ...prior.remaining] : [];
+      next.summary += '\nFile version changed or unavailable. Earlier checks are historical. Verify the current revision.'
+        + (outstanding.length ? '\nItems to check: ' + clip(outstanding.join(', '), 700) : '');
+      fallback.state = next;
+    }
+    return true;
+  };
+  if (versionChanged()) return fallback;
+  if (prior) {
+    const retained = prior.confirmed.filter(c => checks.some(r => r.id === c.receipt));
+    const recheck = prior.confirmed.filter(c => !retained.includes(c)).map(c => c.item);
+    fallback.state = withReview({ confirmed: retained, remaining: [...new Set([...prior.remaining, ...recheck])].slice(0, 12) }) ?? state;
+  }
+  if (!checks.length || signal.aborted) return fallback;
+  const result = await requestSummary(model, reviewRequest(messages, start, progress, prior), signal, promptCacheKey);
+  if (result.usage) onUsage(result.usage);
+  if (!result.ok || !result.summary || signal.aborted) return fallback;
+  const review = groundReview(result.summary, progress, prior);
+  if (!review) return fallback;
+  if (versionChanged()) return fallback;
+  const updated = withReview(review);
+  if (!updated) return fallback;
+  const requests = messages.slice(start).filter(isUserRequest);
+  const fullRequest = !requests.some(m => m.images?.length || m.pdfs?.length)
+    && Buffer.byteLength(requests.map(m => m.content).join('\n')) <= 8000;
+  const requireCheckFrom = Math.max(messages.findLastIndex(isUserRequest), prior?.remaining.length ? active!.from : start);
+  return { state: updated, ready: fullRequest && readyToReport(progress, review, requireCheckFrom) };
+}
+
+/** Rebuild the partial report on read for older sessions that recorded only an unknown receipt. */
+export function legacyInterruption(messages: AgentMessage[], state?: CompactionState): string | undefined {
+  const latest = messages.findLastIndex(isUserRequest);
+  if (latest < 0) return;
+  const start = state?.workFrom !== undefined && latest < state.from ? state.workFrom : latest;
+  const progress = collectWorkProgress(messages, start, undefined, state?.workFrom === start ? state.revision : undefined);
+  if (progress.unknown) return interruptionDetail(progress, progress.unknown.call, progress.unknown.result, state?.workFrom === start ? state.review : undefined);
 }
 
 /** 要約の材料になる会話テキスト。順序と発話者を保ち、推論は含めない。 */
@@ -247,6 +311,10 @@ export async function summarizeCompaction(
   promptCacheKey?: string,
 ): Promise<SummarizeResult> {
   const { content } = buildSummaryRequest(plan.messages, plan.previousSummary);
+  return requestSummary(model, content, signal, promptCacheKey);
+}
+
+export async function requestSummary(model: Model, content: string, signal: AbortSignal, promptCacheKey?: string): Promise<SummarizeResult> {
   let text = '';
   let usage: TokenUsage | undefined;
   let errorMessage: string | undefined;
@@ -256,6 +324,7 @@ export async function summarizeCompaction(
       ...(promptCacheKey ? { promptCacheKey } : {}),
     }, signal)) {
       if (event.type === 'text-delta') text += event.text;
+      else if (event.type === 'tool-call') errorMessage = '要約中にツールが要求されたため実行しませんでした';
       else if (event.type === 'usage') usage = event;
       else if (event.type === 'finish') {
         finished = true;

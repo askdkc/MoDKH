@@ -107,3 +107,7 @@ export function supportsLiveModels(provider: string): boolean {
 export function keyProviderName(provider: string): string {
   return providerDefinition(provider)?.keyProvider ?? provider;
 }
+
+export function isLocalModelProvider(provider: string): boolean {
+  return ['ollama', 'llama-server', 'compatible', 'local-llm', 'lmstudio'].includes(provider);
+}

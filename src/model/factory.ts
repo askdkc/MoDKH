@@ -5,8 +5,8 @@ import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { Model } from '../agent/types.ts';
 import { AiSdkModel } from './ai-sdk.ts';
-import { fetchModel } from './record-fetch.ts';
-import { knownProviders, providerDefinition, type ProviderDefinition } from './providers.ts';
+import { fetchLocalModel, fetchModel } from './record-fetch.ts';
+import { isLocalModelProvider, knownProviders, providerDefinition, type ProviderDefinition } from './providers.ts';
 
 export interface ModelSpec {
   provider: string;
@@ -37,7 +37,7 @@ function ollamaReasoningBody(args: Record<string, unknown>): Record<string, unkn
   }) };
 }
 
-const localModelFetch: typeof fetch = (input, init) => fetchModel(input, { ...init, redirect: 'error' });
+const localModelFetch: typeof fetch = (input, init) => fetchLocalModel(input, { ...init, redirect: 'error' });
 
 /** --model <provider>/<model> の解釈。モデルID自体に / を含む(openrouter 等)ため最初の / で分ける。 */
 export function parseModelRef(ref: string): ModelSpec {
@@ -123,7 +123,7 @@ export function resolveModel(spec: ModelSpec, env: NodeJS.ProcessEnv = process.e
           // Compatible streaming APIs may omit prompt-token counts unless requested.
           includeUsage: spec.provider !== 'hermes',
           ...(preset.headers ? { headers: preset.headers() } : {}),
-          fetch: reasoningField ? localModelFetch : fetchModel,
+          fetch: reasoningField ? localModelFetch : isLocalModelProvider(spec.provider) ? fetchLocalModel : fetchModel,
           ...(reasoningField === 'reasoning' ? { transformRequestBody: ollamaReasoningBody } : {}),
         })(spec.model),
       });

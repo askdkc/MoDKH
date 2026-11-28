@@ -43,6 +43,17 @@ test('installed browse runs structured actions without command approval', { skip
     assert.equal(ordinary.output, `click\n--json\n${JSON.stringify({ tab: 12, ref: 'e2' })}\n`);
     const moving = await run({ action: 'click', tab: 12, ref: 'e2', force: true });
     assert.equal(moving.output, `click\n--json\n${JSON.stringify({ tab: 12, ref: 'e2', force: true })}\n`);
+    const point = await run({ action: 'click', tab: '12', x: 0, y: 25.5 });
+    assert.equal(point.status, 'ok');
+    assert.deepEqual(JSON.parse(point.output.split('\n')[2]!), { tab: 12, x: 0, y: 25.5 });
+    for (const args of [
+      { x: 1 }, { x: 0, y: -1 }, { x: '1', y: 2 }, { x: Infinity, y: 2 },
+      { ref: 'e2', x: 1, y: 2 }, { action: 'snapshot', x: 1, y: 2 },
+    ]) {
+      const invalid = await run({ action: 'click', tab: 12, ...args });
+      assert.equal(invalid.status, 'error');
+      assert.match(invalid.output, /INVALID_ARGS/);
+    }
     assert.equal((await run({ action: 'execute' })).status, 'error');
     const local = await run({ action: 'navigate', url: 'file:///etc/passwd' });
     assert.equal(local.status, 'error');

@@ -63,7 +63,7 @@ jobs:
           echo "RECORDER_PATH=$REPLAY_HOME/node_modules/.bin/agenticreplay"
           echo "RECORDER_VERSION=$(./node_modules/.bin/agenticreplay version)"
           test -x "$REPLAY_HOME/node_modules/.bin/agenticreplay"
-      - name: 実レコーダー容量枯渇(ソース版・必須)
+      - name: 実レコーダーの自動記録と容量枯渇(ソース版・必須)
         run: |
           set -eu
           command -v agenticreplay
@@ -71,12 +71,15 @@ jobs:
           # TAP は必ずファイルへ残し、判定は scripts/assert-replay-tap.sh に一本化する。
           # 未実行・SKIP・fail はすべて失敗になる。
           MODKH_TEST_REAL_AGENTICREPLAY=1 node --test --test-reporter=tap \
-            --test-name-pattern='AgenticReplay event log' \
-            test/cli.agenticreplay.test.ts > "$RUNNER_TEMP/replay-source.tap" 2>&1 || true
+            --test-name-pattern='AgenticReplay event log|real AgenticReplay' \
+            test/cli.agenticreplay.test.ts test/tool-recording-cli.test.ts > "$RUNNER_TEMP/replay-source.tap" 2>&1 || true
           sh scripts/assert-replay-tap.sh "$RUNNER_TEMP/replay-source.tap" \
             'a full AgenticReplay event log still allows the answer and the following turn' \
-            'a rotated AgenticReplay event log stays complete when only the file budget is small'
+            'a rotated AgenticReplay event log stays complete when only the file budget is small' \
+            'real AgenticReplay merges the receipt with proxy evidence and records it without another POST' \
+            'real AgenticReplay records interruptions, retries, denials and background jobs' \
+            'real AgenticReplay automatically records an unacknowledged click once'
       - name: tarball 受け入れ(隔離インストール + 固定応答モデルの会話)
         run: env -u MODKH_TEST_REAL_AGENTICREPLAY sh scripts/acceptance.sh
-      - name: 実レコーダー容量枯渇(tarball版・必須)
+      - name: 実レコーダーの自動記録と容量枯渇(tarball版・必須)
         run: MODKH_TEST_REAL_AGENTICREPLAY=1 sh scripts/acceptance.sh --replay-only

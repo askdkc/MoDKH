@@ -93,7 +93,8 @@ export class ToolRegistry {
       const output = await tool.execute(call.args as Record<string, unknown>, { ...ctx, callId: call.id });
       if (typeof output === 'string') return { ...base, status: 'ok', output };
       if (!output || !['ok', 'error', 'unknown', 'not-executed'].includes(output.status) || typeof output.output !== 'string') throw new Error('Invalid tool outcome');
-      return { ...base, status: output.status, output: output.output, ...(output.image && { image: output.image }) };
+      return { ...base, status: output.status, output: output.output, ...(output.image && { image: output.image }),
+        ...(output.fileDigest && { fileDigest: output.fileDigest }) };
     } catch (e) {
       if (e instanceof ToolError && (e.code === 'NOT_EXECUTED' || e.code === 'DENIED')) {
         ctx.executionRecord?.skipped(e.code === 'DENIED' ? 'approval_denied' : 'preflight_rejected');

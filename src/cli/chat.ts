@@ -4,7 +4,7 @@ import { completionArtPicker } from './completion-art.ts';
 import { shellCall, shellOutput } from './shell-display.ts';
 import { ToolDisplay } from './tool-display.ts';
 import { headCheckCompletion } from './head-checks.ts';
-import { parseWorkspaceVerification, workspaceVerification } from './workspace-verification.ts';
+import { parseWorkspaceVerification, workspaceVerification, readWrittenVersions } from './workspace-verification.ts';
 import fs from 'node:fs';
 import { loadLispConfiguration } from '../lisp/config.ts';
 import { routeIntent, routeRole } from '../lisp/routing.ts';
@@ -23,7 +23,7 @@ import { PluginManager } from '../plugins/manager.ts';
 import { SubagentService, subagentTools } from '../subagents/service.ts';
 import type { DelegationRequest } from '../subagents/types.ts';
 import { runDirectAgent } from './agents.ts';
-import { formatHostCoverageNotice, readRecordingScope } from './agenticreplay.ts';
+import { formatHostCoverageNotice, readRecordingScope, reportLocalRecordingLimit } from './agenticreplay.ts';
 import { providerSubagentLimit, parseSubagentLimit } from '../subagents/limits.ts';
 import { parseAgentSettings } from '../subagents/settings.ts';
 import { projectMcpTools } from '../tools/project-mcp.ts';
@@ -32,6 +32,8 @@ import { BrowseTabs, watchBrowseActivity } from '../tools/browse.ts';
 import { JobRegistry } from '../tools/jobs.ts';
 import { runAgentLoop } from '../agent/loop.ts';
 import { prepareSkillContext, mergeSkillContext, removeSkillSection, type SkillContext } from '../agent/skills.ts';
+import { isLocalModelProvider } from '../model/providers.ts';
+import { forwardsLocalModel } from '../model/record-fetch.ts';
 import { parseModelRef, providerKeyEnv, modelBaseUrl as modelBaseUrlFor } from '../model/factory.ts';
 import { createHash } from 'node:crypto';
 import { selectModel } from './models.ts';
@@ -54,7 +56,7 @@ import { isContextLimitError } from '../model/context.ts';
 import { lastRequestIndex } from '../agent/saved-results.ts';
 import { reportMatches } from '../session/report-file.ts';
 import { requestsSavedReport, finishCompactedTurn, LEGACY_COMPACT_PAUSE, WORKFLOW_COMPACT_PAUSE } from './compacted-turn.ts';
-import { compactToolWork, compactLocally, estimateRequestBytes, planCompaction, projectCompacted, summarizeCompaction } from '../agent/compaction.ts';
+import { compactToolWork, compactLocally, estimateRequestBytes, legacyInterruption, planCompaction, projectCompacted, reviewToolWork, summarizeCompaction } from '../agent/compaction.ts';
 import { loadConfig, updateConfig, parseTimeoutMs, type LiteConfig } from './config.ts';
 import { loadResumedSession, selectInitialConnection } from './initial-connection.ts';
 import { keysPath, loadSavedKeys, saveKey, removeKey, savedKeyProviders, resolveApiKey, canonicalKeyProvider } from './keys.ts';
@@ -148,7 +150,9 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   if (verificationIsolation !== 'required' && verificationIsolation !== 'integrity-only') throw new Error('--verification-isolation must be required or integrity-only');
   const makeModel: typeof buildModelFromRef = (ref, ...rest) => {
     if (args['lisp-config'] && ref.startsWith('hermes/')) throw new Error('MoDKH head cannot use remote server-side tools outside host authority');
-    return (opts.modelFactory ?? buildModelFromRef)(ref, ...rest);
+    const connected = (opts.modelFactory ?? buildModelFromRef)(ref, ...rest);
+    reportLocalRecordingLimit(parseModelRef(ref).provider);
+    return connected;
   };
   const cwd = path.resolve(args['cwd'] ?? process.cwd());
   const lisp = args['lisp-config'] ? await loadLispConfiguration(path.resolve(cwd, args['lisp-config']), args['trust-lisp-sha256'] ?? '', { sbcl: args.sbcl }) : undefined;
@@ -180,7 +184,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   if (args['resume']) {
     session = loadResumedSession(store, args['resume'], cwd);
     ui.write(`セッション ${session.id} を再開します(${session.messages.length}メッセージ)\n`);
-    if (session.lastError) ui.write(`${session.status === 'interrupted' ? '前回の中断理由' : '前回のエラー'}: ${session.lastError}\n`);
+    const diagnostic = session.lastError ?? (session.status === 'interrupted' ? legacyInterruption(session.messages, session.compaction) : undefined);
+    if (diagnostic) ui.write(`${session.status === 'interrupted' ? '前回の中断理由' : '前回のエラー'}: ${diagnostic}\n`);
     const unfinished = session.delegations().filter(r => !r.result || r.result.status === 'unknown');
     if (unfinished.length) ui.write(`注意: 子の保存結果が不明な実行が${unfinished.length}件あります。自動では再実行しません。/head から list_subagent_runs / subagent_output で確認できます。\n`);
     const unknown = session.unknownToolResults();
@@ -607,13 +612,22 @@ export async function runChat(opts: ChatOptions): Promise<void> {
       const plan = canAutoCompact ? planCompaction(session.messages, keepTurns, session.compaction) : null;
       let attemptedCompaction = false;
       const reportRequested = () => requestsSavedReport(session.messages, turnStart);
-      const compactWork = () => {
-        const next = compactToolWork(session.messages, session.compaction, turnStart);
+      let reportAt: number | undefined;
+      const compactWork = async () => {
+        const signal = AbortSignal.any([ac.signal, followupWake.signal, AbortSignal.timeout(60_000)]);
+        const reviewed = canDeliver && activeModel && !subagents.hasPending && !followups.length
+          ? await reviewToolWork(activeModel, session.messages, session.compaction, turnStart, signal, session.id,
+            files => readWrittenVersions(cwd, files), onUsage)
+          : { state: compactToolWork(session.messages, session.compaction, turnStart), ready: false };
+        if (ac.signal.aborted) return;
+        const next = reviewed?.state;
         if (next) {
           checkpoint();
           session.recordCompaction(next, 0);
           lastInputTokens = undefined;
-          ui.write('(履歴を圧縮しました。ツールを使って作業を続けます)\n');
+          reportAt = reviewed?.ready && !followups.length ? next.from : undefined;
+          ui.write(reportAt === undefined ? '(履歴を圧縮しました。ツールを使って作業を続けます)\n'
+            : '(依頼された確認がそろいました。結果をまとめます)\n');
         }
         return next;
       };
@@ -644,6 +658,8 @@ export async function runChat(opts: ChatOptions): Promise<void> {
         approval,
         hooks,
         checkpoint,
+        reportFromChecks: () => reportAt === session.messages.length && !followups.length && !subagents.hasPending
+          && !subagents.hasNotices && !jobs.hasNotices,
         ...(session.compaction ? { compaction: session.compaction } : {}),
         ...(canAutoCompact && !direct ? { recoverContextLimit: () =>
           !reportRequested() && session.messages.some(m => m.role === 'tool') ? compactWork() : undefined } : {}),
@@ -767,7 +783,7 @@ export async function runChat(opts: ChatOptions): Promise<void> {
   const reportRecordingCoverage = (target: ChatTerminal, ref: string, baseUrl?: string): void => {
     const provider = parseModelRef(ref).provider;
     const url = URL.parse(modelBaseUrlFor(provider, baseUrl) ?? '');
-    if (url?.protocol !== 'https:') return;
+    if (url?.protocol !== 'https:' || (isLocalModelProvider(provider) && forwardsLocalModel(url))) return;
     const scope = readRecordingScope();
     if (!scope?.active) return;
     const notice = formatHostCoverageNotice(url.hostname, scope);

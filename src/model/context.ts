@@ -41,6 +41,15 @@ export function utf8Prefix(text: string, bytes: number): string {
   return new StringDecoder('utf8').write(Buffer.from(prefix).subarray(0, bytes));
 }
 
+/** Keep both ends of a long observation without splitting UTF-8 characters. */
+export function clip(text: string, allowed: number): string {
+  const size = Buffer.byteLength(text);
+  if (size <= allowed) return text;
+  const note = `[…${size - allowed}バイト省略…]`;
+  const budget = Math.max(0, allowed - Buffer.byteLength(note));
+  return utf8Prefix(text, Math.ceil(budget / 2)) + note + utf8Suffix(text, Math.floor(budget / 2));
+}
+
 /** Budget each stored tool message independently so appending history cannot rewrite earlier prompts. */
 export function toolContext(messages: AgentMessage[]): Map<string, string> {
   const outputs = new Map<string, string>();

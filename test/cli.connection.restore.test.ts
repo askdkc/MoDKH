@@ -8,8 +8,9 @@ import { SessionStore } from '../src/session/store.ts';
 
 const entry = process.env.MODKH_TEST_ENTRY ?? new URL('../src/index.ts', import.meta.url).pathname;
 async function launch(home: string, args: string[], input: string | null = '/exit\n') {
-  const child = spawn(process.execPath, [...(fs.existsSync(path.join(home, 'transport.mjs')) ? ['--import', path.join(home, 'transport.mjs')] : []), entry, '--cwd', home, ...args], {
-    env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1' }, stdio: ['pipe', 'pipe', 'pipe'],
+  const mockedTransport = fs.existsSync(path.join(home, 'transport.mjs'));
+  const child = spawn(process.execPath, [...(mockedTransport ? ['--import', path.join(home, 'transport.mjs')] : []), entry, '--cwd', home, ...args], {
+    env: { ...process.env, MODKH_HOME: home, MODKH_PLAIN: '1', ...(mockedTransport && { MODKH_AGENTICREPLAY: '0' }) }, stdio: ['pipe', 'pipe', 'pipe'],
   });
   let output = '';
   child.stdout.on('data', d => { output += d; }); child.stderr.on('data', d => { output += d; });
